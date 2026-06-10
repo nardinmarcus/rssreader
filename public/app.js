@@ -1835,7 +1835,8 @@ function renderAgentMessages(extraPending = false) {
     head.className = 'agent-msg-head';
     const role = document.createElement('div');
     role.className = 'agent-msg-role';
-    role.textContent = message.author || (message.role === 'user' ? '读者' : 'AI');
+    role.textContent = agentMessageMeta(message);
+    role.title = role.textContent;
     head.appendChild(role);
     if (!message.pending) {
       const actions = document.createElement('div');
@@ -1873,6 +1874,15 @@ function renderAgentMessages(extraPending = false) {
   }
   renderReaderAssetSummary();
   settlePendingAssetJump('chat');
+}
+
+function agentMessageMeta(message) {
+  const author = message.author || (message.role === 'user' ? '读者' : 'AI');
+  const parts = [author];
+  if (message.role === 'assistant' && message.model) parts.push(message.model);
+  const time = formatAssetTime(message.createdAt);
+  if (time) parts.push(time);
+  return parts.join(' · ');
 }
 
 function copyAgentMessageLink(messageId) {
