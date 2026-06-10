@@ -337,6 +337,13 @@ function assetFeedUrl(req, type = '') {
   return publicUrl(req, assetType ? `/assets/${assetType}.xml` : '/assets.xml');
 }
 
+function rssAlternateTag(req) {
+  const type = isAssetDirectoryRequest(req) ? requestAssetDirectoryType(req) : '';
+  const meta = type ? ASSET_DIRECTORY_META[type] : null;
+  const title = meta ? `QMReader ${meta.label}资产 RSS` : 'QMReader 公开资产 RSS';
+  return `<link rel="alternate" type="application/rss+xml" title="${escapeHtml(title)}" href="${escapeHtml(assetFeedUrl(req, type))}" />`;
+}
+
 function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true } = {}) {
   const query = new URLSearchParams({ entry: entry.id, focus: type });
   const itemId = String(preview.id || '').trim();
@@ -541,6 +548,7 @@ function renderIndex(req, entry = null) {
   const html = fs.readFileSync(INDEX_PATH, 'utf8');
   const { title, tags } = socialMetaTags(req, entry);
   return html
+    .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
     .replace('</head>', `  ${tags}\n</head>`);
 }
