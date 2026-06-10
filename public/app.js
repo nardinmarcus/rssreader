@@ -408,6 +408,12 @@ function chatMessageUrl(messageId, entry = state.activeEntry) {
   return url.href;
 }
 
+function assetItemUrl(type, entry, itemId = '') {
+  if (type === 'comments' && itemId) return commentUrl(itemId, entry);
+  if (type === 'chat' && itemId) return chatMessageUrl(itemId, entry);
+  return readerAssetUrl(type, entry);
+}
+
 function readerShareFocus() {
   if (state.readerFocus && ASSET_FILTER_TYPES.includes(state.readerFocus)) return state.readerFocus;
   if (state.readerTab === 'translation' && state.translation) return 'translation';
@@ -1099,12 +1105,16 @@ function assetPreviewHtml(preview) {
   const { type, label } = display;
   const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
   const itemId = preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
+  const copyItemId = preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
   return `
-    <button type="button" class="entry-asset-preview asset-preview-${type}" data-asset="${escapeHtml(type)}"${itemId} title="查看${escapeHtml(label)}资产">
-      <span class="entry-asset-preview-type">${escapeHtml(label)}</span>
-      <span class="entry-asset-preview-text">${escapeHtml(display.text)}</span>
-      ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
-    </button>`;
+    <div class="entry-asset-preview-row">
+      <button type="button" class="entry-asset-preview asset-preview-${type}" data-asset="${escapeHtml(type)}"${itemId} title="查看${escapeHtml(label)}资产">
+        <span class="entry-asset-preview-type">${escapeHtml(label)}</span>
+        <span class="entry-asset-preview-text">${escapeHtml(display.text)}</span>
+        ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
+      </button>
+      <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">⧉</button>
+    </div>`;
 }
 
 function entryPrimaryAssetType(entry) {
@@ -1572,6 +1582,15 @@ function renderList() {
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
     card.onclick = (event) => {
+      const previewCopy = event.target.closest('[data-asset-preview-copy]');
+      if (previewCopy) {
+        event.preventDefault();
+        event.stopPropagation();
+        const url = assetItemUrl(previewCopy.dataset.assetPreviewCopy, e, previewCopy.dataset.assetItemId || '');
+        const label = ASSET_FOCUS_LABELS[previewCopy.dataset.assetPreviewCopy] || '资产';
+        copyText(url, `${label}链接已复制`);
+        return;
+      }
       const copy = event.target.closest('[data-asset-copy]');
       if (copy) {
         event.preventDefault();
