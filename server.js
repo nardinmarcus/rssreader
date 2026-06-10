@@ -80,6 +80,69 @@ function socialMetaTags(req, entry) {
   return { title, tags: tags.join('\n  ') };
 }
 
+function hasPublicAssets(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  return Boolean(assets.translation || assets.rewrite || assets.comments || assets.chatMessages);
+}
+
+function entryLastModified(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const timestamp = Math.max(Number(assets.latestAt) || 0, Number(entry && entry.publishedTs) || 0);
+  if (!timestamp) return '';
+  try {
+    return new Date(timestamp).toISOString();
+  } catch {
+    return '';
+  }
+}
+
+function entryPublicUrl(req, entry) {
+  return publicUrl(req, `/?entry=${encodeURIComponent(entry.id)}`);
+}
+
+function renderSitemap(req) {
+  const entries = fetcher.getEntries({ limit: 1000 })
+    .filter(entry => entry && entry.id)
+    .sort((a, b) => {
+      const assetDelta = Number(hasPublicAssets(b)) - Number(hasPublicAssets(a));
+      if (assetDelta) return assetDelta;
+      return Math.max(Number(b.assets?.latestAt) || 0, Number(b.publishedTs) || 0)
+        - Math.max(Number(a.assets?.latestAt) || 0, Number(a.publishedTs) || 0);
+    });
+
+  const urls = [
+    [
+      `  <url>`,
+      `    <loc>${escapeHtml(publicUrl(req, '/'))}</loc>`,
+      `    <changefreq>daily</changefreq>`,
+      `    <priority>1.0</priority>`,
+      `  </url>`,
+    ].join('\n'),
+  ];
+
+  for (const entry of entries) {
+    const lastmod = entryLastModified(entry);
+    const priority = hasPublicAssets(entry) ? '0.8' : '0.5';
+    const changefreq = hasPublicAssets(entry) ? 'weekly' : 'monthly';
+    urls.push([
+      `  <url>`,
+      `    <loc>${escapeHtml(entryPublicUrl(req, entry))}</loc>`,
+      lastmod ? `    <lastmod>${escapeHtml(lastmod)}</lastmod>` : '',
+      `    <changefreq>${changefreq}</changefreq>`,
+      `    <priority>${priority}</priority>`,
+      `  </url>`,
+    ].filter(Boolean).join('\n'));
+  }
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    urls.join('\n'),
+    '</urlset>',
+    '',
+  ].join('\n');
+}
+
 function renderIndex(req, entry = null) {
   const html = fs.readFileSync(INDEX_PATH, 'utf8');
   const { title, tags } = socialMetaTags(req, entry);
@@ -93,6 +156,20 @@ app.get('/', (req, res) => {
   const entry = entryId ? fetcher.getEntryById(entryId) : null;
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req, entry));
+});
+
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send([
+    'User-agent: *',
+    'Allow: /',
+    `Sitemap: ${publicUrl(req, '/sitemap.xml')}`,
+    '',
+  ].join('\n'));
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=900');
+  res.type('application/xml').send(renderSitemap(req));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {
