@@ -1153,6 +1153,25 @@ function assetMetaLine(parts) {
   return parts.filter(Boolean).join(' · ') || '正在加载详情';
 }
 
+function assetSummaryText(value, max = 150) {
+  const text = String(value || '')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[#>*_`~]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text;
+}
+
+function readerAssetPreview(entry, type, fallback = '') {
+  const direct = assetSummaryText(fallback);
+  if (direct) return direct;
+  const preview = assetPreviewForType(entry, type);
+  return assetSummaryText(preview && preview.text);
+}
+
 function latestAssetItem(items, pickLast = false) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (!list.length) return null;
@@ -1174,10 +1193,14 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   const messages = (state.agentMessages || []).filter(message => !message.entryId || message.entryId === entry.id);
 
   if (assets.translation) {
+    const firstTranslatedParagraph = translation && Array.isArray(translation.content)
+      ? translation.content.map(pair => pair && pair.target).find(Boolean)
+      : '';
     rows.push({
       type: 'translation',
       label: '中文翻译',
       value: translation ? assetMetaLine([translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)]) : '正在加载详情',
+      preview: readerAssetPreview(entry, 'translation', firstTranslatedParagraph),
     });
   }
   if (assets.rewrite) {
@@ -1185,6 +1208,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       type: 'rewrite',
       label: '乔木重写',
       value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)]) : '正在加载详情',
+      preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
     });
   }
   if (assets.comments) {
@@ -1193,6 +1217,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       type: 'comments',
       label: '人工点评',
       value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, formatAssetTime(latest.createdAt)]) : `${assets.comments} 条 · 正在加载详情`,
+      preview: readerAssetPreview(entry, 'comments', latest && latest.body),
     });
   }
   if (assets.chatMessages) {
@@ -1201,6 +1226,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       type: 'chat',
       label: '文章对话',
       value: latest ? assetMetaLine([`${assets.chatMessages} 条`, latest.author, formatAssetTime(latest.createdAt)]) : `${assets.chatMessages} 条 · 正在加载详情`,
+      preview: readerAssetPreview(entry, 'chat', latest && latest.content),
     });
   }
 
@@ -1209,6 +1235,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       <button type="button" class="asset-summary-item" data-asset-summary="${row.type}">
         <span>${escapeHtml(row.label)}</span>
         <strong>${escapeHtml(row.value)}</strong>
+        ${row.preview ? `<em class="asset-summary-preview">${escapeHtml(row.preview)}</em>` : ''}
       </button>
       <button type="button" class="asset-summary-copy" data-asset-copy="${row.type}" title="复制${escapeHtml(row.label)}链接" aria-label="复制${escapeHtml(row.label)}链接">⧉</button>
     </div>`).join('');
