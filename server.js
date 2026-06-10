@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const compression = require('compression');
 const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
@@ -11,6 +12,10 @@ const DAILY_REFRESH_HOUR_SHANGHAI = 8;
 const TITLE_TRANSLATION_LIMIT = parseInt(process.env.TITLE_TRANSLATION_LIMIT || '80', 10);
 const SESSION_COOKIE = 'qm_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+const DEFAULT_TITLE = 'QMReader · RSS 阅读器';
+const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。';
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 app.set('trust proxy', 1);
 app.use(compression());
@@ -19,14 +24,82 @@ app.use((req, res, next) => {
   req.user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE));
   next();
 });
+
+let refreshing = false;
+let refreshProgress = { done: 0, total: 0 };
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => HTML_ESCAPES[char]);
+}
+
+function clipText(value, max = 180) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1).trim()}…`;
+}
+
+function publicUrl(req, target = req.originalUrl || '/') {
+  const host = req.get('host') || 'rss.qiaomu.ai';
+  const proto = req.protocol || (req.get('x-forwarded-proto') || 'https').split(',')[0];
+  return `${proto}://${host}${target}`;
+}
+
+function absolutePublicUrl(req, value) {
+  if (!value) return '';
+  try {
+    return new URL(value, publicUrl(req, '/')).href;
+  } catch {
+    return '';
+  }
+}
+
+function socialMetaTags(req, entry) {
+  const title = entry ? `${entry.titleZh || entry.title || '文章'} · QMReader` : DEFAULT_TITLE;
+  const description = clipText(entry ? (entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION) : DEFAULT_DESCRIPTION);
+  const url = publicUrl(req);
+  const image = entry ? absolutePublicUrl(req, entry.image) : '';
+  const tags = [
+    `<meta name="description" content="${escapeHtml(description)}" />`,
+    `<link rel="canonical" href="${escapeHtml(url)}" />`,
+    `<meta property="og:site_name" content="QMReader" />`,
+    `<meta property="og:type" content="${entry ? 'article' : 'website'}" />`,
+    `<meta property="og:title" content="${escapeHtml(title)}" />`,
+    `<meta property="og:description" content="${escapeHtml(description)}" />`,
+    `<meta property="og:url" content="${escapeHtml(url)}" />`,
+    `<meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}" />`,
+    `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
+    `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
+  ];
+  if (image) {
+    tags.push(`<meta property="og:image" content="${escapeHtml(image)}" />`);
+    tags.push(`<meta name="twitter:image" content="${escapeHtml(image)}" />`);
+  }
+  if (entry && entry.published) {
+    tags.push(`<meta property="article:published_time" content="${escapeHtml(entry.published)}" />`);
+  }
+  return { title, tags: tags.join('\n  ') };
+}
+
+function renderIndex(req, entry = null) {
+  const html = fs.readFileSync(INDEX_PATH, 'utf8');
+  const { title, tags } = socialMetaTags(req, entry);
+  return html
+    .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
+    .replace('</head>', `  ${tags}\n</head>`);
+}
+
+app.get('/', (req, res) => {
+  const entryId = String(req.query.entry || '').trim();
+  const entry = entryId ? fetcher.getEntryById(entryId) : null;
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req, entry));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
     if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
   },
 }));
-
-let refreshing = false;
-let refreshProgress = { done: 0, total: 0 };
 
 function cookieValue(req, name) {
   const header = String(req.headers.cookie || '');
