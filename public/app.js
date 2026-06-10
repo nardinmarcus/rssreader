@@ -29,6 +29,13 @@ const COMMENT_TEMPLATES = {
   quote: '引用：',
   source: '资料：',
 };
+const COMMENT_TEMPLATE_LABELS = {
+  insight: '观点',
+  question: '疑问',
+  action: '行动',
+  quote: '引用',
+  source: '资料',
+};
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
@@ -1648,16 +1655,37 @@ function renderComments() {
     list.innerHTML = '<div class="comments-empty">还没有人工点评</div>';
     return;
   }
-  list.innerHTML = comments.map(comment => `
-    <div class="comment-item">
-      <div class="comment-head">
-        <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
-        <button type="button" class="comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
-      </div>
-      <div class="comment-body">${renderMarkdownLite(comment.body)}</div>
-    </div>`).join('');
+  list.innerHTML = comments.map(comment => {
+    const display = commentDisplayParts(comment.body);
+    return `
+      <div class="comment-item${display.type ? ` comment-type-${display.type}` : ''}">
+        <div class="comment-head">
+          <div class="comment-head-left">
+            ${display.label ? `<span class="comment-kind">${escapeHtml(display.label)}</span>` : ''}
+            <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
+          </div>
+          <button type="button" class="comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
+        </div>
+        <div class="comment-body">${renderMarkdownLite(display.body)}</div>
+      </div>`;
+  }).join('');
   renderReaderAssetSummary();
   settlePendingAssetJump('comments');
+}
+
+function commentDisplayParts(body) {
+  const raw = String(body || '');
+  const trimmed = raw.trimStart();
+  for (const [type, prefix] of Object.entries(COMMENT_TEMPLATES)) {
+    if (trimmed.startsWith(prefix)) {
+      return {
+        type,
+        label: COMMENT_TEMPLATE_LABELS[type] || prefix.replace(/：$/, ''),
+        body: trimmed.slice(prefix.length).trimStart() || trimmed,
+      };
+    }
+  }
+  return { type: '', label: '', body: raw };
 }
 
 function copyComment(commentId) {
