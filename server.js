@@ -109,13 +109,26 @@ function requestAssetFocus(req) {
 function assetDirectoryMeta(req) {
   if (!isAssetDirectoryRequest(req)) return null;
   const type = requestAssetDirectoryType(req);
+  const q = clipText(String(req.query.q || '').trim(), 48);
   if (!type) {
+    if (q) {
+      return {
+        title: `公开资产搜索：${q} · QMReader`,
+        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、人工点评和文章对话。`,
+      };
+    }
     return {
       title: '公开资产 · QMReader',
       description: DEFAULT_DESCRIPTION,
     };
   }
   const meta = ASSET_DIRECTORY_META[type];
+  if (q) {
+    return {
+      title: `${meta.label}资产搜索：${q} · QMReader`,
+      description: `搜索“${q}”相关的${meta.label}资产。${meta.description}`,
+    };
+  }
   return {
     title: `${meta.label}资产 · QMReader`,
     description: meta.description,

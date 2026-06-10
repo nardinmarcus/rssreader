@@ -136,8 +136,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/entry/:id/comments` | 登录用户发布公开人工点评 |
 | GET | `/api/entry/:id/chat` | 读取公开文章对话 |
 | POST | `/api/entry/:id/chat` | 登录用户以当前文章为上下文对话；body `{"messages":[{"role":"user","content":"..."}]}` |
-| GET | `/assets` | 公开资产网页目录 |
-| GET | `/assets/:type` | 按类型浏览公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
+| GET | `/assets` | 公开资产网页目录；支持 `?q=` 分享资产搜索 |
+| GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | GET | `/assets.xml` | 公开资产 RSS 订阅流 |
 | GET | `/assets/:type.xml` | 按类型订阅公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | POST | `/api/translate-titles` | 管理员手动触发英文标题补翻译 |

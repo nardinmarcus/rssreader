@@ -354,12 +354,14 @@ function routeStateFromUrl() {
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
     commentId,
     chatMessageId,
+    q: String(params.get('q') || '').trim(),
   };
 }
 
-function listRouteTitle(view = state.view, assetFilter = state.assetFilter) {
+function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
   if (view === 'assets') {
-    return assetFilter ? `${ASSET_TYPE_LABELS[assetFilter] || '公开'}资产 · QMReader` : '公开资产 · QMReader';
+    const prefix = assetFilter ? `${ASSET_TYPE_LABELS[assetFilter] || '公开'}资产` : '公开资产';
+    return q ? `${prefix} · “${q}” · QMReader` : `${prefix} · QMReader`;
   }
   return 'QMReader · RSS 阅读器';
 }
@@ -435,6 +437,7 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
     url.pathname = assetFilter && ASSET_FILTER_TYPES.includes(assetFilter)
       ? `/assets/${assetFilter}`
       : '/assets';
+    if (state.q) url.searchParams.set('q', state.q);
   }
   return url;
 }
@@ -1613,6 +1616,7 @@ function updateSearchPlaceholder() {
   const search = $('#search');
   if (!search) return;
   search.placeholder = state.view === 'assets' ? '搜索资产…' : '搜索文章…';
+  if (search.value !== state.q) search.value = state.q;
 }
 
 /* ---------- Reader ---------- */
@@ -2352,11 +2356,13 @@ async function openEntryFromUrl() {
       state.filterSource = null;
       state.filterCategory = null;
       state.assetFilter = route.assetFilter;
+      state.q = route.q;
     } else {
       state.view = 'all';
       state.filterSource = null;
       state.filterCategory = null;
       state.assetFilter = null;
+      state.q = '';
     }
     updateListTitle();
     renderSidebar();
@@ -2998,7 +3004,15 @@ $('#auth-form').onsubmit = (e) => {
 let searchTimer = null;
 $('#search').oninput = (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); reload(); }, 350);
+  searchTimer = setTimeout(() => {
+    state.q = e.target.value.trim();
+    if (state.view === 'assets') {
+      syncListUrl({ replace: true });
+      reload({ clearUrl: false });
+      return;
+    }
+    reload();
+  }, 350);
 };
 
 $('#theme-toggle').onclick = () => {
