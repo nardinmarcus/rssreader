@@ -715,6 +715,47 @@ function visibleEntries() {
 
 function sourceById(id) { return state.sources.find(s => s.id === id); }
 
+function assetBadgesHtml(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const badges = [];
+  if (assets.translation) badges.push({ type: 'translation', label: '中译' });
+  if (assets.rewrite) badges.push({ type: 'rewrite', label: '重写' });
+  if (assets.comments) badges.push({ type: 'comments', label: `点评 ${assets.comments}` });
+  if (assets.chatMessages) badges.push({ type: 'chat', label: `对话 ${assets.chatMessages}` });
+  return badges.map(badge => `<span class="asset-badge asset-${badge.type}">${escapeHtml(badge.label)}</span>`).join('');
+}
+
+function mergeAssets(entry, patch = {}) {
+  return {
+    translation: false,
+    rewrite: false,
+    comments: 0,
+    chatMessages: 0,
+    ...(entry && entry.assets ? entry.assets : {}),
+    ...patch,
+  };
+}
+
+function renderReaderAssets(entry = state.activeEntry) {
+  const el = $('#reader-assets');
+  const html = assetBadgesHtml(entry);
+  el.innerHTML = html;
+  el.classList.toggle('hidden', !html);
+}
+
+function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
+  if (!entryId) return;
+  const idx = state.entries.findIndex(entry => entry.id === entryId);
+  if (idx >= 0) {
+    state.entries[idx] = { ...state.entries[idx], assets: mergeAssets(state.entries[idx], patch) };
+  }
+  if (state.activeEntry?.id === entryId) {
+    state.activeEntry = { ...state.activeEntry, assets: mergeAssets(state.activeEntry, patch) };
+    renderReaderAssets(state.activeEntry);
+  }
+  if (rerenderList) renderList();
+}
+
 function isAdmin() {
   return state.me && state.me.role === 'admin';
 }
@@ -810,6 +851,7 @@ function renderList() {
   const frag = document.createDocumentFragment();
   for (const e of list) {
     const src = sourceById(e.sourceId);
+    const assetsHtml = assetBadgesHtml(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
     card.dataset.id = e.id;
@@ -825,6 +867,7 @@ function renderList() {
         <div class="entry-title">${escapeHtml(e.titleZh || e.title)}</div>
         ${e.titleZh ? `<div class="entry-original">${escapeHtml(e.title)}</div>` : ''}
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
+        ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
     card.onclick = () => openEntry(e);
@@ -942,6 +985,9 @@ async function loadTranslation(entry) {
     const data = await api(`/api/entry/${entry.id}/translation`);
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
+    if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
+      updateEntryAssets(entry.id, { translation: true });
+    }
   } catch {
     renderTranslation(null);
   } finally {
@@ -976,6 +1022,7 @@ async function loadRewrite(entry) {
     const data = await api(`/api/entry/${entry.id}/rewrite`);
     if (state.activeEntry?.id !== entry.id) return;
     renderRewrite(data.rewrite);
+    if (data.rewrite && data.rewrite.body) updateEntryAssets(entry.id, { rewrite: true });
   } catch {
     renderRewrite(null);
   }
@@ -1009,6 +1056,9 @@ async function generateTranslation({ force = false } = {}) {
     });
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
+    if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
+      updateEntryAssets(entry.id, { translation: true });
+    }
     setReaderTab('translation');
     toast(data.cached ? '已显示缓存翻译' : '双语翻译已保存');
   } catch (err) {
@@ -1047,6 +1097,7 @@ async function generateRewrite({ force = false } = {}) {
     });
     if (state.activeEntry?.id !== entry.id) return;
     renderRewrite(data.rewrite);
+    if (data.rewrite && data.rewrite.body) updateEntryAssets(entry.id, { rewrite: true });
     setReaderTab('rewrite');
     toast(data.cached ? '已显示缓存重写' : '乔木风格重写已保存');
   } catch (err) {
@@ -1128,6 +1179,7 @@ async function loadComments(entry) {
     const data = await api(`/api/entry/${entry.id}/comments`);
     if (state.activeEntry?.id !== entry.id) return;
     state.comments = data.comments || [];
+    updateEntryAssets(entry.id, { comments: state.comments.length });
     renderComments();
   } catch {
     renderComments();
@@ -1148,6 +1200,7 @@ async function submitComment() {
     });
     state.comments = data.comments || [];
     $('#comment-input').value = '';
+    updateEntryAssets(entry.id, { comments: state.comments.length });
     renderComments();
     toast('点评已发布');
   } catch (err) {
@@ -1249,6 +1302,7 @@ async function loadAgentMessages(entry) {
     const data = await api(`/api/entry/${entry.id}/chat`);
     if (state.activeEntry?.id !== entry.id) return;
     state.agentMessages = data.messages || [];
+    updateEntryAssets(entry.id, { chatMessages: state.agentMessages.length });
     renderAgent();
   } catch {
     renderAgent();
@@ -1306,6 +1360,7 @@ async function openEntry(e) {
   renderTitle(e);
   const date = e.published ? new Date(e.published).toLocaleString('zh-CN') : '';
   $('#reader-meta').textContent = [e.author, date].filter(Boolean).join(' · ');
+  renderReaderAssets(e);
   $('#reader-open').href = e.link || '#';
   const starBtn = $('#reader-star');
   starBtn.classList.toggle('starred', state.starred.has(e.id));
