@@ -1243,7 +1243,7 @@ function renderList() {
   const frag = document.createDocumentFragment();
   for (const e of list) {
     const src = sourceById(e.sourceId);
-    const assetsHtml = assetBadgesHtml(e);
+    const assetsHtml = assetBadgesHtml(e, { interactive: true });
     const assetActivity = assetActivityLabel(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
@@ -1264,7 +1264,16 @@ function renderList() {
         ${assetActivity ? `<div class="entry-asset-activity">${escapeHtml(assetActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
-    card.onclick = () => openEntry(e);
+    card.onclick = (event) => {
+      const asset = event.target.closest('[data-asset]');
+      if (asset) {
+        event.preventDefault();
+        event.stopPropagation();
+        openEntry(e, { focus: asset.dataset.asset });
+        return;
+      }
+      openEntry(e);
+    };
     frag.appendChild(card);
   }
   el.appendChild(frag);
