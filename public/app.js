@@ -863,11 +863,14 @@ function entryAssetItems(entry) {
   return items;
 }
 
-function assetBadgesHtml(entry, { interactive = false } = {}) {
+function assetBadgesHtml(entry, { interactive = false, copyable = false } = {}) {
   return entryAssetItems(entry).map(item => {
     const cls = `asset-badge asset-${item.type}${interactive ? ' asset-jump' : ''}`;
     if (!interactive) return `<span class="${cls}">${escapeHtml(item.label)}</span>`;
-    return `<button type="button" class="${cls}" data-asset="${item.type}" title="${escapeHtml(item.title)}">${escapeHtml(item.label)}</button>`;
+    const badge = `<button type="button" class="${cls}" data-asset="${item.type}" title="${escapeHtml(item.title)}">${escapeHtml(item.label)}</button>`;
+    if (!copyable) return badge;
+    const label = ASSET_FOCUS_LABELS[item.type] || item.label;
+    return `<span class="asset-badge-group">${badge}<button type="button" class="asset-badge-copy" data-asset-copy="${item.type}" title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">⧉</button></span>`;
   }).join('');
 }
 
@@ -1263,7 +1266,7 @@ function renderList() {
   const frag = document.createDocumentFragment();
   for (const e of list) {
     const src = sourceById(e.sourceId);
-    const assetsHtml = assetBadgesHtml(e, { interactive: true });
+    const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
     const assetActivity = assetActivityLabel(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
@@ -1285,6 +1288,15 @@ function renderList() {
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
     card.onclick = (event) => {
+      const copy = event.target.closest('[data-asset-copy]');
+      if (copy) {
+        event.preventDefault();
+        event.stopPropagation();
+        const url = readerAssetUrl(copy.dataset.assetCopy, e);
+        const label = ASSET_FOCUS_LABELS[copy.dataset.assetCopy] || '资产';
+        copyText(url, `${label}链接已复制`);
+        return;
+      }
       const asset = event.target.closest('[data-asset]');
       if (asset) {
         event.preventDefault();

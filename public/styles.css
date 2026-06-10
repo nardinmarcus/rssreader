@@ -430,6 +430,35 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   line-height: 1.35;
 }
 .reader-asset-badges { margin-top: 12px; }
+.asset-badge-group {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.asset-badge-group .asset-badge {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.asset-badge-copy {
+  min-width: 22px;
+  min-height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 999px 999px 0;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1;
+}
+.asset-badge-copy:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+.asset-badge-copy:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
 .asset-badge {
   display: inline-flex;
   align-items: center;
