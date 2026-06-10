@@ -450,11 +450,11 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-radius: 6px;
   cursor: pointer;
   display: inline-grid;
-  height: 24px;
+  height: 32px;
   place-items: center;
   line-height: 1;
   padding: 0;
-  width: 24px;
+  width: 32px;
 }
 .asset-copy-link:hover {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
@@ -553,7 +553,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .entry-asset-preview-row {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 44px;
   align-items: stretch;
   gap: 6px;
 }
@@ -623,7 +623,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: grid;
   place-items: center;
   min-height: 44px;
-  min-width: 0;
+  min-width: 44px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-1);
@@ -718,7 +718,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .asset-summary-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 44px;
   gap: 5px;
 }
 .asset-summary-item {
@@ -773,7 +773,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   -webkit-line-clamp: 2;
 }
 .asset-summary-copy {
-  width: 32px;
+  width: 44px;
   min-height: 62px;
   height: 100%;
   border: 1px solid var(--border);
