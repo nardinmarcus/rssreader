@@ -722,14 +722,22 @@ function visibleEntries() {
 
 function sourceById(id) { return state.sources.find(s => s.id === id); }
 
-function assetBadgesHtml(entry) {
+function entryAssetItems(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
-  const badges = [];
-  if (assets.translation) badges.push({ type: 'translation', label: '中译' });
-  if (assets.rewrite) badges.push({ type: 'rewrite', label: '重写' });
-  if (assets.comments) badges.push({ type: 'comments', label: `点评 ${assets.comments}` });
-  if (assets.chatMessages) badges.push({ type: 'chat', label: `对话 ${assets.chatMessages}` });
-  return badges.map(badge => `<span class="asset-badge asset-${badge.type}">${escapeHtml(badge.label)}</span>`).join('');
+  const items = [];
+  if (assets.translation) items.push({ type: 'translation', label: '中译', title: '查看中文翻译' });
+  if (assets.rewrite) items.push({ type: 'rewrite', label: '重写', title: '查看乔木风格重写' });
+  if (assets.comments) items.push({ type: 'comments', label: `点评 ${assets.comments}`, title: '查看人工点评' });
+  if (assets.chatMessages) items.push({ type: 'chat', label: `对话 ${assets.chatMessages}`, title: '查看文章对话' });
+  return items;
+}
+
+function assetBadgesHtml(entry, { interactive = false } = {}) {
+  return entryAssetItems(entry).map(item => {
+    const cls = `asset-badge asset-${item.type}${interactive ? ' asset-jump' : ''}`;
+    if (!interactive) return `<span class="${cls}">${escapeHtml(item.label)}</span>`;
+    return `<button type="button" class="${cls}" data-asset="${item.type}" title="${escapeHtml(item.title)}">${escapeHtml(item.label)}</button>`;
+  }).join('');
 }
 
 function mergeAssets(entry, patch = {}) {
@@ -745,9 +753,38 @@ function mergeAssets(entry, patch = {}) {
 
 function renderReaderAssets(entry = state.activeEntry) {
   const el = $('#reader-assets');
-  const html = assetBadgesHtml(entry);
+  const html = assetBadgesHtml(entry, { interactive: true });
   el.innerHTML = html;
   el.classList.toggle('hidden', !html);
+}
+
+function scrollReaderTarget(selector) {
+  const target = $(selector);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function jumpToArticleAsset(type) {
+  if (!state.activeEntry) return;
+  if (type === 'translation') {
+    handleReaderTab('translation');
+    scrollReaderTarget('#reader-translation');
+    return;
+  }
+  if (type === 'rewrite') {
+    setReaderTab('rewrite');
+    scrollReaderTarget('#reader-rewrite-panel');
+    return;
+  }
+  if (type === 'comments') {
+    scrollReaderTarget('#reader-comments');
+    return;
+  }
+  if (type === 'chat') {
+    setAgentCollapsed(false);
+    const messages = $('#agent-messages');
+    if (messages) messages.scrollTop = messages.scrollHeight;
+    scrollReaderTarget('#agent-pane');
+  }
 }
 
 function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
@@ -1871,6 +1908,11 @@ $('#reader-star').onclick = () => {
   syncEntryState(e.id, { starred: nextStarred });
 };
 $('#reader-fetch-original').onclick = fetchOriginalContent;
+$('#reader-assets').onclick = (e) => {
+  const btn = e.target.closest('[data-asset]');
+  if (!btn) return;
+  jumpToArticleAsset(btn.dataset.asset);
+};
 $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(state.translation) });
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
 $$('.reader-tab').forEach(btn => {
