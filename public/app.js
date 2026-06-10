@@ -19,6 +19,7 @@ function readJson(key, fallback) {
 }
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
+const READER_TABS = ['original', 'translation', 'rewrite'];
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
@@ -181,6 +182,10 @@ function normalizeBaseUrl(input) {
   return String(input || '').trim().replace(/\/+$/, '');
 }
 
+function normalizeReaderTab(tab) {
+  return READER_TABS.includes(tab) ? tab : 'original';
+}
+
 function clampTemperature(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0.7;
@@ -308,6 +313,44 @@ const state = {
   pendingAgentText: '',
   loadedAiScope: '',
 };
+
+function routeStateFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    entryId: String(params.get('entry') || '').trim(),
+    tab: normalizeReaderTab(params.get('tab')),
+  };
+}
+
+function readerUrlFor(entry = state.activeEntry, tab = state.readerTab) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  if (entry && entry.id) {
+    url.searchParams.set('entry', entry.id);
+    const nextTab = normalizeReaderTab(tab);
+    if (nextTab !== 'original') url.searchParams.set('tab', nextTab);
+  }
+  return url;
+}
+
+function syncReaderUrl({ replace = false } = {}) {
+  const entry = state.activeEntry;
+  if (!entry || !entry.id) return;
+  const url = readerUrlFor(entry, state.readerTab);
+  document.title = `${entry.titleZh || entry.title || '文章'} · QMReader`;
+  if (url.href === window.location.href) return;
+  const method = replace ? 'replaceState' : 'pushState';
+  history[method]({ entryId: entry.id, tab: state.readerTab }, '', url);
+}
+
+function clearReaderUrl({ replace = true } = {}) {
+  const url = readerUrlFor(null);
+  document.title = 'QMReader · RSS 阅读器';
+  if (url.href === window.location.href) return;
+  const method = replace ? 'replaceState' : 'pushState';
+  history[method]({ entryId: null }, '', url);
+}
 
 function persist() {
   if (state.me) return;
@@ -1084,13 +1127,14 @@ function renderOriginalContent(entry, content) {
   if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
 }
 
-function setReaderTab(tab) {
-  const next = ['original', 'translation', 'rewrite'].includes(tab) ? tab : 'original';
+function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
+  const next = normalizeReaderTab(tab);
   state.readerTab = next;
   $$('.reader-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === next));
   $('#reader-original-panel').classList.toggle('hidden', next !== 'original');
   $('#reader-translation').classList.toggle('hidden', next !== 'translation');
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
+  if (syncUrl) syncReaderUrl({ replace: replaceUrl });
 }
 
 function handleReaderTab(tab) {
@@ -1514,8 +1558,9 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e) {
+async function openEntry(e, { tab = 'original', updateUrl = true, replaceUrl = false } = {}) {
   state.activeEntry = e;
+  const requestedTab = normalizeReaderTab(tab);
   const wasRead = state.read.has(e.id);
   state.read.add(e.id);
   if (!wasRead) syncEntryState(e.id, { read: true });
@@ -1526,6 +1571,7 @@ async function openEntry(e) {
   $('#reader').classList.remove('hidden');
   $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>`;
   renderTitle(e);
+  document.title = `${e.titleZh || e.title || '文章'} · QMReader`;
   const date = e.published ? new Date(e.published).toLocaleString('zh-CN') : '';
   $('#reader-meta').textContent = [e.author, date].filter(Boolean).join(' · ');
   $('#reader-open').href = e.link || '#';
@@ -1544,11 +1590,12 @@ async function openEntry(e) {
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
   updateFetchOriginalButton(e);
-  setReaderTab('original');
+  setReaderTab(requestedTab, { syncUrl: false });
   loadTranslation(e);
   loadRewrite(e);
   loadComments(e);
   loadAgentMessages(e);
+  if (updateUrl) syncReaderUrl({ replace: replaceUrl });
 
   $('#reader-audio').innerHTML = e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '';
   $('#reader-pane').scrollTop = 0;
@@ -1571,8 +1618,58 @@ async function openEntry(e) {
   renderOriginalContent(e, content);
 }
 
+function closeReaderFromRoute() {
+  state.activeEntry = null;
+  state.agentMessages = [];
+  state.comments = [];
+  state.translation = null;
+  state.translationLoading = false;
+  state.translationGenerating = false;
+  state.pendingTranslationGenerate = false;
+  state.rewrite = null;
+  state.rewriteGenerating = false;
+  state.pendingAssetJump = null;
+  state.fetchingOriginal = false;
+  state.readerTab = 'original';
+  $('#reader').classList.add('hidden');
+  $('#reader-empty').classList.remove('hidden');
+  document.getElementById('app').classList.remove('reading');
+  document.title = 'QMReader · RSS 阅读器';
+  renderList();
+  renderAgent();
+}
+
+async function openEntryById(entryId, { tab = 'original', updateUrl = false, replaceUrl = true } = {}) {
+  const id = String(entryId || '').trim();
+  if (!id) return false;
+  let entry = state.entries.find(item => item.id === id);
+  if (!entry) {
+    const data = await api(`/api/entry/${encodeURIComponent(id)}`);
+    entry = data.entry;
+  }
+  if (!entry) return false;
+  await openEntry(entry, { tab, updateUrl, replaceUrl });
+  return true;
+}
+
+async function openEntryFromUrl() {
+  const route = routeStateFromUrl();
+  if (!route.entryId) {
+    closeReaderFromRoute();
+    return false;
+  }
+  try {
+    return await openEntryById(route.entryId, { tab: route.tab, updateUrl: false });
+  } catch (err) {
+    toast('找不到这篇文章: ' + err.message, 4000);
+    closeReaderFromRoute();
+    clearReaderUrl({ replace: true });
+    return false;
+  }
+}
+
 /* ---------- Navigation ---------- */
-async function reload({ keepReader = false } = {}) {
+async function reload({ keepReader = false, clearUrl = true } = {}) {
   await loadEntries();
   updateListTitle();
   renderList();
@@ -1593,6 +1690,7 @@ async function reload({ keepReader = false } = {}) {
     $('#reader').classList.add('hidden');
     $('#reader-empty').classList.remove('hidden');
     document.getElementById('app').classList.remove('reading');
+    if (clearUrl) clearReaderUrl({ replace: true });
     renderAgent();
   }
 }
@@ -2031,6 +2129,11 @@ $('#reader-star').onclick = () => {
   syncEntryState(e.id, { starred: nextStarred });
 };
 $('#reader-fetch-original').onclick = fetchOriginalContent;
+$('#reader-copy-link').onclick = () => {
+  if (!state.activeEntry) return;
+  syncReaderUrl({ replace: true });
+  copyText(window.location.href, '文章链接已复制');
+};
 $('#reader-assets').onclick = (e) => {
   const btn = e.target.closest('[data-asset]');
   if (!btn) return;
@@ -2138,6 +2241,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+window.addEventListener('popstate', () => {
+  openEntryFromUrl();
+});
+
 /* ---------- Init ---------- */
 (async function init() {
   document.body.dataset.theme = storage.getItem('fr_theme') || 'light';
@@ -2149,7 +2256,7 @@ document.addEventListener('keydown', (e) => {
   try {
     await loadMe();
     const data = await loadSources();
-    await reload();
+    await reload({ clearUrl: false });
     renderAgent();
     // first boot: server may still be fetching — poll a few times
     if (data.refreshing || state.entries.length === 0) {
@@ -2161,6 +2268,7 @@ document.addEventListener('keydown', (e) => {
         if (!d.refreshing && state.entries.length) break;
       }
     }
+    await openEntryFromUrl();
   } catch (e) {
     toast('加载失败: ' + e.message, 5000);
     $('#entry-list').innerHTML = `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=20" />
+  <link rel="stylesheet" href="styles.css?v=21" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -67,6 +67,7 @@
           <div class="reader-toolbar">
             <a id="reader-open" class="ghost-btn" target="_blank" rel="noopener">↗ 打开原文</a>
             <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
+            <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
             <button id="reader-star" class="ghost-btn">★ 收藏</button>
           </div>
         </header>
@@ -275,6 +276,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=21"></script>
 </body>
 </html>
