@@ -93,7 +93,10 @@ function assetDirectoryMeta(req) {
 
 function socialMetaTags(req, entry) {
   const directoryMeta = entry ? null : assetDirectoryMeta(req);
-  const title = entry ? `${entry.titleZh || entry.title || '文章'} · QMReader` : (directoryMeta?.title || DEFAULT_TITLE);
+  const focus = entry ? normalizeAssetDirectoryType(String(req.query.focus || '')) : '';
+  const title = entry
+    ? `${focus ? `${ASSET_DIRECTORY_META[focus].label} · ` : ''}${entry.titleZh || entry.title || '文章'} · QMReader`
+    : (directoryMeta?.title || DEFAULT_TITLE);
   const description = clipText(entry ? (entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION) : (directoryMeta?.description || DEFAULT_DESCRIPTION));
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
@@ -133,6 +136,10 @@ function hasPublicAssetType(entry, type) {
   return hasPublicAssets(entry);
 }
 
+function publicAssetTypes(entry) {
+  return Object.keys(ASSET_DIRECTORY_META).filter(type => hasPublicAssetType(entry, type));
+}
+
 function entryLastModified(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const timestamp = Math.max(Number(assets.latestAt) || 0, Number(entry && entry.publishedTs) || 0);
@@ -144,8 +151,11 @@ function entryLastModified(entry) {
   }
 }
 
-function entryPublicUrl(req, entry) {
-  return publicUrl(req, `/?entry=${encodeURIComponent(entry.id)}`);
+function entryPublicUrl(req, entry, focus = '') {
+  const query = new URLSearchParams({ entry: entry.id });
+  const assetFocus = normalizeAssetDirectoryType(focus);
+  if (assetFocus) query.set('focus', assetFocus);
+  return publicUrl(req, `/?${query.toString()}`);
 }
 
 function assetDirectoryUrl(req, type = '') {
@@ -213,6 +223,17 @@ function renderSitemap(req) {
       `    <priority>${priority}</priority>`,
       `  </url>`,
     ].filter(Boolean).join('\n'));
+
+    for (const type of publicAssetTypes(entry)) {
+      urls.push([
+        `  <url>`,
+        `    <loc>${escapeHtml(entryPublicUrl(req, entry, type))}</loc>`,
+        lastmod ? `    <lastmod>${escapeHtml(lastmod)}</lastmod>` : '',
+        `    <changefreq>weekly</changefreq>`,
+        `    <priority>0.75</priority>`,
+        `  </url>`,
+      ].filter(Boolean).join('\n'));
+    }
   }
 
   return [

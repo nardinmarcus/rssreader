@@ -21,6 +21,7 @@ function readJson(key, fallback) {
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'translation', 'rewrite'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
+const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '乔木风格重写', comments: '人工点评', chat: '文章对话' };
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
@@ -301,6 +302,7 @@ const state = {
   rewrite: null,
   rewriteGenerating: false,
   readerTab: 'original',
+  readerFocus: null,
   pendingAssetJump: null,
   fetchingOriginal: false,
   agentBusy: false,
@@ -323,6 +325,7 @@ function routeStateFromUrl() {
     tab: normalizeReaderTab(params.get('tab')),
     view: params.get('view') === 'assets' ? 'assets' : '',
     assetFilter: ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null,
+    focus: ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null,
   };
 }
 
@@ -333,7 +336,13 @@ function listRouteTitle(view = state.view, assetFilter = state.assetFilter) {
   return 'QMReader · RSS 阅读器';
 }
 
-function readerUrlFor(entry = state.activeEntry, tab = state.readerTab) {
+function readerRouteTitle(entry = state.activeEntry, focus = state.readerFocus) {
+  const title = entry ? (entry.titleZh || entry.title || '文章') : '文章';
+  const prefix = focus && ASSET_FOCUS_LABELS[focus] ? `${ASSET_FOCUS_LABELS[focus]} · ` : '';
+  return `${prefix}${title} · QMReader`;
+}
+
+function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = state.readerFocus) {
   const url = new URL(window.location.href);
   url.search = '';
   url.hash = '';
@@ -341,6 +350,7 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab) {
     url.searchParams.set('entry', entry.id);
     const nextTab = normalizeReaderTab(tab);
     if (nextTab !== 'original') url.searchParams.set('tab', nextTab);
+    if (focus && ASSET_FILTER_TYPES.includes(focus)) url.searchParams.set('focus', focus);
   }
   return url;
 }
@@ -362,7 +372,7 @@ function syncReaderUrl({ replace = false } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
   const url = readerUrlFor(entry, state.readerTab);
-  document.title = `${entry.titleZh || entry.title || '文章'} · QMReader`;
+  document.title = readerRouteTitle(entry);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
   history[method]({ entryId: entry.id, tab: state.readerTab }, '', url);
@@ -996,23 +1006,29 @@ function scrollReaderTarget(selector) {
   if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function performArticleAssetJump(type) {
+function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = {}) {
   if (!state.activeEntry) return;
   if (type === 'translation') {
-    handleReaderTab('translation');
+    state.readerFocus = 'translation';
+    handleReaderTab('translation', { preserveFocus: true, replaceUrl });
     scrollReaderTarget('#reader-translation');
     return;
   }
   if (type === 'rewrite') {
-    setReaderTab('rewrite');
+    state.readerFocus = 'rewrite';
+    setReaderTab('rewrite', { syncUrl, replaceUrl });
     scrollReaderTarget('#reader-rewrite-panel');
     return;
   }
   if (type === 'comments') {
+    state.readerFocus = 'comments';
+    if (syncUrl) syncReaderUrl({ replace: replaceUrl });
     scrollReaderTarget('#reader-comments');
     return;
   }
   if (type === 'chat') {
+    state.readerFocus = 'chat';
+    if (syncUrl) syncReaderUrl({ replace: replaceUrl });
     setAgentCollapsed(false);
     const messages = $('#agent-messages');
     if (messages) messages.scrollTop = messages.scrollHeight;
@@ -1026,7 +1042,7 @@ function settlePendingAssetJump(type, { clear = true } = {}) {
   [0, 180, 520].forEach((delay, index, delays) => {
     setTimeout(() => {
       if (!state.activeEntry || state.activeEntry.id !== entryId || state.pendingAssetJump !== type) return;
-      performArticleAssetJump(type);
+      performArticleAssetJump(type, { syncUrl: false });
       if (clear && index === delays.length - 1) state.pendingAssetJump = null;
     }, delay);
   });
@@ -1238,8 +1254,9 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   if (syncUrl) syncReaderUrl({ replace: replaceUrl });
 }
 
-function handleReaderTab(tab) {
-  setReaderTab(tab);
+function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {}) {
+  if (!preserveFocus) state.readerFocus = null;
+  setReaderTab(tab, { replaceUrl });
   if (tab !== 'translation' || state.translation) return;
   if (state.translationLoading) {
     state.pendingTranslationGenerate = true;
@@ -1659,9 +1676,14 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e, { tab = 'original', updateUrl = true, replaceUrl = false } = {}) {
+async function openEntry(e, { tab = 'original', focus = null, updateUrl = true, replaceUrl = false } = {}) {
   state.activeEntry = e;
-  const requestedTab = normalizeReaderTab(tab);
+  const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
+  const requestedTab = requestedFocus === 'translation'
+    ? 'translation'
+    : requestedFocus === 'rewrite'
+      ? 'rewrite'
+      : normalizeReaderTab(tab);
   const wasRead = state.read.has(e.id);
   state.read.add(e.id);
   if (!wasRead) syncEntryState(e.id, { read: true });
@@ -1672,7 +1694,7 @@ async function openEntry(e, { tab = 'original', updateUrl = true, replaceUrl = f
   $('#reader').classList.remove('hidden');
   $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>`;
   renderTitle(e);
-  document.title = `${e.titleZh || e.title || '文章'} · QMReader`;
+  document.title = readerRouteTitle(e, requestedFocus);
   const date = e.published ? new Date(e.published).toLocaleString('zh-CN') : '';
   $('#reader-meta').textContent = [e.author, date].filter(Boolean).join(' · ');
   $('#reader-open').href = e.link || '#';
@@ -1686,7 +1708,8 @@ async function openEntry(e, { tab = 'original', updateUrl = true, replaceUrl = f
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
   state.rewriteGenerating = false;
-  state.pendingAssetJump = null;
+  state.readerFocus = requestedFocus;
+  state.pendingAssetJump = requestedFocus;
   state.fetchingOriginal = false;
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
@@ -1729,6 +1752,7 @@ function closeReaderFromRoute() {
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
   state.rewriteGenerating = false;
+  state.readerFocus = null;
   state.pendingAssetJump = null;
   state.fetchingOriginal = false;
   state.readerTab = 'original';
@@ -1740,7 +1764,7 @@ function closeReaderFromRoute() {
   renderAgent();
 }
 
-async function openEntryById(entryId, { tab = 'original', updateUrl = false, replaceUrl = true } = {}) {
+async function openEntryById(entryId, { tab = 'original', focus = null, updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
   let entry = state.entries.find(item => item.id === id);
@@ -1749,7 +1773,7 @@ async function openEntryById(entryId, { tab = 'original', updateUrl = false, rep
     entry = data.entry;
   }
   if (!entry) return false;
-  await openEntry(entry, { tab, updateUrl, replaceUrl });
+  await openEntry(entry, { tab, focus, updateUrl, replaceUrl });
   return true;
 }
 
@@ -1774,7 +1798,7 @@ async function openEntryFromUrl() {
     return false;
   }
   try {
-    return await openEntryById(route.entryId, { tab: route.tab, updateUrl: false });
+    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, updateUrl: false });
   } catch (err) {
     toast('找不到这篇文章: ' + err.message, 4000);
     closeReaderFromRoute();
@@ -1799,6 +1823,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.pendingTranslationGenerate = false;
     state.rewrite = null;
     state.rewriteGenerating = false;
+    state.readerFocus = null;
     state.pendingAssetJump = null;
     state.fetchingOriginal = false;
     state.readerTab = 'original';
@@ -1814,12 +1839,14 @@ function selectSource(id) {
   state.filterSource = state.filterSource === id ? null : id;
   state.filterCategory = null;
   state.assetFilter = null;
+  state.readerFocus = null;
   reload();
 }
 function selectCategory(cat) {
   state.filterCategory = state.filterCategory === cat ? null : cat;
   state.filterSource = null;
   state.assetFilter = null;
+  state.readerFocus = null;
   reload();
 }
 function selectView(v) {
@@ -1827,6 +1854,7 @@ function selectView(v) {
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = null;
+  state.readerFocus = null;
   if (v === 'assets') {
     syncListUrl();
     reload({ clearUrl: false });
@@ -1840,6 +1868,7 @@ function selectAssetFilter(type = null) {
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
+  state.readerFocus = null;
   syncListUrl();
   reload({ clearUrl: false });
 }
