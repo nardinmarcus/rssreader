@@ -84,6 +84,8 @@ function normalizeAssetDirectoryType(value) {
 }
 
 function requestAssetFocus(req) {
+  if (String(req.query.comment || '').trim()) return 'comments';
+  if (String(req.query.chat || '').trim()) return 'chat';
   const focus = normalizeAssetDirectoryType(String(req.query.focus || ''));
   if (focus) return focus;
   const tab = String(req.query.tab || '');
@@ -115,7 +117,7 @@ function socialMetaTags(req, entry) {
     ? `${focus ? `${ASSET_DIRECTORY_META[focus].label} · ` : ''}${entry.titleZh || entry.title || '文章'} · QMReader`
     : (directoryMeta?.title || DEFAULT_TITLE);
   const description = entry
-    ? entryShareDescription(entry, focus)
+    ? entryShareDescription(entry, focus, req)
     : clipText(directoryMeta?.description || DEFAULT_DESCRIPTION);
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
@@ -141,17 +143,51 @@ function socialMetaTags(req, entry) {
   return { title, tags: tags.join('\n  ') };
 }
 
-function entryShareDescription(entry, focus = '') {
+function entryShareDescription(entry, focus = '', req = null) {
+  const exactPreview = exactAssetPreview(entry, focus, req);
+  if (exactPreview && exactPreview.text) return assetPreviewDescription(focus, exactPreview);
   const assets = entry && entry.assets ? entry.assets : {};
   const previews = assets.previews || {};
   const preview = focus && previews[focus] ? previews[focus] : null;
-  if (preview && preview.text) {
-    const label = ASSET_DIRECTORY_META[focus]?.label || '公开资产';
-    const source = [preview.author, preview.model].filter(Boolean).join(' · ');
-    const prefix = source ? `${label}（${source}）` : label;
-    return clipText(`${prefix}：${preview.text}`, 220);
-  }
+  if (preview && preview.text) return assetPreviewDescription(focus, preview);
   return clipText(entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION);
+}
+
+function assetPreviewDescription(focus, preview) {
+  const label = ASSET_DIRECTORY_META[focus]?.label || '公开资产';
+  const source = [preview.author, preview.model].filter(Boolean).join(' · ');
+  const prefix = source ? `${label}（${source}）` : label;
+  return clipText(`${prefix}：${preview.text}`, 220);
+}
+
+function exactAssetPreview(entry, focus, req) {
+  if (!entry || !req) return null;
+  if (focus === 'comments') {
+    const comment = store.getComment(entry.id, String(req.query.comment || '').trim());
+    if (!comment) return null;
+    return {
+      type: 'comments',
+      id: comment.id,
+      author: comment.author,
+      model: comment.model || '',
+      text: comment.body,
+      at: comment.createdAt,
+    };
+  }
+  if (focus === 'chat') {
+    const message = store.getChatMessage(entry.id, String(req.query.chat || '').trim());
+    if (!message) return null;
+    return {
+      type: 'chat',
+      id: message.id,
+      role: message.role,
+      author: message.author,
+      model: message.model || '',
+      text: message.content,
+      at: message.createdAt,
+    };
+  }
+  return null;
 }
 
 function hasPublicAssets(entry) {

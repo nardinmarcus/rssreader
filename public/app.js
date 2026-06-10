@@ -337,8 +337,10 @@ const state = {
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const hash = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
-  const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : '';
-  const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : '';
+  const queryCommentId = String(params.get('comment') || '').trim();
+  const queryChatMessageId = String(params.get('chat') || '').trim();
+  const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : queryCommentId;
+  const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : queryChatMessageId;
   const focus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
   return {
     entryId: String(params.get('entry') || '').trim(),
@@ -386,6 +388,7 @@ function readerAssetUrl(type, entry = state.activeEntry) {
 function commentUrl(commentId, entry = state.activeEntry) {
   if (!entry || !commentId) return '';
   const url = readerUrlFor(entry, 'original', 'comments');
+  url.searchParams.set('comment', commentId);
   url.hash = `comment-${encodeURIComponent(commentId)}`;
   return url.href;
 }
@@ -393,6 +396,7 @@ function commentUrl(commentId, entry = state.activeEntry) {
 function chatMessageUrl(messageId, entry = state.activeEntry) {
   if (!entry || !messageId) return '';
   const url = readerUrlFor(entry, 'original', 'chat');
+  url.searchParams.set('chat', messageId);
   url.hash = `chat-${encodeURIComponent(messageId)}`;
   return url.href;
 }
@@ -434,8 +438,14 @@ function syncReaderUrl({ replace = false, commentId = '', chatMessageId = '' } =
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
   const url = readerUrlFor(entry, state.readerTab);
-  if (commentId) url.hash = `comment-${encodeURIComponent(commentId)}`;
-  if (chatMessageId) url.hash = `chat-${encodeURIComponent(chatMessageId)}`;
+  if (commentId) {
+    url.searchParams.set('comment', commentId);
+    url.hash = `comment-${encodeURIComponent(commentId)}`;
+  }
+  if (chatMessageId) {
+    url.searchParams.set('chat', chatMessageId);
+    url.hash = `chat-${encodeURIComponent(chatMessageId)}`;
+  }
   document.title = readerRouteTitle(entry);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
