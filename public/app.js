@@ -1172,6 +1172,13 @@ function readerAssetPreview(entry, type, fallback = '') {
   return assetSummaryText(preview && preview.text);
 }
 
+function readerAssetPreviewMeta(entry, type, leading = []) {
+  const preview = assetPreviewForType(entry, type);
+  if (!preview) return '';
+  const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean);
+  return meta.length ? assetMetaLine([...leading, ...meta]) : '';
+}
+
 function latestAssetItem(items, pickLast = false) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (!list.length) return null;
@@ -1199,7 +1206,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     rows.push({
       type: 'translation',
       label: '中文翻译',
-      value: translation ? assetMetaLine([translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)]) : '正在加载详情',
+      value: translation ? assetMetaLine([translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)]) : (readerAssetPreviewMeta(entry, 'translation') || '正在加载详情'),
       preview: readerAssetPreview(entry, 'translation', firstTranslatedParagraph),
     });
   }
@@ -1207,7 +1214,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     rows.push({
       type: 'rewrite',
       label: '乔木重写',
-      value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)]) : '正在加载详情',
+      value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite') || '正在加载详情'),
       preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
     });
   }
@@ -1216,7 +1223,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     rows.push({
       type: 'comments',
       label: '人工点评',
-      value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, formatAssetTime(latest.createdAt)]) : `${assets.comments} 条 · 正在加载详情`,
+      value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, formatAssetTime(latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'comments', [`${assets.comments} 条`]) || `${assets.comments} 条 · 正在加载详情`),
       preview: readerAssetPreview(entry, 'comments', latest && latest.body),
     });
   }
@@ -1225,7 +1232,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     rows.push({
       type: 'chat',
       label: '文章对话',
-      value: latest ? assetMetaLine([`${assets.chatMessages} 条`, latest.author, formatAssetTime(latest.createdAt)]) : `${assets.chatMessages} 条 · 正在加载详情`,
+      value: latest ? assetMetaLine([`${assets.chatMessages} 条`, latest.author, formatAssetTime(latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'chat', [`${assets.chatMessages} 条`]) || `${assets.chatMessages} 条 · 正在加载详情`),
       preview: readerAssetPreview(entry, 'chat', latest && latest.content),
     });
   }
