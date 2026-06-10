@@ -110,29 +110,102 @@ function assetDirectoryMeta(req) {
   if (!isAssetDirectoryRequest(req)) return null;
   const type = requestAssetDirectoryType(req);
   const q = clipText(String(req.query.q || '').trim(), 48);
+  const stats = assetDirectoryStats(type, q);
+  const searchSuffix = stats.summary || '';
+  const latestSuffix = stats.latestText || '';
   if (!type) {
     if (q) {
       return {
         title: `公开资产搜索：${q} · QMReader`,
-        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、人工点评和文章对话。`,
+        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、人工点评和文章对话。${searchSuffix}`,
       };
     }
     return {
-      title: '公开资产 · QMReader',
-      description: DEFAULT_DESCRIPTION,
+      title: stats.assetCount ? `公开资产（${stats.assetCount} 条） · QMReader` : '公开资产 · QMReader',
+      description: stats.assetCount
+        ? `QMReader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、乔木风格重写、人工点评和文章对话。${latestSuffix}`
+        : DEFAULT_DESCRIPTION,
     };
   }
   const meta = ASSET_DIRECTORY_META[type];
   if (q) {
     return {
       title: `${meta.label}资产搜索：${q} · QMReader`,
-      description: `搜索“${q}”相关的${meta.label}资产。${meta.description}`,
+      description: `搜索“${q}”相关的${meta.label}资产。${searchSuffix}`,
     };
   }
   return {
-    title: `${meta.label}资产 · QMReader`,
-    description: meta.description,
+    title: stats.assetCount ? `${meta.label}资产（${stats.assetCount} 条） · QMReader` : `${meta.label}资产 · QMReader`,
+    description: stats.assetCount
+      ? `QMReader 已沉淀 ${stats.assetCount} 条${meta.label}资产，覆盖 ${stats.entryCount} 篇文章，可通过网页或 RSS 浏览。${latestSuffix}`
+      : meta.description,
   };
+}
+
+function assetDirectoryStats(type = '', q = '') {
+  const assetType = normalizeAssetDirectoryType(type);
+  const query = normalizeSearchText(q);
+  const entries = fetcher.getEntries({ limit: 1000 })
+    .filter(entry => entry && entry.id && hasPublicAssets(entry))
+    .filter(entry => !assetType || hasPublicAssetType(entry, assetType))
+    .filter(entry => !query || normalizeSearchText(entryDirectorySearchText(entry)).includes(query));
+  let assetCount = 0;
+  let latestAt = 0;
+  for (const entry of entries) {
+    assetCount += entryAssetCount(entry, assetType);
+    latestAt = Math.max(latestAt, entryAssetTypeTimestamp(entry, assetType));
+  }
+  const latestText = latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : '';
+  const summary = assetCount ? `${assetCount} 条 · ${entries.length} 篇文章。${latestText}` : '';
+  return {
+    assetCount,
+    entryCount: entries.length,
+    latestAt,
+    latestText,
+    summary,
+  };
+}
+
+function entryAssetCount(entry, type = '') {
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'translation') return assets.translation ? 1 : 0;
+  if (type === 'rewrite') return assets.rewrite ? 1 : 0;
+  if (type === 'comments') return Number(assets.comments) || 0;
+  if (type === 'chat') return Number(assets.chatMessages) || 0;
+  return Object.keys(ASSET_DIRECTORY_META).reduce((sum, itemType) => sum + entryAssetCount(entry, itemType), 0);
+}
+
+function entryDirectorySearchText(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const parts = [entry.title, entry.titleZh, entry.summary, entry.summaryZh];
+  for (const preview of Object.values(assets.previews || {})) {
+    parts.push(preview.type, preview.author, preview.model, preview.role, preview.text);
+  }
+  for (const items of Object.values(assets.items || {})) {
+    for (const item of items || []) parts.push(item.type, item.author, item.model, item.role, item.text);
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+function normalizeSearchText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function formatShanghaiMinute(timestamp) {
+  const t = Number(timestamp) || 0;
+  if (!t) return '';
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(t));
+  } catch {
+    return '';
+  }
 }
 
 function socialMetaTags(req, entry) {
