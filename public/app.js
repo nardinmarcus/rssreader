@@ -1008,15 +1008,35 @@ function assetPreviewForType(entry, type = '') {
   return preview;
 }
 
+function assetPreviewDisplay(preview) {
+  const type = ASSET_FILTER_TYPES.includes(preview && preview.type) ? preview.type : 'comments';
+  const baseLabel = ASSET_TYPE_LABELS[type] || '资产';
+  if (type === 'comments') {
+    const display = commentDisplayParts(preview.text);
+    return {
+      type,
+      label: display.label ? `${baseLabel} · ${display.label}` : baseLabel,
+      text: display.body || preview.text,
+      commentType: display.type,
+    };
+  }
+  return {
+    type,
+    label: baseLabel,
+    text: preview.text,
+    commentType: '',
+  };
+}
+
 function assetPreviewHtml(preview) {
-  const type = ASSET_FILTER_TYPES.includes(preview.type) ? preview.type : 'comments';
-  const label = ASSET_TYPE_LABELS[type] || '资产';
+  const display = assetPreviewDisplay(preview);
+  const { type, label } = display;
   const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
   const itemId = preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
   return `
     <button type="button" class="entry-asset-preview asset-preview-${type}" data-asset="${escapeHtml(type)}"${itemId} title="查看${escapeHtml(label)}资产">
       <span class="entry-asset-preview-type">${escapeHtml(label)}</span>
-      <span class="entry-asset-preview-text">${escapeHtml(preview.text)}</span>
+      <span class="entry-asset-preview-text">${escapeHtml(display.text)}</span>
       ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
     </button>`;
 }
@@ -1115,10 +1135,14 @@ function renderAssetActivityStrip() {
       ${items.map(({ entry, type, labels, preview, previewMeta }) => {
         const src = sourceById(entry.sourceId);
         const itemId = preview && preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
-        const previewText = preview && preview.text ? preview.text : '';
+        const previewDisplay = preview ? assetPreviewDisplay(preview) : null;
+        const previewText = previewDisplay && previewDisplay.text ? previewDisplay.text : '';
+        const labelText = previewDisplay && previewDisplay.commentType && labels === ASSET_TYPE_LABELS.comments
+          ? previewDisplay.label
+          : labels;
         const meta = [src && src.name, previewMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
         return `<button type="button" class="asset-activity-item asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}"${itemId}>
-          <span class="asset-activity-type">${escapeHtml(labels)}</span>
+          <span class="asset-activity-type">${escapeHtml(labelText)}</span>
           <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
           ${previewText ? `<span class="asset-activity-preview">${escapeHtml(previewText)}</span>` : ''}
           <span class="asset-activity-meta">${escapeHtml(meta)}</span>
@@ -1166,10 +1190,10 @@ function assetSummaryText(value, max = 150) {
 }
 
 function readerAssetPreview(entry, type, fallback = '') {
-  const direct = assetSummaryText(fallback);
+  const direct = assetSummaryText(type === 'comments' ? commentDisplayParts(fallback).body : fallback);
   if (direct) return direct;
   const preview = assetPreviewForType(entry, type);
-  return assetSummaryText(preview && preview.text);
+  return assetSummaryText(preview ? assetPreviewDisplay(preview).text : '');
 }
 
 function readerAssetPreviewMeta(entry, type, leading = []) {
@@ -1177,6 +1201,12 @@ function readerAssetPreviewMeta(entry, type, leading = []) {
   if (!preview) return '';
   const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean);
   return meta.length ? assetMetaLine([...leading, ...meta]) : '';
+}
+
+function readerAssetSummaryLabel(entry, type, fallback) {
+  const preview = assetPreviewForType(entry, type);
+  const display = preview ? assetPreviewDisplay(preview) : null;
+  return display && display.commentType ? display.label : fallback;
 }
 
 function latestAssetItem(items, pickLast = false) {
@@ -1222,7 +1252,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     const latest = latestAssetItem(comments);
     rows.push({
       type: 'comments',
-      label: '人工点评',
+      label: readerAssetSummaryLabel(entry, 'comments', '人工点评'),
       value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, formatAssetTime(latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'comments', [`${assets.comments} 条`]) || `${assets.comments} 条 · 正在加载详情`),
       preview: readerAssetPreview(entry, 'comments', latest && latest.body),
     });
