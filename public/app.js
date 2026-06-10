@@ -924,6 +924,62 @@ function assetActivityLabel(entry) {
   return `${prefix} · 最近沉淀 ${formatAssetTime(assets.latestAt)}`;
 }
 
+function entryPrimaryAssetType(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const latestTypes = Array.isArray(assets.latestTypes) ? assets.latestTypes : [];
+  const latest = latestTypes.find(type => ASSET_FILTER_TYPES.includes(type) && entryHasAssetType(entry, type));
+  if (latest) return latest;
+  return ASSET_FILTER_TYPES.find(type => entryHasAssetType(entry, type)) || '';
+}
+
+function latestAssetActivity(limit = 4) {
+  return state.entries
+    .filter(entry => hasEntryAssets(entry) && Number(entry.assets?.latestAt || 0) > 0)
+    .slice()
+    .sort((a, b) => {
+      const assetDelta = Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0);
+      return assetDelta || (b.publishedTs || 0) - (a.publishedTs || 0);
+    })
+    .slice(0, limit)
+    .map(entry => {
+      const type = entryPrimaryAssetType(entry);
+      const latestTypes = Array.isArray(entry.assets?.latestTypes) ? entry.assets.latestTypes : [];
+      const labels = latestTypes.map(item => ASSET_TYPE_LABELS[item]).filter(Boolean);
+      return {
+        entry,
+        type,
+        labels: labels.length ? labels.join(' / ') : (ASSET_TYPE_LABELS[type] || '资产'),
+      };
+    });
+}
+
+function renderAssetActivityStrip() {
+  const el = $('#asset-activity-strip');
+  if (!el) return;
+  const shouldShow = state.view === 'all' && !state.filterSource && !state.filterCategory && !state.q;
+  const items = shouldShow ? latestAssetActivity(4).filter(item => item.type) : [];
+  el.classList.toggle('hidden', !items.length);
+  if (!items.length) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `
+    <div class="asset-activity-head">
+      <span>公开资产动态</span>
+      <button type="button" data-asset-open-all>全部资产</button>
+    </div>
+    <div class="asset-activity-list">
+      ${items.map(({ entry, type, labels }) => {
+        const src = sourceById(entry.sourceId);
+        return `<button type="button" class="asset-activity-item asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}">
+          <span class="asset-activity-type">${escapeHtml(labels)}</span>
+          <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
+          <span class="asset-activity-meta">${escapeHtml([src && src.name, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · '))}</span>
+        </button>`;
+      }).join('')}
+    </div>`;
+}
+
 function mergeAssets(entry, patch = {}) {
   return {
     translation: false,
@@ -1174,6 +1230,7 @@ function renderList() {
   const list = visibleEntries();
   const el = $('#entry-list');
   el.innerHTML = '';
+  renderAssetActivityStrip();
   if (!list.length) {
     const text = state.view === 'assets' && state.assetFilter
       ? `还没有${ASSET_TYPE_LABELS[state.assetFilter] || ''}资产<br/>换个类型或先沉淀一篇文章`
@@ -2284,6 +2341,18 @@ $('#asset-dashboard').onclick = (e) => {
   const btn = e.target.closest('[data-asset-filter]');
   if (!btn || btn.disabled) return;
   selectAssetFilter(btn.dataset.assetFilter);
+};
+$('#asset-activity-strip').onclick = async (e) => {
+  const all = e.target.closest('[data-asset-open-all]');
+  if (all) {
+    selectAssetFilter(null);
+    return;
+  }
+  const btn = e.target.closest('[data-asset-entry]');
+  if (!btn) return;
+  const entry = state.entries.find(item => item.id === btn.dataset.assetEntry);
+  if (!entry) return;
+  await openEntry(entry, { focus: btn.dataset.assetFocus });
 };
 $('#refresh-btn').onclick = refreshAll;
 $('#mark-read-btn').onclick = async () => {

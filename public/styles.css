@@ -289,6 +289,99 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 #search:focus { border-color: var(--accent); }
 
+.asset-activity-strip {
+  flex: none;
+  display: grid;
+  gap: 8px;
+  padding: 10px 10px 9px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-0);
+}
+.asset-activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+.asset-activity-head span {
+  font-weight: 700;
+  color: var(--text-1);
+}
+.asset-activity-head button {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 11.5px;
+  padding: 2px 0;
+}
+.asset-activity-list {
+  display: grid;
+  gap: 6px;
+}
+.asset-activity-item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "type title"
+    "type meta";
+  align-items: center;
+  gap: 2px 8px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  padding: 8px 9px;
+}
+.asset-activity-item:hover {
+  border-color: var(--text-2);
+  background: var(--bg-2);
+}
+.asset-activity-item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+.asset-activity-type {
+  grid-area: type;
+  min-width: 38px;
+  padding: 3px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+.asset-activity-item strong {
+  grid-area: title;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-0);
+  font-size: 12.5px;
+}
+.asset-activity-meta {
+  grid-area: meta;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 11px;
+}
+.asset-activity-translation .asset-activity-type { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.asset-activity-rewrite .asset-activity-type { color: #7a5c18; border-color: color-mix(in srgb, #c89b22 35%, var(--border)); }
+.asset-activity-comments .asset-activity-type { color: #276749; border-color: color-mix(in srgb, #2f855a 35%, var(--border)); }
+.asset-activity-chat .asset-activity-type { color: #315174; border-color: color-mix(in srgb, #4a789f 35%, var(--border)); }
+
 .entry-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; }
 .entry-card {
   display: flex; gap: 10px;
@@ -1262,6 +1355,16 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   .reader-section-actions { justify-content: space-between; width: 100%; }
   .translation-pair { grid-template-columns: 1fr; }
   .comment-form { grid-template-columns: 1fr; }
+  .asset-activity-strip {
+    padding: 8px;
+    gap: 6px;
+  }
+  .asset-activity-list { gap: 5px; }
+  .asset-activity-item {
+    padding: 7px 8px;
+    gap: 1px 7px;
+  }
+  .asset-activity-item strong { font-size: 12px; }
   .sidebar-footer {
     display: flex;
     flex-direction: column;
