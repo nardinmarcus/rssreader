@@ -759,6 +759,69 @@ function renderReaderAssets(entry = state.activeEntry) {
   el.classList.toggle('hidden', !html);
 }
 
+function assetMetaLine(parts) {
+  return parts.filter(Boolean).join(' · ') || '正在加载详情';
+}
+
+function latestAssetItem(items, pickLast = false) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!list.length) return null;
+  return pickLast ? list[list.length - 1] : list[0];
+}
+
+function renderReaderAssetSummary(entry = state.activeEntry) {
+  const el = $('#reader-asset-summary');
+  if (!entry) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const assets = mergeAssets(entry);
+  const rows = [];
+  const translation = state.translation && state.translation.entryId === entry.id ? state.translation : null;
+  const rewrite = state.rewrite && state.rewrite.entryId === entry.id ? state.rewrite : null;
+  const comments = (state.comments || []).filter(comment => comment.entryId === entry.id);
+  const messages = (state.agentMessages || []).filter(message => !message.entryId || message.entryId === entry.id);
+
+  if (assets.translation) {
+    rows.push({
+      type: 'translation',
+      label: '中文翻译',
+      value: translation ? assetMetaLine([translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)]) : '正在加载详情',
+    });
+  }
+  if (assets.rewrite) {
+    rows.push({
+      type: 'rewrite',
+      label: '乔木重写',
+      value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)]) : '正在加载详情',
+    });
+  }
+  if (assets.comments) {
+    const latest = latestAssetItem(comments);
+    rows.push({
+      type: 'comments',
+      label: '人工点评',
+      value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, formatAssetTime(latest.createdAt)]) : `${assets.comments} 条 · 正在加载详情`,
+    });
+  }
+  if (assets.chatMessages) {
+    const latest = latestAssetItem(messages, true);
+    rows.push({
+      type: 'chat',
+      label: '文章对话',
+      value: latest ? assetMetaLine([`${assets.chatMessages} 条`, latest.author, formatAssetTime(latest.createdAt)]) : `${assets.chatMessages} 条 · 正在加载详情`,
+    });
+  }
+
+  el.innerHTML = rows.map(row => `
+    <button type="button" class="asset-summary-item asset-summary-${row.type}" data-asset-summary="${row.type}">
+      <span>${escapeHtml(row.label)}</span>
+      <strong>${escapeHtml(row.value)}</strong>
+    </button>`).join('');
+  el.classList.toggle('hidden', !rows.length);
+}
+
 function scrollReaderTarget(selector) {
   const target = $(selector);
   if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -814,6 +877,7 @@ function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
   if (state.activeEntry?.id === entryId) {
     state.activeEntry = { ...state.activeEntry, assets: mergeAssets(state.activeEntry, patch) };
     renderReaderAssets(state.activeEntry);
+    renderReaderAssetSummary(state.activeEntry);
   }
   if (rerenderList) renderList();
 }
@@ -1043,6 +1107,7 @@ function renderTranslation(translation, { loading = false } = {}) {
       <p class="translation-source">${escapeHtml(pair.source)}</p>
       <p class="translation-target">${escapeHtml(pair.target)}</p>
     </div>`).join('');
+  renderReaderAssetSummary();
   settlePendingAssetJump('translation');
 }
 
@@ -1082,6 +1147,7 @@ function renderRewrite(rewrite) {
   $('#reader-rewrite').textContent = rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
   $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
   content.innerHTML = renderMarkdownLite(rewrite.body);
+  renderReaderAssetSummary();
   settlePendingAssetJump('rewrite');
 }
 
@@ -1239,6 +1305,7 @@ function renderComments() {
       <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
       <div class="comment-body">${renderMarkdownLite(comment.body)}</div>
     </div>`).join('');
+  renderReaderAssetSummary();
   settlePendingAssetJump('comments');
 }
 
@@ -1322,6 +1389,7 @@ function renderAgentMessages(extraPending = false) {
   }
   el.appendChild(frag);
   el.scrollTop = el.scrollHeight;
+  renderReaderAssetSummary();
   settlePendingAssetJump('chat');
 }
 
@@ -1431,7 +1499,6 @@ async function openEntry(e) {
   renderTitle(e);
   const date = e.published ? new Date(e.published).toLocaleString('zh-CN') : '';
   $('#reader-meta').textContent = [e.author, date].filter(Boolean).join(' · ');
-  renderReaderAssets(e);
   $('#reader-open').href = e.link || '#';
   const starBtn = $('#reader-star');
   starBtn.classList.toggle('starred', state.starred.has(e.id));
@@ -1445,6 +1512,8 @@ async function openEntry(e) {
   state.rewriteGenerating = false;
   state.pendingAssetJump = null;
   state.fetchingOriginal = false;
+  renderReaderAssets(e);
+  renderReaderAssetSummary(e);
   updateFetchOriginalButton(e);
   setReaderTab('original');
   loadTranslation(e);
@@ -1937,6 +2006,11 @@ $('#reader-assets').onclick = (e) => {
   const btn = e.target.closest('[data-asset]');
   if (!btn) return;
   jumpToArticleAsset(btn.dataset.asset);
+};
+$('#reader-asset-summary').onclick = (e) => {
+  const btn = e.target.closest('[data-asset-summary]');
+  if (!btn) return;
+  jumpToArticleAsset(btn.dataset.assetSummary);
 };
 $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(state.translation) });
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
