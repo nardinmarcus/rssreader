@@ -569,12 +569,23 @@ function fallbackFavicon(img, letter) {
   img.replaceWith(icon);
 }
 
+function faviconTargetUrl(siteUrl, domain) {
+  const raw = String(siteUrl || '').trim();
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.origin;
+  } catch (error) {
+    // Fall back to the extracted domain below.
+  }
+  return domain ? `https://${domain}` : '';
+}
+
 function faviconHtml(siteUrl, name, size = 17) {
   const d = domainOf(siteUrl);
   const letter = ((name || '?').trim()[0] || '?').toUpperCase();
   const safeSize = Math.max(12, Math.min(Number(size) || 17, 48));
   if (!d) return `<span class="letter-icon" style="--icon-size:${safeSize}px">${escapeHtml(letter)}</span>`;
-  const src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=${Math.max(32, safeSize * 4)}`;
+  const src = `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
   return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="lazy" referrerpolicy="no-referrer"
     onerror="fallbackFavicon(this, '${escapeJsString(letter)}')" />`;
 }
