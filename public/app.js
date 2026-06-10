@@ -355,6 +355,12 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
   return url;
 }
 
+function readerAssetUrl(type, entry = state.activeEntry) {
+  if (!entry || !ASSET_FILTER_TYPES.includes(type)) return '';
+  const tab = type === 'translation' ? 'translation' : type === 'rewrite' ? 'rewrite' : 'original';
+  return readerUrlFor(entry, tab, type).href;
+}
+
 function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   const url = new URL(window.location.href);
   url.search = '';
@@ -994,10 +1000,13 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   }
 
   el.innerHTML = rows.map(row => `
-    <button type="button" class="asset-summary-item asset-summary-${row.type}" data-asset-summary="${row.type}">
-      <span>${escapeHtml(row.label)}</span>
-      <strong>${escapeHtml(row.value)}</strong>
-    </button>`).join('');
+    <div class="asset-summary-row asset-summary-${row.type}">
+      <button type="button" class="asset-summary-item" data-asset-summary="${row.type}">
+        <span>${escapeHtml(row.label)}</span>
+        <strong>${escapeHtml(row.value)}</strong>
+      </button>
+      <button type="button" class="asset-summary-copy" data-asset-copy="${row.type}" title="复制${escapeHtml(row.label)}链接" aria-label="复制${escapeHtml(row.label)}链接">⧉</button>
+    </div>`).join('');
   el.classList.toggle('hidden', !rows.length);
 }
 
@@ -1051,6 +1060,16 @@ function settlePendingAssetJump(type, { clear = true } = {}) {
 function jumpToArticleAsset(type) {
   state.pendingAssetJump = type;
   performArticleAssetJump(type);
+}
+
+function copyArticleAssetLink(type) {
+  const url = readerAssetUrl(type);
+  if (!url) {
+    toast('没有可复制的资产链接');
+    return;
+  }
+  const label = ASSET_FOCUS_LABELS[type] || '资产';
+  copyText(url, `${label}链接已复制`);
 }
 
 function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
@@ -2307,6 +2326,11 @@ $('#reader-assets').onclick = (e) => {
   jumpToArticleAsset(btn.dataset.asset);
 };
 $('#reader-asset-summary').onclick = (e) => {
+  const copy = e.target.closest('[data-asset-copy]');
+  if (copy) {
+    copyArticleAssetLink(copy.dataset.assetCopy);
+    return;
+  }
   const btn = e.target.closest('[data-asset-summary]');
   if (!btn) return;
   jumpToArticleAsset(btn.dataset.assetSummary);
