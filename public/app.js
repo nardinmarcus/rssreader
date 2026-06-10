@@ -1578,11 +1578,23 @@ function renderComments() {
   }
   list.innerHTML = comments.map(comment => `
     <div class="comment-item">
-      <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
+      <div class="comment-head">
+        <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
+        <button type="button" class="comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
+      </div>
       <div class="comment-body">${renderMarkdownLite(comment.body)}</div>
     </div>`).join('');
   renderReaderAssetSummary();
   settlePendingAssetJump('comments');
+}
+
+function copyComment(commentId) {
+  const comment = (state.comments || []).find(item => item.id === commentId);
+  if (!comment) {
+    toast('找不到这条点评');
+    return;
+  }
+  copyText(comment.body, '点评已复制');
 }
 
 async function loadComments(entry) {
@@ -2422,6 +2434,11 @@ $$('.reader-tab').forEach(btn => {
 $('#comment-form').onsubmit = (e) => {
   e.preventDefault();
   submitComment();
+};
+$('#comments-list').onclick = (e) => {
+  const btn = e.target.closest('[data-comment-copy]');
+  if (!btn) return;
+  copyComment(btn.dataset.commentCopy);
 };
 $('#comment-login').onclick = () => openAuth('login');
 $('#agent-form').onsubmit = (e) => {
