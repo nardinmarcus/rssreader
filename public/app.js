@@ -918,20 +918,27 @@ function sourceNameForEntry(entry) {
 function assetSearchText(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const previews = assets.previews || {};
+  const items = assets.items || {};
   const parts = [];
   for (const type of ASSET_FILTER_TYPES) {
     const preview = previews[type];
-    if (!preview || !entryHasAssetType(entry, type)) continue;
-    const display = assetPreviewDisplay(preview);
-    parts.push(
-      ASSET_TYPE_LABELS[type],
-      ASSET_FOCUS_LABELS[type],
-      display.label,
-      display.text,
-      preview.author,
-      preview.model,
-      preview.role,
-    );
+    if (!entryHasAssetType(entry, type)) continue;
+    if (preview) {
+      const display = assetPreviewDisplay(preview);
+      parts.push(
+        ASSET_TYPE_LABELS[type],
+        ASSET_FOCUS_LABELS[type],
+        display.label,
+        display.text,
+        preview.author,
+        preview.model,
+        preview.role,
+      );
+    }
+    for (const item of items[type] || []) {
+      const display = assetPreviewDisplay(item);
+      parts.push(display.label, display.text, item.author, item.model, item.role);
+    }
   }
   return parts.filter(Boolean).join(' ');
 }
@@ -1092,6 +1099,15 @@ function assetPreviewDisplay(preview) {
       commentType: display.type,
     };
   }
+  if (type === 'chat') {
+    const roleLabel = preview.role === 'user' ? '提问' : preview.role === 'assistant' ? '回答' : '';
+    return {
+      type,
+      label: roleLabel ? `${baseLabel} · ${roleLabel}` : baseLabel,
+      text: preview.text,
+      commentType: '',
+    };
+  }
   return {
     type,
     label: baseLabel,
@@ -1115,6 +1131,22 @@ function assetPreviewHtml(preview) {
       </button>
       <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">⧉</button>
     </div>`;
+}
+
+function assetItemListHtml(entry) {
+  if (state.view !== 'assets' || !['comments', 'chat'].includes(state.assetFilter)) return '';
+  const assets = entry && entry.assets ? entry.assets : {};
+  const items = (assets.items && assets.items[state.assetFilter]) || [];
+  if (!items.length) return '';
+  const total = state.assetFilter === 'comments' ? Number(assets.comments || 0) : Number(assets.chatMessages || 0);
+  const label = ASSET_TYPE_LABELS[state.assetFilter] || '资产';
+  const more = total > items.length
+    ? `<button type="button" class="entry-asset-more" data-asset="${escapeHtml(state.assetFilter)}">查看全部 ${total} 条${escapeHtml(label)}</button>`
+    : '';
+  return `<div class="entry-asset-items">
+    ${items.map(item => assetPreviewHtml(item)).join('')}
+    ${more}
+  </div>`;
 }
 
 function entryPrimaryAssetType(entry) {
@@ -1245,6 +1277,7 @@ function mergeAssets(entry, patch = {}) {
     latestTypes: [],
     preview: null,
     previews: {},
+    items: {},
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
   };
@@ -1561,6 +1594,7 @@ function renderList() {
     const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
     const assetActivity = assetActivityLabel(e);
     const assetPreview = assetPreviewForEntry(e);
+    const assetItems = assetItemListHtml(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
     card.dataset.id = e.id;
@@ -1577,7 +1611,7 @@ function renderList() {
         ${e.titleZh ? `<div class="entry-original">${escapeHtml(e.title)}</div>` : ''}
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
         ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
-        ${assetPreview ? assetPreviewHtml(assetPreview) : ''}
+        ${assetItems || (assetPreview ? assetPreviewHtml(assetPreview) : '')}
         ${assetActivity ? `<div class="entry-asset-activity">${escapeHtml(assetActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
