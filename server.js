@@ -169,24 +169,58 @@ function socialMetaTags(req, entry) {
 }
 
 function entryShareTitle(entry, focus = '', req = null) {
+  return assetShareTitle(entry, focus, exactAssetPreview(entry, focus, req));
+}
+
+function assetShareTitle(entry, focus = '', preview = null) {
   const articleTitle = clipText(entry.titleZh || entry.title || '文章', 72);
   const label = ASSET_DIRECTORY_META[focus]?.label || '';
   if (!label) return `${articleTitle} · QMReader`;
+  const identity = assetShareIdentity(focus, preview);
+  return `${identity || label} · ${articleTitle} · QMReader`;
+}
 
-  const exactPreview = exactAssetPreview(entry, focus, req);
-  if (exactPreview) {
-    const author = clipText(exactPreview.author || exactPreview.model || '', 24);
-    if (focus === 'comments') {
-      return `${author ? `${author}的点评` : label} · ${articleTitle} · QMReader`;
-    }
-    if (focus === 'chat') {
-      const roleLabel = exactPreview.role === 'user' ? '提问' : '回答';
-      const speaker = author || (exactPreview.role === 'user' ? '读者' : 'AI');
-      return `${speaker}的${roleLabel} · ${articleTitle} · QMReader`;
-    }
+function assetShareIdentity(focus = '', preview = null) {
+  if (!preview) return '';
+  const author = clipText(preview.author || preview.model || '', 24);
+  if (focus === 'comments') return author ? `${author}的点评` : '人工点评';
+  if (focus === 'chat') {
+    const roleLabel = preview.role === 'user' ? '提问' : '回答';
+    const speaker = author || (preview.role === 'user' ? '读者' : 'AI');
+    return `${speaker}的${roleLabel}`;
   }
+  return '';
+}
 
-  return `${label} · ${articleTitle} · QMReader`;
+function assetFeedTitle(entry, type, preview = null) {
+  return assetShareTitle(entry, type, preview)
+    .replace(/\s·\sQMReader$/, '')
+    .replace(/\s·\s/, '：');
+}
+
+function assetFeedPreviews(entry, type, previews = {}) {
+  if (type === 'comments') {
+    return store.getComments(entry.id).map(comment => ({
+      type: 'comments',
+      id: comment.id,
+      author: comment.author,
+      model: comment.model || '',
+      text: comment.body,
+      at: comment.updatedAt || comment.createdAt,
+    }));
+  }
+  if (type === 'chat') {
+    return store.getChatMessages(entry.id).map(message => ({
+      type: 'chat',
+      id: message.id,
+      role: message.role,
+      author: message.author,
+      model: message.model || '',
+      text: message.content,
+      at: message.createdAt,
+    }));
+  }
+  return [previews[type] || {}];
 }
 
 function entryShareDescription(entry, focus = '', req = null) {
@@ -361,15 +395,14 @@ function publicAssetFeedItems(req, type = '') {
       const types = assetType ? [assetType] : publicAssetTypes(entry);
       return types
         .filter(itemType => hasPublicAssetType(entry, itemType))
-        .map(itemType => {
-          const preview = previews[itemType] || {};
+        .flatMap(itemType => assetFeedPreviews(entry, itemType, previews).map(preview => {
           const label = ASSET_DIRECTORY_META[itemType].label;
           const at = Number(preview.at) || Number(assets.latestAt) || Number(entry.publishedTs) || Date.now();
           const source = [preview.author, preview.model].filter(Boolean).join(' · ');
           const description = preview.text
             ? assetPreviewDescription(itemType, preview)
             : clipText(`${label}：${entry.summaryZh || entry.summary || entry.titleZh || entry.title || ''}`, 220);
-          const title = `${label}：${entry.titleZh || entry.title || '无标题'}`;
+          const title = assetFeedTitle(entry, itemType, preview);
           const link = entryAssetItemUrl(req, entry, itemType, preview);
           return {
             type: itemType,
@@ -380,7 +413,7 @@ function publicAssetFeedItems(req, type = '') {
             at,
             guid: `qmreader:${entry.id}:${itemType}:${preview.id || at}`,
           };
-        });
+        }));
     })
     .sort((a, b) => b.at - a.at)
     .slice(0, 80);
