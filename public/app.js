@@ -985,6 +985,29 @@ function assetActivityLabel(entry) {
   return `${prefix} · 最近沉淀 ${formatAssetTime(assets.latestAt)}`;
 }
 
+function assetPreviewForEntry(entry) {
+  if (state.view !== 'assets') return null;
+  const assets = entry && entry.assets ? entry.assets : {};
+  const previews = assets.previews || {};
+  const preview = state.assetFilter && previews[state.assetFilter]
+    ? previews[state.assetFilter]
+    : assets.preview;
+  if (!preview || !preview.type || !preview.text) return null;
+  return preview;
+}
+
+function assetPreviewHtml(preview) {
+  const type = ASSET_FILTER_TYPES.includes(preview.type) ? preview.type : 'comments';
+  const label = ASSET_TYPE_LABELS[type] || '资产';
+  const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
+  return `
+    <button type="button" class="entry-asset-preview asset-preview-${type}" data-asset="${escapeHtml(type)}" title="查看${escapeHtml(label)}资产">
+      <span class="entry-asset-preview-type">${escapeHtml(label)}</span>
+      <span class="entry-asset-preview-text">${escapeHtml(preview.text)}</span>
+      ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
+    </button>`;
+}
+
 function entryPrimaryAssetType(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const latestTypes = Array.isArray(assets.latestTypes) ? assets.latestTypes : [];
@@ -1049,6 +1072,8 @@ function mergeAssets(entry, patch = {}) {
     chatMessages: 0,
     latestAt: 0,
     latestTypes: [],
+    preview: null,
+    previews: {},
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
   };
@@ -1322,6 +1347,7 @@ function renderList() {
     const src = sourceById(e.sourceId);
     const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
     const assetActivity = assetActivityLabel(e);
+    const assetPreview = assetPreviewForEntry(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
     card.dataset.id = e.id;
@@ -1338,6 +1364,7 @@ function renderList() {
         ${e.titleZh ? `<div class="entry-original">${escapeHtml(e.title)}</div>` : ''}
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
         ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
+        ${assetPreview ? assetPreviewHtml(assetPreview) : ''}
         ${assetActivity ? `<div class="entry-asset-activity">${escapeHtml(assetActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
