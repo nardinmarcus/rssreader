@@ -1795,6 +1795,7 @@ async function openEntry(e, { tab = 'original', focus = null, updateUrl = true, 
   state.rewriteGenerating = false;
   state.readerFocus = requestedFocus;
   state.pendingAssetJump = requestedFocus;
+  if (requestedFocus === 'chat') setAgentCollapsed(false);
   state.fetchingOriginal = false;
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
