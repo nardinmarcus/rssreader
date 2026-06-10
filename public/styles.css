@@ -242,6 +242,12 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   min-width: 0;
 }
 .entry-asset-badges { margin-top: 7px; }
+.entry-asset-activity {
+  margin-top: 5px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
 .reader-asset-badges { margin-top: 12px; }
 .asset-badge {
   display: inline-flex;

@@ -717,7 +717,15 @@ function visibleEntries() {
   let list = state.entries;
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
   if (state.view === 'starred') list = list.filter(e => state.starred.has(e.id));
-  if (state.view === 'assets') list = list.filter(hasEntryAssets);
+  if (state.view === 'assets') {
+    list = list
+      .filter(hasEntryAssets)
+      .slice()
+      .sort((a, b) => {
+        const assetDelta = Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0);
+        return assetDelta || (b.publishedTs || 0) - (a.publishedTs || 0);
+      });
+  }
   return list;
 }
 
@@ -741,12 +749,31 @@ function assetBadgesHtml(entry, { interactive = false } = {}) {
   }).join('');
 }
 
+const ASSET_TYPE_LABELS = {
+  translation: '中译',
+  rewrite: '重写',
+  comments: '点评',
+  chat: '对话',
+};
+
+function assetActivityLabel(entry) {
+  if (state.view !== 'assets') return '';
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (!assets.latestAt) return '';
+  const types = Array.isArray(assets.latestTypes) ? assets.latestTypes : [];
+  const labels = types.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean);
+  const prefix = labels.length ? labels.join(' / ') : '资产';
+  return `${prefix} · 最近沉淀 ${formatAssetTime(assets.latestAt)}`;
+}
+
 function mergeAssets(entry, patch = {}) {
   return {
     translation: false,
     rewrite: false,
     comments: 0,
     chatMessages: 0,
+    latestAt: 0,
+    latestTypes: [],
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
   };
@@ -981,6 +1008,7 @@ function renderList() {
   for (const e of list) {
     const src = sourceById(e.sourceId);
     const assetsHtml = assetBadgesHtml(e);
+    const assetActivity = assetActivityLabel(e);
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
     card.dataset.id = e.id;
@@ -997,6 +1025,7 @@ function renderList() {
         ${e.titleZh ? `<div class="entry-original">${escapeHtml(e.title)}</div>` : ''}
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
         ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
+        ${assetActivity ? `<div class="entry-asset-activity">${escapeHtml(assetActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
     card.onclick = () => openEntry(e);
