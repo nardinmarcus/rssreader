@@ -51,7 +51,15 @@ function escapeHtml(value) {
 }
 
 function clipText(value, max = 180) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const text = String(value || '')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[#>*_`~]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trim()}…`;
 }
@@ -75,6 +83,15 @@ function normalizeAssetDirectoryType(value) {
   return ASSET_DIRECTORY_META[value] ? value : '';
 }
 
+function requestAssetFocus(req) {
+  const focus = normalizeAssetDirectoryType(String(req.query.focus || ''));
+  if (focus) return focus;
+  const tab = String(req.query.tab || '');
+  if (tab === 'translation') return 'translation';
+  if (tab === 'rewrite') return 'rewrite';
+  return '';
+}
+
 function assetDirectoryMeta(req) {
   if (String(req.query.view || '') !== 'assets') return null;
   const type = normalizeAssetDirectoryType(String(req.query.asset || ''));
@@ -93,11 +110,13 @@ function assetDirectoryMeta(req) {
 
 function socialMetaTags(req, entry) {
   const directoryMeta = entry ? null : assetDirectoryMeta(req);
-  const focus = entry ? normalizeAssetDirectoryType(String(req.query.focus || '')) : '';
+  const focus = entry ? requestAssetFocus(req) : '';
   const title = entry
     ? `${focus ? `${ASSET_DIRECTORY_META[focus].label} · ` : ''}${entry.titleZh || entry.title || '文章'} · QMReader`
     : (directoryMeta?.title || DEFAULT_TITLE);
-  const description = clipText(entry ? (entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION) : (directoryMeta?.description || DEFAULT_DESCRIPTION));
+  const description = entry
+    ? entryShareDescription(entry, focus)
+    : clipText(directoryMeta?.description || DEFAULT_DESCRIPTION);
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
   const tags = [
@@ -120,6 +139,19 @@ function socialMetaTags(req, entry) {
     tags.push(`<meta property="article:published_time" content="${escapeHtml(entry.published)}" />`);
   }
   return { title, tags: tags.join('\n  ') };
+}
+
+function entryShareDescription(entry, focus = '') {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const previews = assets.previews || {};
+  const preview = focus && previews[focus] ? previews[focus] : null;
+  if (preview && preview.text) {
+    const label = ASSET_DIRECTORY_META[focus]?.label || '公开资产';
+    const source = [preview.author, preview.model].filter(Boolean).join(' · ');
+    const prefix = source ? `${label}（${source}）` : label;
+    return clipText(`${prefix}：${preview.text}`, 220);
+  }
+  return clipText(entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION);
 }
 
 function hasPublicAssets(entry) {
