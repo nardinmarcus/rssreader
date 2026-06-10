@@ -139,7 +139,7 @@ function socialMetaTags(req, entry) {
   const directoryMeta = entry ? null : assetDirectoryMeta(req);
   const focus = entry ? requestAssetFocus(req) : '';
   const title = entry
-    ? `${focus ? `${ASSET_DIRECTORY_META[focus].label} · ` : ''}${entry.titleZh || entry.title || '文章'} · QMReader`
+    ? entryShareTitle(entry, focus, req)
     : (directoryMeta?.title || DEFAULT_TITLE);
   const description = entry
     ? entryShareDescription(entry, focus, req)
@@ -166,6 +166,27 @@ function socialMetaTags(req, entry) {
     tags.push(`<meta property="article:published_time" content="${escapeHtml(entry.published)}" />`);
   }
   return { title, tags: tags.join('\n  ') };
+}
+
+function entryShareTitle(entry, focus = '', req = null) {
+  const articleTitle = clipText(entry.titleZh || entry.title || '文章', 72);
+  const label = ASSET_DIRECTORY_META[focus]?.label || '';
+  if (!label) return `${articleTitle} · QMReader`;
+
+  const exactPreview = exactAssetPreview(entry, focus, req);
+  if (exactPreview) {
+    const author = clipText(exactPreview.author || exactPreview.model || '', 24);
+    if (focus === 'comments') {
+      return `${author ? `${author}的点评` : label} · ${articleTitle} · QMReader`;
+    }
+    if (focus === 'chat') {
+      const roleLabel = exactPreview.role === 'user' ? '提问' : '回答';
+      const speaker = author || (exactPreview.role === 'user' ? '读者' : 'AI');
+      return `${speaker}的${roleLabel} · ${articleTitle} · QMReader`;
+    }
+  }
+
+  return `${label} · ${articleTitle} · QMReader`;
 }
 
 function entryShareDescription(entry, focus = '', req = null) {
