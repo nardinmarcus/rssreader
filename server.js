@@ -50,6 +50,22 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => HTML_ESCAPES[char]);
 }
 
+function safeJsonForHtml(value) {
+  const escapes = {
+    '<': '\\u003c',
+    '>': '\\u003e',
+    '&': '\\u0026',
+    '\u2028': '\\u2028',
+    '\u2029': '\\u2029',
+  };
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, char => escapes[char]);
+}
+
+function jsonLdScript(value) {
+  if (!value) return '';
+  return `<script type="application/ld+json">${safeJsonForHtml(value)}</script>`;
+}
+
 function clipText(value, max = 180) {
   const text = String(value || '')
     .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
@@ -163,6 +179,7 @@ function assetDirectoryStats(type = '', q = '') {
     latestAt,
     latestText,
     summary,
+    entries,
   };
 }
 
@@ -243,7 +260,138 @@ function socialMetaTags(req, entry) {
     tags.push(`<meta property="article:modified_time" content="${escapeHtml(modifiedTime)}" />`);
     tags.push(`<meta property="og:updated_time" content="${escapeHtml(modifiedTime)}" />`);
   }
+  const structuredData = shareStructuredData(req, {
+    entry,
+    focus,
+    directoryMeta,
+    title,
+    description,
+    modifiedTime,
+    image,
+    url,
+  });
+  if (structuredData) tags.push(jsonLdScript(structuredData));
   return { title, tags: tags.join('\n  ') };
+}
+
+function shareStructuredData(req, { entry, focus, directoryMeta, title, description, modifiedTime, image, url }) {
+  if (entry) return entryStructuredData(req, entry, { focus, title, description, modifiedTime, image, url });
+  if (directoryMeta) return assetDirectoryStructuredData(req, directoryMeta, { title, description, url });
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: 'QMReader',
+    url,
+    description,
+  };
+}
+
+function siteStructuredData(req) {
+  return {
+    '@type': 'WebSite',
+    name: 'QMReader',
+    url: publicUrl(req, '/'),
+  };
+}
+
+function assetDirectoryStructuredData(req, directoryMeta, { title, description, url }) {
+  const type = requestAssetDirectoryType(req);
+  const stats = directoryMeta.stats || assetDirectoryStats(type, String(req.query.q || '').trim());
+  const label = type ? `${ASSET_DIRECTORY_META[type].label}资产` : '公开资产';
+  const entries = (stats.entries || [])
+    .slice()
+    .sort((a, b) => entryAssetTypeTimestamp(b, type) - entryAssetTypeTimestamp(a, type))
+    .slice(0, 10);
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: title.replace(/\s·\sQMReader$/, ''),
+    description,
+    url,
+    isPartOf: siteStructuredData(req),
+    dateModified: timestampIso(stats.latestAt) || undefined,
+    mainEntity: {
+      '@type': 'ItemList',
+      name: label,
+      numberOfItems: stats.assetCount || 0,
+      itemListElement: entries.map((entry, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        url: entryPublicUrl(req, entry, type),
+        name: clipText(entry.titleZh || entry.title || '文章', 120),
+        dateModified: entryAssetTypeLastModified(entry, type) || entryLastModified(entry) || undefined,
+      })),
+    },
+  };
+}
+
+function entryStructuredData(req, entry, { focus, title, description, modifiedTime, image, url }) {
+  const article = {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: clipText(entry.titleZh || entry.title || title, 120),
+    alternativeHeadline: entry.titleZh && entry.title ? clipText(entry.title, 120) : undefined,
+    description,
+    url,
+    mainEntityOfPage: url,
+    datePublished: entry.published || undefined,
+    dateModified: modifiedTime || entryLastModified(entry) || entry.published || undefined,
+    image: image || undefined,
+    author: structuredAuthor(entry.author || sourceNameForEntry(entry) || 'QMReader'),
+    publisher: {
+      '@type': 'Organization',
+      name: 'QMReader',
+      url: publicUrl(req, '/'),
+    },
+    inLanguage: entry.titleZh || entry.summaryZh ? 'zh-CN' : undefined,
+  };
+  const part = entryAssetStructuredPart(req, entry, focus);
+  if (part) article.hasPart = part;
+  return article;
+}
+
+function entryAssetStructuredPart(req, entry, focus) {
+  const type = normalizeAssetDirectoryType(focus);
+  if (!type) return null;
+  const exactPreview = exactAssetPreview(entry, type, req);
+  const preview = exactPreview || entry.assets?.previews?.[type];
+  if (!preview || !preview.text) return null;
+  const itemUrl = entryAssetItemUrl(req, entry, type, preview);
+  const itemIdUrl = entryAssetItemUrl(req, entry, type, preview, { includeHash: false });
+  const base = {
+    '@id': `${itemIdUrl}#structured`,
+    name: assetShareIdentity(type, preview) || ASSET_DIRECTORY_META[type]?.label || '公开资产',
+    text: clipText(preview.text, 500),
+    url: itemUrl,
+    dateCreated: timestampIso(preview.at) || undefined,
+    dateModified: timestampIso(preview.at) || undefined,
+    author: structuredAuthor(preview.author || preview.model || 'QMReader'),
+    isPartOf: entryPublicUrl(req, entry),
+  };
+  if (type === 'comments') return { '@type': 'Comment', ...base };
+  if (type === 'chat') {
+    const schemaType = preview.role === 'user' ? 'Question' : preview.role === 'assistant' ? 'Answer' : 'CreativeWork';
+    return { '@type': schemaType, ...base };
+  }
+  return {
+    '@type': 'CreativeWork',
+    ...base,
+    about: ASSET_DIRECTORY_META[type]?.label || '公开资产',
+  };
+}
+
+function structuredAuthor(name) {
+  const text = clipText(name || 'QMReader', 80);
+  const isOrg = /ai|deepseek|openai|anthropic|claude|gemini|gpt|qmreader/i.test(text);
+  return {
+    '@type': isOrg ? 'Organization' : 'Person',
+    name: text,
+  };
+}
+
+function sourceNameForEntry(entry) {
+  const source = fetcher.getSourceById(entry && entry.sourceId);
+  return source ? source.name : '';
 }
 
 function entryShareTitle(entry, focus = '', req = null) {
