@@ -1627,10 +1627,11 @@ function renderList() {
   el.innerHTML = '';
   renderAssetActivityStrip();
   if (!list.length) {
+    const assetScope = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
     const text = state.view === 'assets' && state.q
-      ? `没有匹配“${escapeHtml(state.q)}”的公开资产<br/>换个关键词试试`
+      ? `没有匹配“${escapeHtml(state.q)}”的${assetScope}<br/>换个关键词试试`
       : state.view === 'assets' && state.assetFilter
-      ? `还没有${ASSET_TYPE_LABELS[state.assetFilter] || ''}资产<br/>换个类型或先沉淀一篇文章`
+      ? `还没有${assetScope}<br/>换个类型或先沉淀一篇文章`
       : state.view === 'assets'
       ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
       : '这里空空如也<br/>试试刷新或切换视图';
