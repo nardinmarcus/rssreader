@@ -208,15 +208,36 @@ function publicAssetTypes(entry) {
   return Object.keys(ASSET_DIRECTORY_META).filter(type => hasPublicAssetType(entry, type));
 }
 
-function entryLastModified(entry) {
-  const assets = entry && entry.assets ? entry.assets : {};
-  const timestamp = Math.max(Number(assets.latestAt) || 0, Number(entry && entry.publishedTs) || 0);
-  if (!timestamp) return '';
+function timestampIso(timestamp) {
+  const t = Number(timestamp) || 0;
+  if (!t) return '';
   try {
-    return new Date(timestamp).toISOString();
+    return new Date(t).toISOString();
   } catch {
     return '';
   }
+}
+
+function entryLastModified(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const timestamp = Math.max(Number(assets.latestAt) || 0, Number(entry && entry.publishedTs) || 0);
+  return timestampIso(timestamp);
+}
+
+function assetItemLastModified(item, fallback = '') {
+  return timestampIso(item && (item.updatedAt || item.createdAt)) || fallback;
+}
+
+function sitemapUrlXml(loc, { lastmod = '', changefreq = 'weekly', priority = '0.7' } = {}) {
+  const parts = [
+    `  <url>`,
+    `    <loc>${escapeHtml(loc)}</loc>`,
+    lastmod ? `    <lastmod>${escapeHtml(lastmod)}</lastmod>` : '',
+    changefreq ? `    <changefreq>${escapeHtml(changefreq)}</changefreq>` : '',
+    priority ? `    <priority>${escapeHtml(priority)}</priority>` : '',
+    `  </url>`,
+  ];
+  return parts.filter(Boolean).join('\n');
 }
 
 function entryPublicUrl(req, entry, focus = '') {
@@ -238,19 +259,42 @@ function assetFeedUrl(req, type = '') {
   return publicUrl(req, assetType ? `/assets/${assetType}.xml` : '/assets.xml');
 }
 
-function entryAssetItemUrl(req, entry, type, preview = {}) {
+function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true } = {}) {
   const query = new URLSearchParams({ entry: entry.id, focus: type });
   const itemId = String(preview.id || '').trim();
   let hash = '';
   if (type === 'comments' && itemId) {
     query.set('comment', itemId);
-    hash = `#comment-${encodeURIComponent(itemId)}`;
+    if (includeHash) hash = `#comment-${encodeURIComponent(itemId)}`;
   }
   if (type === 'chat' && itemId) {
     query.set('chat', itemId);
-    hash = `#chat-${encodeURIComponent(itemId)}`;
+    if (includeHash) hash = `#chat-${encodeURIComponent(itemId)}`;
   }
   return publicUrl(req, `/?${query.toString()}${hash}`);
+}
+
+function publicExactAssetSitemapUrls(req, entry, lastmod = '') {
+  const urls = [];
+  if (hasPublicAssetType(entry, 'comments')) {
+    for (const comment of store.getComments(entry.id)) {
+      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'comments', comment, { includeHash: false }), {
+        lastmod: assetItemLastModified(comment, lastmod),
+        changefreq: 'monthly',
+        priority: '0.72',
+      }));
+    }
+  }
+  if (hasPublicAssetType(entry, 'chat')) {
+    for (const message of store.getChatMessages(entry.id)) {
+      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'chat', message, { includeHash: false }), {
+        lastmod: assetItemLastModified(message, lastmod),
+        changefreq: 'monthly',
+        priority: '0.72',
+      }));
+    }
+  }
+  return urls;
 }
 
 function rssDate(timestamp) {
@@ -404,6 +448,7 @@ function renderSitemap(req) {
         `  </url>`,
       ].filter(Boolean).join('\n'));
     }
+    urls.push(...publicExactAssetSitemapUrls(req, entry, lastmod));
   }
 
   return [
