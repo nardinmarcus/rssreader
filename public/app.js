@@ -318,6 +318,7 @@ const state = {
   readerTab: 'original',
   readerFocus: null,
   pendingAssetJump: null,
+  pendingCommentId: '',
   fetchingOriginal: false,
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
@@ -334,12 +335,16 @@ const state = {
 
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
+  const hash = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
+  const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : '';
+  const focus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
   return {
     entryId: String(params.get('entry') || '').trim(),
     tab: normalizeReaderTab(params.get('tab')),
     view: params.get('view') === 'assets' ? 'assets' : '',
     assetFilter: ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null,
-    focus: ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null,
+    focus: commentId ? 'comments' : focus,
+    commentId,
   };
 }
 
@@ -375,6 +380,13 @@ function readerAssetUrl(type, entry = state.activeEntry) {
   return readerUrlFor(entry, tab, type).href;
 }
 
+function commentUrl(commentId, entry = state.activeEntry) {
+  if (!entry || !commentId) return '';
+  const url = readerUrlFor(entry, 'original', 'comments');
+  url.hash = `comment-${encodeURIComponent(commentId)}`;
+  return url.href;
+}
+
 function readerShareFocus() {
   if (state.readerFocus && ASSET_FILTER_TYPES.includes(state.readerFocus)) return state.readerFocus;
   if (state.readerTab === 'translation' && state.translation) return 'translation';
@@ -408,14 +420,15 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   return url;
 }
 
-function syncReaderUrl({ replace = false } = {}) {
+function syncReaderUrl({ replace = false, commentId = '' } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
   const url = readerUrlFor(entry, state.readerTab);
+  if (commentId) url.hash = `comment-${encodeURIComponent(commentId)}`;
   document.title = readerRouteTitle(entry);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
-  history[method]({ entryId: entry.id, tab: state.readerTab }, '', url);
+  history[method]({ entryId: entry.id, tab: state.readerTab, commentId }, '', url);
 }
 
 function syncListUrl({ replace = false } = {}) {
@@ -1658,18 +1671,22 @@ function renderComments() {
   list.innerHTML = comments.map(comment => {
     const display = commentDisplayParts(comment.body);
     return `
-      <div class="comment-item${display.type ? ` comment-type-${display.type}` : ''}">
+      <div id="comment-${escapeHtml(comment.id)}" class="comment-item${display.type ? ` comment-type-${display.type}` : ''}">
         <div class="comment-head">
           <div class="comment-head-left">
             ${display.label ? `<span class="comment-kind">${escapeHtml(display.label)}</span>` : ''}
             <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
           </div>
-          <button type="button" class="comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
+          <div class="comment-actions">
+            <button type="button" class="comment-action comment-link-copy" data-comment-link="${escapeHtml(comment.id)}" title="复制这条点评链接" aria-label="复制这条点评链接">#</button>
+            <button type="button" class="comment-action comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
+          </div>
         </div>
         <div class="comment-body">${renderMarkdownLite(display.body)}</div>
       </div>`;
   }).join('');
   renderReaderAssetSummary();
+  highlightCommentFromRoute();
   settlePendingAssetJump('comments');
 }
 
@@ -1695,6 +1712,26 @@ function copyComment(commentId) {
     return;
   }
   copyText(comment.body, '点评已复制');
+}
+
+function copyCommentLink(commentId) {
+  const url = commentUrl(commentId);
+  if (!url) {
+    toast('找不到这条点评链接');
+    return;
+  }
+  copyText(url, '点评链接已复制');
+}
+
+function highlightCommentFromRoute() {
+  const commentId = state.pendingCommentId;
+  if (!commentId) return;
+  const target = document.getElementById(`comment-${commentId}`);
+  if (!target) return;
+  state.pendingCommentId = '';
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('comment-target');
+  setTimeout(() => target.classList.remove('comment-target'), 2400);
 }
 
 function autosizeCommentInput() {
@@ -1900,7 +1937,7 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e, { tab = 'original', focus = null, updateUrl = true, replaceUrl = false } = {}) {
+async function openEntry(e, { tab = 'original', focus = null, commentId = '', updateUrl = true, replaceUrl = false } = {}) {
   state.activeEntry = e;
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
   const requestedTab = requestedFocus === 'translation'
@@ -1934,6 +1971,7 @@ async function openEntry(e, { tab = 'original', focus = null, updateUrl = true, 
   state.rewriteGenerating = false;
   state.readerFocus = requestedFocus;
   state.pendingAssetJump = requestedFocus;
+  state.pendingCommentId = commentId || '';
   if (requestedFocus === 'chat') setAgentCollapsed(false);
   state.fetchingOriginal = false;
   renderReaderAssets(e);
@@ -1944,7 +1982,7 @@ async function openEntry(e, { tab = 'original', focus = null, updateUrl = true, 
   loadRewrite(e);
   loadComments(e);
   loadAgentMessages(e);
-  if (updateUrl) syncReaderUrl({ replace: replaceUrl });
+  if (updateUrl) syncReaderUrl({ replace: replaceUrl, commentId });
 
   $('#reader-audio').innerHTML = e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '';
   $('#reader-pane').scrollTop = 0;
@@ -1979,6 +2017,7 @@ function closeReaderFromRoute() {
   state.rewriteGenerating = false;
   state.readerFocus = null;
   state.pendingAssetJump = null;
+  state.pendingCommentId = '';
   state.fetchingOriginal = false;
   state.readerTab = 'original';
   $('#reader').classList.add('hidden');
@@ -1989,7 +2028,7 @@ function closeReaderFromRoute() {
   renderAgent();
 }
 
-async function openEntryById(entryId, { tab = 'original', focus = null, updateUrl = false, replaceUrl = true } = {}) {
+async function openEntryById(entryId, { tab = 'original', focus = null, commentId = '', updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
   let entry = state.entries.find(item => item.id === id);
@@ -1998,7 +2037,7 @@ async function openEntryById(entryId, { tab = 'original', focus = null, updateUr
     entry = data.entry;
   }
   if (!entry) return false;
-  await openEntry(entry, { tab, focus, updateUrl, replaceUrl });
+  await openEntry(entry, { tab, focus, commentId, updateUrl, replaceUrl });
   return true;
 }
 
@@ -2023,7 +2062,7 @@ async function openEntryFromUrl() {
     return false;
   }
   try {
-    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, updateUrl: false });
+    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, commentId: route.commentId, updateUrl: false });
   } catch (err) {
     toast('找不到这篇文章: ' + err.message, 4000);
     closeReaderFromRoute();
@@ -2576,6 +2615,11 @@ $('#comment-input').onkeydown = (e) => {
   }
 };
 $('#comments-list').onclick = (e) => {
+  const link = e.target.closest('[data-comment-link]');
+  if (link) {
+    copyCommentLink(link.dataset.commentLink);
+    return;
+  }
   const btn = e.target.closest('[data-comment-copy]');
   if (!btn) return;
   copyComment(btn.dataset.commentCopy);
