@@ -1051,6 +1051,44 @@ function latestAssetActivity(limit = 4) {
 function renderAssetActivityStrip() {
   const el = $('#asset-activity-strip');
   if (!el) return;
+  el.classList.remove('asset-filter-strip');
+  if (state.view === 'assets') {
+    const { entries, latest, counts } = assetDashboardStats();
+    const total = entries.length;
+    el.classList.toggle('hidden', !total && !state.assetFilter);
+    if (!total && !state.assetFilter) {
+      el.innerHTML = '';
+      return;
+    }
+    el.classList.add('asset-filter-strip');
+    const latestTypes = latest && Array.isArray(latest.assets?.latestTypes)
+      ? latest.assets.latestTypes.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean)
+      : [];
+    const latestText = latest && latest.assets?.latestAt
+      ? `${latestTypes.length ? latestTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
+      : '暂无沉淀';
+    const chips = [
+      `<button type="button" class="asset-filter-chip${!state.assetFilter ? ' active' : ''}" data-asset-strip-filter="">
+        <span>全部</span><strong>${total}</strong>
+      </button>`,
+      ...Object.entries(ASSET_FILTERS).map(([type, def]) => {
+        const count = counts[type] || 0;
+        return `<button type="button" class="asset-filter-chip asset-filter-${type}${state.assetFilter === type ? ' active' : ''}" data-asset-strip-filter="${escapeHtml(type)}" ${count ? '' : 'disabled'} title="${escapeHtml(count ? def.title : '暂无这类资产')}">
+          <span>${escapeHtml(def.label)}</span><strong>${count}</strong>
+        </button>`;
+      }),
+    ];
+    el.innerHTML = `
+      <div class="asset-filter-head">
+        <span>公开资产</span>
+        <strong>${total} 篇</strong>
+        <em>${escapeHtml(latestText)}</em>
+      </div>
+      <div class="asset-filter-list" aria-label="资产类型筛选">
+        ${chips.join('')}
+      </div>`;
+    return;
+  }
   const shouldShow = state.view === 'all' && !state.filterSource && !state.filterCategory && !state.q;
   const items = shouldShow ? latestAssetActivity(4).filter(item => item.type) : [];
   el.classList.toggle('hidden', !items.length);
@@ -2640,6 +2678,11 @@ $('#asset-dashboard').onclick = (e) => {
   selectAssetFilter(btn.dataset.assetFilter);
 };
 $('#asset-activity-strip').onclick = async (e) => {
+  const filter = e.target.closest('[data-asset-strip-filter]');
+  if (filter && !filter.disabled) {
+    selectAssetFilter(filter.dataset.assetStripFilter || null);
+    return;
+  }
   const all = e.target.closest('[data-asset-open-all]');
   if (all) {
     selectAssetFilter(null);

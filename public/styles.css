@@ -391,6 +391,80 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .asset-activity-comments .asset-activity-type { color: #276749; border-color: color-mix(in srgb, #2f855a 35%, var(--border)); }
 .asset-activity-chat .asset-activity-type { color: #315174; border-color: color-mix(in srgb, #4a789f 35%, var(--border)); }
 
+.asset-filter-strip {
+  gap: 9px;
+  background: var(--bg-1);
+}
+.asset-filter-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px;
+}
+.asset-filter-head span {
+  color: var(--text-1);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.asset-filter-head strong {
+  color: var(--text-0);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.asset-filter-head em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-style: normal;
+  text-align: right;
+}
+.asset-filter-list {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 1px;
+}
+.asset-filter-chip {
+  flex: 0 0 auto;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.asset-filter-chip strong {
+  color: var(--text-0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.asset-filter-chip:hover:not(:disabled),
+.asset-filter-chip.active {
+  color: var(--text-0);
+  border-color: var(--text-2);
+  background: var(--bg-3);
+}
+.asset-filter-chip.active strong { color: var(--accent); }
+.asset-filter-chip:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.asset-filter-translation.active { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.asset-filter-rewrite.active { border-color: color-mix(in srgb, #c89b22 42%, var(--border)); }
+.asset-filter-comments.active { border-color: color-mix(in srgb, #2f855a 42%, var(--border)); }
+.asset-filter-chat.active { border-color: color-mix(in srgb, #4a789f 42%, var(--border)); }
+
 .entry-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; }
 .entry-card {
   display: flex; gap: 10px;
@@ -1613,6 +1687,16 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     gap: 1px 7px;
   }
   .asset-activity-item strong { font-size: 12px; }
+  .asset-filter-head {
+    grid-template-columns: auto auto;
+  }
+  .asset-filter-head em {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+  .asset-filter-list {
+    margin-inline: -1px;
+  }
   .sidebar-footer {
     display: flex;
     flex-direction: column;
