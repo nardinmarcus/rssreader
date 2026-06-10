@@ -16,6 +16,24 @@ const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
 const DEFAULT_TITLE = 'QMReader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const ASSET_DIRECTORY_META = {
+  translation: {
+    label: '中文翻译',
+    description: 'QMReader 已沉淀中文双语对照翻译的公开 RSS 文章目录。',
+  },
+  rewrite: {
+    label: '乔木风格重写',
+    description: 'QMReader 已沉淀乔木风格中文重写的公开 RSS 文章目录。',
+  },
+  comments: {
+    label: '人工点评',
+    description: 'QMReader 已沉淀人工点评的公开 RSS 文章目录。',
+  },
+  chat: {
+    label: '文章对话',
+    description: 'QMReader 已沉淀公开 AI 文章对话的 RSS 文章目录。',
+  },
+};
 
 app.set('trust proxy', 1);
 app.use(compression());
@@ -53,9 +71,30 @@ function absolutePublicUrl(req, value) {
   }
 }
 
+function normalizeAssetDirectoryType(value) {
+  return ASSET_DIRECTORY_META[value] ? value : '';
+}
+
+function assetDirectoryMeta(req) {
+  if (String(req.query.view || '') !== 'assets') return null;
+  const type = normalizeAssetDirectoryType(String(req.query.asset || ''));
+  if (!type) {
+    return {
+      title: '公开资产 · QMReader',
+      description: DEFAULT_DESCRIPTION,
+    };
+  }
+  const meta = ASSET_DIRECTORY_META[type];
+  return {
+    title: `${meta.label}资产 · QMReader`,
+    description: meta.description,
+  };
+}
+
 function socialMetaTags(req, entry) {
-  const title = entry ? `${entry.titleZh || entry.title || '文章'} · QMReader` : DEFAULT_TITLE;
-  const description = clipText(entry ? (entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION) : DEFAULT_DESCRIPTION);
+  const directoryMeta = entry ? null : assetDirectoryMeta(req);
+  const title = entry ? `${entry.titleZh || entry.title || '文章'} · QMReader` : (directoryMeta?.title || DEFAULT_TITLE);
+  const description = clipText(entry ? (entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION) : (directoryMeta?.description || DEFAULT_DESCRIPTION));
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
   const tags = [
@@ -85,6 +124,15 @@ function hasPublicAssets(entry) {
   return Boolean(assets.translation || assets.rewrite || assets.comments || assets.chatMessages);
 }
 
+function hasPublicAssetType(entry, type) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'translation') return Boolean(assets.translation);
+  if (type === 'rewrite') return Boolean(assets.rewrite);
+  if (type === 'comments') return Boolean(assets.comments);
+  if (type === 'chat') return Boolean(assets.chatMessages);
+  return hasPublicAssets(entry);
+}
+
 function entryLastModified(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const timestamp = Math.max(Number(assets.latestAt) || 0, Number(entry && entry.publishedTs) || 0);
@@ -98,6 +146,13 @@ function entryLastModified(entry) {
 
 function entryPublicUrl(req, entry) {
   return publicUrl(req, `/?entry=${encodeURIComponent(entry.id)}`);
+}
+
+function assetDirectoryUrl(req, type = '') {
+  const query = type
+    ? `?view=assets&asset=${encodeURIComponent(type)}`
+    : '?view=assets';
+  return publicUrl(req, `/${query}`);
 }
 
 function renderSitemap(req) {
@@ -119,6 +174,32 @@ function renderSitemap(req) {
       `  </url>`,
     ].join('\n'),
   ];
+
+  const assetEntries = entries.filter(hasPublicAssets);
+  if (assetEntries.length) {
+    const latestAssetLastmod = entryLastModified(assetEntries[0]);
+    urls.push([
+      `  <url>`,
+      `    <loc>${escapeHtml(assetDirectoryUrl(req))}</loc>`,
+      latestAssetLastmod ? `    <lastmod>${escapeHtml(latestAssetLastmod)}</lastmod>` : '',
+      `    <changefreq>daily</changefreq>`,
+      `    <priority>0.7</priority>`,
+      `  </url>`,
+    ].filter(Boolean).join('\n'));
+
+    for (const type of Object.keys(ASSET_DIRECTORY_META)) {
+      const typeEntries = assetEntries.filter(entry => hasPublicAssetType(entry, type));
+      if (!typeEntries.length) continue;
+      urls.push([
+        `  <url>`,
+        `    <loc>${escapeHtml(assetDirectoryUrl(req, type))}</loc>`,
+        `    <lastmod>${escapeHtml(entryLastModified(typeEntries[0]))}</lastmod>`,
+        `    <changefreq>weekly</changefreq>`,
+        `    <priority>0.65</priority>`,
+        `  </url>`,
+      ].join('\n'));
+    }
+  }
 
   for (const entry of entries) {
     const lastmod = entryLastModified(entry);

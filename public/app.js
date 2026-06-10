@@ -20,6 +20,7 @@ function readJson(key, fallback) {
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'translation', 'rewrite'];
+const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
@@ -320,7 +321,16 @@ function routeStateFromUrl() {
   return {
     entryId: String(params.get('entry') || '').trim(),
     tab: normalizeReaderTab(params.get('tab')),
+    view: params.get('view') === 'assets' ? 'assets' : '',
+    assetFilter: ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null,
   };
+}
+
+function listRouteTitle(view = state.view, assetFilter = state.assetFilter) {
+  if (view === 'assets') {
+    return assetFilter ? `${ASSET_TYPE_LABELS[assetFilter] || '公开'}资产 · QMReader` : '公开资产 · QMReader';
+  }
+  return 'QMReader · RSS 阅读器';
 }
 
 function readerUrlFor(entry = state.activeEntry, tab = state.readerTab) {
@@ -335,6 +345,19 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab) {
   return url;
 }
 
+function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  if (view === 'assets') {
+    url.searchParams.set('view', 'assets');
+    if (assetFilter && ASSET_FILTER_TYPES.includes(assetFilter)) {
+      url.searchParams.set('asset', assetFilter);
+    }
+  }
+  return url;
+}
+
 function syncReaderUrl({ replace = false } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
@@ -343,6 +366,14 @@ function syncReaderUrl({ replace = false } = {}) {
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
   history[method]({ entryId: entry.id, tab: state.readerTab }, '', url);
+}
+
+function syncListUrl({ replace = false } = {}) {
+  const url = listUrlFor();
+  document.title = listRouteTitle();
+  if (url.href === window.location.href) return;
+  const method = replace ? 'replaceState' : 'pushState';
+  history[method]({ view: state.view, assetFilter: state.assetFilter }, '', url);
 }
 
 function clearReaderUrl({ replace = true } = {}) {
@@ -1725,7 +1756,21 @@ async function openEntryById(entryId, { tab = 'original', updateUrl = false, rep
 async function openEntryFromUrl() {
   const route = routeStateFromUrl();
   if (!route.entryId) {
+    if (route.view === 'assets') {
+      state.view = 'assets';
+      state.filterSource = null;
+      state.filterCategory = null;
+      state.assetFilter = route.assetFilter;
+    } else {
+      state.view = 'all';
+      state.filterSource = null;
+      state.filterCategory = null;
+      state.assetFilter = null;
+    }
+    updateListTitle();
+    renderSidebar();
     closeReaderFromRoute();
+    if (route.view === 'assets') document.title = listRouteTitle();
     return false;
   }
   try {
@@ -1782,6 +1827,11 @@ function selectView(v) {
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = null;
+  if (v === 'assets') {
+    syncListUrl();
+    reload({ clearUrl: false });
+    return;
+  }
   reload();
 }
 
@@ -1790,7 +1840,8 @@ function selectAssetFilter(type = null) {
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
-  reload();
+  syncListUrl();
+  reload({ clearUrl: false });
 }
 
 /* ---------- Refresh ---------- */
