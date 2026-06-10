@@ -1185,6 +1185,7 @@ function renderAssetActivityStrip() {
         <span>公开资产</span>
         <strong>${total} 篇</strong>
         <em>${escapeHtml(statusText)}</em>
+        <button type="button" class="asset-copy-link" data-asset-copy-list title="复制当前资产页链接" aria-label="复制当前资产页链接">⧉</button>
         <a class="asset-feed-link" href="${escapeHtml(feedHref)}" target="_blank" rel="noopener" title="订阅公开资产 RSS">RSS</a>
       </div>
       <div class="asset-filter-list" aria-label="资产类型筛选">
@@ -2841,6 +2842,11 @@ $('#asset-dashboard').onclick = (e) => {
   selectAssetFilter(btn.dataset.assetFilter);
 };
 $('#asset-activity-strip').onclick = async (e) => {
+  const copy = e.target.closest('[data-asset-copy-list]');
+  if (copy) {
+    copyText(listUrlFor('assets', state.assetFilter).href, '资产页链接已复制');
+    return;
+  }
   const filter = e.target.closest('[data-asset-strip-filter]');
   if (filter && !filter.disabled) {
     selectAssetFilter(filter.dataset.assetStripFilter || null);

@@ -411,7 +411,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .asset-filter-head {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: baseline;
   gap: 7px;
   padding: 0 2px;
@@ -436,10 +436,28 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-style: normal;
   text-align: right;
 }
+.asset-copy-link,
 .asset-feed-link {
   color: var(--accent);
   font-size: 11.5px;
   font-weight: 700;
+  text-decoration: none;
+}
+.asset-copy-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-grid;
+  height: 24px;
+  place-items: center;
+  line-height: 1;
+  padding: 0;
+  width: 24px;
+}
+.asset-copy-link:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
   text-decoration: none;
 }
 .asset-feed-link:hover { text-decoration: underline; }
@@ -1722,13 +1740,14 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .asset-activity-item strong { font-size: 12px; }
   .asset-filter-head {
-    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   }
   .asset-filter-head em {
     grid-column: 1 / -1;
     grid-row: 2;
     text-align: left;
   }
+  .asset-copy-link,
   .asset-feed-link {
     justify-self: end;
   }
