@@ -42,11 +42,13 @@ npm start
 
 阅读器内置服务端 DeepSeek 调用，用于抓取后自动补翻译英文标题。站长密钥只在 Node 服务端读取，不会下发到浏览器。
 
-注册用户在右侧 Article Agent 设置中配置自己的 AI 服务，配置按 provider 分桶保存在浏览器 localStorage：
+注册用户在右侧 Article Agent 设置中配置自己的 AI 服务，支持多个 Profile、默认配置、服务商模板、快捷模型、获取模型列表和连接测试。配置按登录账号分区保存在浏览器 localStorage：
 
-- DeepSeek：默认 `https://api.deepseek.com` / `deepseek-v4-flash`
-- OpenAI 兼容：默认 `https://api.aigocode.app` / `gpt-5.4-mini`
-- Claude 兼容：默认 `https://api.aigocode.app` / `claude-sonnet-4-6`
+- 国内大模型：DeepSeek、Kimi、智谱、阿里百炼、火山方舟
+- 国内聚合：硅基流动、AiHubMix
+- 海外大模型：OpenAI、xAI Grok、Cloudflare Workers AI
+- 海外聚合：OpenRouter、Groq、Together
+- 自定义：任意 OpenAI-compatible Chat Completions 服务
 
 用户的 API key 会随生成正文翻译、文章对话、测试连接请求发送到本站后端代理调用，不会落库。Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址。
 
@@ -55,8 +57,8 @@ npm start
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | 空 | DeepSeek API key |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 默认使用 DeepSeek 当前推荐的非思考模型 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible API 地址 |
+| `DEEPSEEK_MODEL` | `deepseek-chat` | 服务端标题自动翻译模型 |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` | DeepSeek OpenAI-compatible API 地址 |
 | `ADMIN_EMAIL` | 空 | 管理员登录邮箱 |
 | `ADMIN_PASSWORD` | 空 | 管理员登录密码，重启时同步到管理员账号 |
 | `ADMIN_NAME` | `向阳乔木` | 管理员公开显示名 |
@@ -118,7 +120,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/auth/register` | 注册并登录；body `{"email":"","password":"","displayName":""}` |
 | POST | `/api/auth/login` | 登录；body `{"email":"","password":""}` |
 | POST | `/api/auth/logout` | 退出登录 |
-| POST | `/api/ai/models` | 登录用户用自己的 provider/key 测试模型列表 |
+| POST | `/api/ai/models` | 登录用户用自己的 provider/key 获取模型列表 |
+| POST | `/api/ai/test` | 登录用户用自己的 provider/key 测试 chat completion |
 | GET | `/api/sources` | 全部源及抓取状态、刷新进度 |
 | GET | `/api/entries?source=&category=&q=&limit=` | 文章列表（不含正文） |
 | GET | `/api/entry/:id` | 单篇全文 |
@@ -144,5 +147,5 @@ docker compose up -d --build
 ## 已知限制
 
 - There's An AI For That 被 Cloudflare 盾拦截，服务端无法抓取
-- 已读/收藏状态存浏览器 localStorage（沙箱 iframe 中自动降级为内存存储）
+- 未登录时已读/收藏状态存浏览器 localStorage（沙箱 iframe 中自动降级为内存存储），登录后按账号存 SQLite
 - favicon 使用 Google S2 favicon 服务，外部网络或 Google 被阻断时会退回字母图标

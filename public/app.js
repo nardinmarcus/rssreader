@@ -20,54 +20,257 @@ function readJson(key, fallback) {
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-const AI_PROVIDERS = {
-  deepseek: {
-    title: 'DeepSeek',
-    subtitle: '默认用于标题、正文翻译和文章对话。',
-    defaultBaseUrl: 'https://api.deepseek.com',
-    defaultModel: 'deepseek-v4-flash',
-    keyPlaceholder: 'sk-...',
-    models: ['deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
+const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
+const AI_PROVIDER_PRESETS = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    providerType: 'openai_compatible',
+    category: '国内大模型',
+    baseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    quickModels: ['deepseek-chat', 'deepseek-reasoner'],
+    apiKeyUrl: 'https://platform.deepseek.com/api_keys',
+    description: 'DeepSeek 官方接口',
+    recommended: true,
   },
-  'openai-compatible': {
-    title: 'OpenAI 兼容',
-    subtitle: '适合 OpenAI 协议的中转或自定义模型。',
-    defaultBaseUrl: 'https://api.aigocode.app',
-    defaultModel: 'gpt-5.4-mini',
-    keyPlaceholder: 'sk-...',
-    models: ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5', 'codex-auto-review'],
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    providerType: 'openai_compatible',
+    category: '海外聚合',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    defaultModel: 'anthropic/claude-sonnet-4',
+    quickModels: ['anthropic/claude-sonnet-4', 'openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'deepseek/deepseek-chat'],
+    apiKeyUrl: 'https://openrouter.ai/settings/keys',
+    description: '多模型聚合平台，模型最全',
+    recommended: true,
   },
-  'anthropic-compatible': {
-    title: 'Claude 兼容',
-    subtitle: '适合兼容 Chat Completions 的 Claude 中转。',
-    defaultBaseUrl: 'https://api.aigocode.app',
-    defaultModel: 'claude-sonnet-4-6',
-    keyPlaceholder: 'sk-ant-... 或第三方 token',
-    models: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-6'],
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    providerType: 'openai_compatible',
+    category: '海外大模型',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o-mini',
+    quickModels: ['gpt-4o-mini', 'gpt-4o', 'o3-mini'],
+    apiKeyUrl: 'https://platform.openai.com/api-keys',
+    description: 'OpenAI 官方接口',
   },
-};
+  {
+    id: 'grok',
+    name: 'xAI Grok',
+    providerType: 'openai_compatible',
+    category: '海外大模型',
+    baseUrl: 'https://api.x.ai/v1',
+    defaultModel: 'grok-4-0709',
+    quickModels: ['grok-4-0709', 'grok-3-mini'],
+    apiKeyUrl: 'https://console.x.ai/team/api-keys',
+    description: 'xAI 官方 Grok',
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    providerType: 'openai_compatible',
+    category: '海外聚合',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    defaultModel: 'llama-3.3-70b-versatile',
+    quickModels: ['llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'gemma2-9b-it'],
+    apiKeyUrl: 'https://console.groq.com/keys',
+    description: '高吞吐低延迟',
+  },
+  {
+    id: 'together',
+    name: 'Together',
+    providerType: 'openai_compatible',
+    category: '海外聚合',
+    baseUrl: 'https://api.together.xyz/v1',
+    defaultModel: 'deepseek-ai/DeepSeek-R1-0528',
+    quickModels: ['deepseek-ai/DeepSeek-R1-0528', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'],
+    apiKeyUrl: 'https://api.together.ai/settings/api-keys',
+    description: '开源模型聚合',
+  },
+  {
+    id: 'moonshot',
+    name: 'Kimi (Moonshot)',
+    providerType: 'openai_compatible',
+    category: '国内大模型',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultModel: 'moonshot-v1-8k',
+    quickModels: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    apiKeyUrl: 'https://platform.moonshot.cn/console/api-keys',
+    description: '月之暗面 Kimi',
+  },
+  {
+    id: 'zhipu',
+    name: '智谱',
+    providerType: 'openai_compatible',
+    category: '国内大模型',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    defaultModel: 'glm-4-plus',
+    quickModels: ['glm-4-plus', 'glm-4-flash'],
+    apiKeyUrl: 'https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys',
+    description: '智谱 GLM 系列',
+  },
+  {
+    id: 'qwen',
+    name: '阿里百炼',
+    providerType: 'openai_compatible',
+    category: '国内大模型',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaultModel: 'qwen-max',
+    quickModels: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+    apiKeyUrl: 'https://bailian.console.aliyun.com/?tab=model#/api-key',
+    description: '通义千问',
+  },
+  {
+    id: 'siliconflow',
+    name: '硅基流动',
+    providerType: 'openai_compatible',
+    category: '国内聚合',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    defaultModel: 'Qwen/Qwen2.5-7B-Instruct',
+    quickModels: ['Qwen/Qwen2.5-7B-Instruct', 'deepseek-ai/DeepSeek-V3'],
+    apiKeyUrl: 'https://cloud.siliconflow.cn/account/ak',
+    description: '国产聚合平台',
+    recommended: true,
+  },
+  {
+    id: 'doubao',
+    name: '火山方舟',
+    providerType: 'openai_compatible',
+    category: '国内大模型',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    defaultModel: 'ep-20250616135538-zdz4b',
+    quickModels: ['ep-20250616135538-zdz4b'],
+    apiKeyUrl: 'https://www.volcengine.com/experience/ark',
+    description: '豆包 / 火山引擎',
+  },
+  {
+    id: 'aihubmix',
+    name: 'AiHubMix',
+    providerType: 'openai_compatible',
+    category: '国内聚合',
+    baseUrl: 'https://aihubmix.com/v1',
+    defaultModel: 'claude-sonnet-4-20250514',
+    quickModels: ['claude-sonnet-4-20250514', 'o3-mini', 'gemini-2.5-pro-search'],
+    apiKeyUrl: 'https://aihubmix.com/token',
+    description: '国内聚合平台',
+  },
+  {
+    id: 'workers_ai',
+    name: 'Cloudflare Workers AI',
+    providerType: 'openai_compatible',
+    category: '海外大模型',
+    baseUrl: 'https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1',
+    defaultModel: '@cf/meta/llama-3.1-8b-instruct',
+    quickModels: ['@cf/meta/llama-3.1-8b-instruct', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/openai/gpt-oss-120b'],
+    apiKeyUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+    description: 'Cloudflare 官方 Workers AI，Base URL 里的 <ACCOUNT_ID> 需替换为你的账号 ID。',
+  },
+];
+const AI_PROVIDER_MAP = Object.fromEntries(AI_PROVIDER_PRESETS.map(preset => [preset.id, preset]));
+const DEFAULT_AI_PRESET_ID = 'deepseek';
 
-function normalizeProvider(provider) {
-  return AI_PROVIDERS[provider] ? provider : 'deepseek';
+function createId(prefix) {
+  const random = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  return `${prefix}-${Date.now()}-${random}`;
 }
 
-function defaultAiConfig(provider) {
-  const p = AI_PROVIDERS[normalizeProvider(provider)];
-  return { apiKey: '', baseUrl: p.defaultBaseUrl, model: p.defaultModel };
+function normalizeBaseUrl(input) {
+  return String(input || '').trim().replace(/\/+$/, '');
 }
 
-function loadAiConfigs() {
-  const configs = readJson('qm_ai_configs', '{}');
-  for (const provider of Object.keys(AI_PROVIDERS)) {
-    configs[provider] = { ...defaultAiConfig(provider), ...(configs[provider] || {}) };
-  }
-  const legacyKey = storage.getItem('qm_deepseek_key');
-  if (legacyKey && !configs.deepseek.apiKey) {
-    configs.deepseek.apiKey = legacyKey;
-    storage.removeItem('qm_deepseek_key');
-    storage.setItem('qm_ai_configs', JSON.stringify(configs));
-  }
-  return configs;
+function clampTemperature(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0.7;
+  return Math.max(0, Math.min(2, n));
+}
+
+function clampMaxTokens(value) {
+  const digits = String(value || '').replace(/[^\d]/g, '');
+  const n = Number(digits || 2000);
+  if (!Number.isFinite(n) || n <= 0) return 2000;
+  return Math.max(1, Math.min(32768, Math.floor(n)));
+}
+
+function maskApiKey(value) {
+  const key = String(value || '').trim();
+  if (!key) return '';
+  if (key.length <= 10) return `${key.slice(0, 2)}...${key.slice(-2)}`;
+  return `${key.slice(0, 6)}...${key.slice(-4)}`;
+}
+
+function presetById(id) {
+  return AI_PROVIDER_MAP[id] || AI_PROVIDER_MAP[DEFAULT_AI_PRESET_ID];
+}
+
+function createProfileFromPreset(presetId = DEFAULT_AI_PRESET_ID, overrides = {}) {
+  const preset = presetById(presetId);
+  const now = Date.now();
+  return {
+    id: createId('ai'),
+    name: preset.name,
+    provider: preset.id,
+    providerName: preset.name,
+    providerType: preset.providerType,
+    providerCategory: preset.category,
+    apiKeyUrl: preset.apiKeyUrl || '',
+    baseUrl: preset.baseUrl,
+    model: preset.defaultModel,
+    temperature: 0.7,
+    maxTokens: 2000,
+    apiKey: '',
+    isDefault: false,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function createCustomProfile(overrides = {}) {
+  const now = Date.now();
+  return {
+    id: createId('ai'),
+    name: '自定义模型',
+    provider: 'custom',
+    providerName: '自定义',
+    providerType: 'openai_compatible',
+    providerCategory: '',
+    apiKeyUrl: '',
+    baseUrl: '',
+    model: '',
+    temperature: 0.7,
+    maxTokens: 2000,
+    apiKey: '',
+    isDefault: false,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function normalizeProfile(raw, index = 0) {
+  const provider = String(raw && raw.provider || DEFAULT_AI_PRESET_ID).trim() || DEFAULT_AI_PRESET_ID;
+  const preset = AI_PROVIDER_MAP[provider];
+  const hasDefaultFlag = raw && (Object.prototype.hasOwnProperty.call(raw, 'isDefault') || Object.prototype.hasOwnProperty.call(raw, 'is_default'));
+  return {
+    id: String(raw && raw.id || createId('ai')),
+    name: String(raw && raw.name || (preset ? preset.name : '自定义模型')).trim(),
+    provider,
+    providerName: String(raw && (raw.providerName || raw.provider_name) || (preset ? preset.name : provider)).trim(),
+    providerType: String(raw && (raw.providerType || raw.provider_type) || (preset ? preset.providerType : 'openai_compatible')).trim(),
+    providerCategory: String(raw && (raw.providerCategory || raw.provider_category) || (preset ? preset.category : '')).trim(),
+    apiKeyUrl: String(raw && (raw.apiKeyUrl || raw.api_key_url) || (preset ? preset.apiKeyUrl || '' : '')).trim(),
+    baseUrl: normalizeBaseUrl(raw && (raw.baseUrl || raw.base_url) || (preset ? preset.baseUrl : '')),
+    model: String(raw && raw.model || (preset ? preset.defaultModel : '')).trim(),
+    temperature: clampTemperature(raw && raw.temperature),
+    maxTokens: clampMaxTokens(raw && (raw.maxTokens || raw.max_tokens)),
+    apiKey: String(raw && (raw.apiKey || raw.api_key) || '').trim(),
+    isDefault: hasDefaultFlag ? Boolean(raw.isDefault || raw.is_default) : index === 0,
+    createdAt: Number(raw && raw.createdAt) || Date.now(),
+    updatedAt: Number(raw && raw.updatedAt) || Date.now(),
+  };
 }
 
 const state = {
@@ -89,8 +292,13 @@ const state = {
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
   me: null,
   authMode: 'login',
-  aiProvider: normalizeProvider(storage.getItem('qm_ai_provider') || 'deepseek'),
-  aiConfigs: loadAiConfigs(),
+  aiProfiles: [],
+  activeAiProfileId: '',
+  editingAiProfileId: '',
+  aiConfigReason: '',
+  pendingAiAction: '',
+  pendingAgentText: '',
+  loadedAiScope: '',
 };
 
 function persist() {
@@ -139,6 +347,34 @@ function renderMarkdownLite(value) {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
+async function copyText(value, success = '已复制') {
+  const text = String(value || '');
+  if (!text.trim()) {
+    toast('没有可复制的内容');
+    return false;
+  }
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    toast(success);
+    return true;
+  } catch {
+    toast('复制失败，请手动选中复制', 4000);
+    return false;
+  }
+}
+
 function fallbackFavicon(img, letter) {
   const icon = document.createElement('span');
   icon.className = 'letter-icon';
@@ -178,31 +414,126 @@ function timeAgo(ts) {
 }
 
 /* ---------- API ---------- */
-function currentAiConfig() {
-  const provider = normalizeProvider(state.aiProvider);
-  return { provider, ...defaultAiConfig(provider), ...(state.aiConfigs[provider] || {}) };
+function aiScope() {
+  return state.me ? `user:${state.me.id || state.me.email}` : 'guest';
 }
 
-function aiHeaders() {
-  const config = currentAiConfig();
+function aiProfilesKey(scope = aiScope()) {
+  return `qm_ai_profiles:${scope}`;
+}
+
+function aiActiveProfileKey(scope = aiScope()) {
+  return `qm_ai_active_profile:${scope}`;
+}
+
+function migrateLegacyAiProfiles() {
+  const profiles = [];
+  const legacyConfigs = readJson('qm_ai_configs', '{}');
+  const legacyKey = String(storage.getItem('qm_deepseek_key') || '').trim();
+
+  for (const [provider, config] of Object.entries(legacyConfigs || {})) {
+    if (!config || typeof config !== 'object') continue;
+    const preset = AI_PROVIDER_MAP[provider];
+    if (!preset && !config.baseUrl && !config.model && !config.apiKey) continue;
+    profiles.push(createProfileFromPreset(preset ? provider : DEFAULT_AI_PRESET_ID, {
+      name: preset ? preset.name : String(provider || '自定义模型'),
+      provider: preset ? preset.id : String(provider || 'custom'),
+      providerName: preset ? preset.name : String(provider || '自定义'),
+      providerCategory: preset ? preset.category : '',
+      apiKeyUrl: preset ? preset.apiKeyUrl || '' : '',
+      baseUrl: normalizeBaseUrl(config.baseUrl || (preset ? preset.baseUrl : '')),
+      model: String(config.model || (preset ? preset.defaultModel : '')).trim(),
+      apiKey: String(config.apiKey || '').trim(),
+      isDefault: String(storage.getItem('qm_ai_provider') || DEFAULT_AI_PRESET_ID) === provider,
+    }));
+  }
+
+  if (legacyKey && !profiles.some(profile => profile.provider === 'deepseek' && profile.apiKey)) {
+    profiles.push(createProfileFromPreset('deepseek', { apiKey: legacyKey, isDefault: profiles.length === 0 }));
+  }
+
+  return profiles;
+}
+
+function ensureSingleDefault(profiles) {
+  if (!profiles.length) return [];
+  const defaultIndex = Math.max(0, profiles.findIndex(profile => profile.isDefault));
+  return profiles.map((profile, index) => ({ ...profile, isDefault: index === defaultIndex }));
+}
+
+function loadAiProfilesForScope() {
+  const scope = aiScope();
+  const stored = readJson(aiProfilesKey(scope), 'null');
+  let profiles = Array.isArray(stored) ? stored.map(normalizeProfile) : migrateLegacyAiProfiles();
+  if (!profiles.length) profiles = [createProfileFromPreset(DEFAULT_AI_PRESET_ID, { isDefault: true })];
+  profiles = ensureSingleDefault(profiles);
+  state.aiProfiles = profiles;
+  const activeId = storage.getItem(aiActiveProfileKey(scope));
+  state.activeAiProfileId = profiles.some(profile => profile.id === activeId)
+    ? activeId
+    : (profiles.find(profile => profile.isDefault) || profiles[0]).id;
+  state.editingAiProfileId = state.activeAiProfileId;
+  state.loadedAiScope = scope;
+  persistAiProfiles();
+}
+
+function persistAiProfiles() {
+  const scope = aiScope();
+  storage.setItem(aiProfilesKey(scope), JSON.stringify(ensureSingleDefault(state.aiProfiles)));
+  if (state.activeAiProfileId) storage.setItem(aiActiveProfileKey(scope), state.activeAiProfileId);
+}
+
+function currentAiProfile() {
+  return state.aiProfiles.find(profile => profile.id === state.activeAiProfileId)
+    || state.aiProfiles.find(profile => profile.isDefault)
+    || state.aiProfiles[0]
+    || createProfileFromPreset(DEFAULT_AI_PRESET_ID, { isDefault: true });
+}
+
+function currentAiConfig() {
+  const profile = currentAiProfile();
   return {
-    'X-AI-Provider': config.provider,
-    'X-AI-Key': String(config.apiKey || '').trim(),
-    'X-AI-Base-URL': String(config.baseUrl || '').trim(),
-    'X-AI-Model': String(config.model || '').trim(),
+    profileId: profile.id,
+    profileName: profile.name,
+    provider: profile.provider || DEFAULT_AI_PRESET_ID,
+    providerName: profile.providerName || profile.name || profile.provider || 'AI',
+    providerType: profile.providerType || 'openai_compatible',
+    apiKey: String(profile.apiKey || '').trim(),
+    baseUrl: normalizeBaseUrl(profile.baseUrl),
+    model: String(profile.model || '').trim(),
+    temperature: clampTemperature(profile.temperature),
+    maxTokens: clampMaxTokens(profile.maxTokens),
   };
 }
 
-function persistAiConfig() {
-  storage.setItem('qm_ai_provider', state.aiProvider);
-  storage.setItem('qm_ai_configs', JSON.stringify(state.aiConfigs));
+function hasUsableAiConfig(config = currentAiConfig()) {
+  return Boolean(config.apiKey && config.baseUrl && config.model);
+}
+
+function aiHeadersFromConfig(config) {
+  return {
+    'X-AI-Provider': config.provider,
+    'X-AI-Provider-Name': config.providerName || config.profileName || config.provider,
+    'X-AI-Provider-Type': config.providerType || 'openai_compatible',
+    'X-AI-Key': String(config.apiKey || '').trim(),
+    'X-AI-Base-URL': String(config.baseUrl || '').trim(),
+    'X-AI-Model': String(config.model || '').trim(),
+    'X-AI-Temperature': String(config.temperature ?? ''),
+    'X-AI-Max-Tokens': String(config.maxTokens ?? ''),
+  };
+}
+
+function aiHeaders() {
+  return aiHeadersFromConfig(currentAiConfig());
 }
 
 async function api(path, opts) {
   const headers = { ...(opts && opts.headers ? opts.headers : {}) };
-  if (opts && opts.ai) Object.assign(headers, aiHeaders());
+  if (opts && opts.aiConfig) Object.assign(headers, aiHeadersFromConfig(opts.aiConfig));
+  else if (opts && opts.ai) Object.assign(headers, aiHeaders());
   const rest = { ...(opts || {}) };
   delete rest.ai;
+  delete rest.aiConfig;
   const res = await fetch(path, { ...rest, headers });
   if (!res.ok) {
     let message = `${res.status}`;
@@ -273,10 +604,12 @@ async function loadMe() {
   const data = await api('/api/me');
   state.me = data.user || null;
   await loadUserEntryStates();
+  loadAiProfilesForScope();
   renderAuthState();
   renderEntryStateUi();
   renderComments();
   renderAgent();
+  renderAiSettings();
   return state.me;
 }
 
@@ -388,10 +721,12 @@ async function submitAuth() {
     state.me = data.user || null;
     closeAuth();
     await loadUserEntryStates();
+    loadAiProfilesForScope();
     renderAuthState();
     renderEntryStateUi();
     renderComments();
     renderAgent();
+    renderAiSettings();
     toast(state.authMode === 'register' ? '注册成功' : '已登录');
   } catch (err) {
     toast(err.message, 5000);
@@ -404,10 +739,12 @@ async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   state.me = null;
   applyGuestEntryStates();
+  loadAiProfilesForScope();
   renderAuthState();
   renderEntryStateUi();
   renderComments();
   renderAgent();
+  renderAiSettings();
   toast('已退出登录');
 }
 
@@ -519,9 +856,9 @@ async function generateTranslation() {
     return;
   }
   if (!requireAuth('login')) return;
-  if (!currentAiConfig().apiKey.trim()) {
-    $('#agent-settings-panel').classList.remove('hidden');
-    toast('请先填写你的 API Key');
+  if (!hasUsableAiConfig()) {
+    openAiConfigModal('translation', 'translation');
+    toast('请先保存一个可用的 AI 配置');
     return;
   }
   btn.disabled = true;
@@ -616,19 +953,49 @@ function renderAgentMessages(extraPending = false) {
   for (const message of messages) {
     const row = document.createElement('div');
     row.className = `agent-msg ${message.role}${message.pending ? ' pending' : ''}`;
-    row.innerHTML = `
-      <div class="agent-msg-role">${escapeHtml(message.author || (message.role === 'user' ? '读者' : 'DeepSeek'))}</div>
-      <div class="agent-msg-body">${renderMarkdownLite(message.content)}</div>`;
+    const head = document.createElement('div');
+    head.className = 'agent-msg-head';
+    const role = document.createElement('div');
+    role.className = 'agent-msg-role';
+    role.textContent = message.author || (message.role === 'user' ? '读者' : 'AI');
+    head.appendChild(role);
+    if (!message.pending) {
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'agent-msg-copy';
+      copy.title = '复制这条消息';
+      copy.textContent = '⧉';
+      copy.onclick = () => copyText(message.content, '消息已复制');
+      head.appendChild(copy);
+    }
+    const body = document.createElement('div');
+    body.className = 'agent-msg-body';
+    body.innerHTML = renderMarkdownLite(message.content);
+    row.appendChild(head);
+    row.appendChild(body);
     frag.appendChild(row);
   }
   el.appendChild(frag);
   el.scrollTop = el.scrollHeight;
 }
 
+function copyAgentThread() {
+  const messages = (state.agentMessages || []).filter(message => message && message.content);
+  if (!messages.length) {
+    toast('当前文章还没有对话');
+    return;
+  }
+  const text = messages.map(message => {
+    const role = message.role === 'user' ? (message.author || '读者') : (message.author || 'AI');
+    return `${role}:\n${message.content}`;
+  }).join('\n\n---\n\n');
+  copyText(text, '当前对话已复制');
+}
+
 function updateAgentControls() {
   const hasEntry = Boolean(state.activeEntry);
   const hasUser = Boolean(state.me);
-  const hasKey = Boolean(currentAiConfig().apiKey.trim());
+  const hasKey = hasUsableAiConfig();
   const input = $('#agent-input');
   const send = $('#agent-send');
   if (!hasEntry) input.placeholder = '问当前文章…';
@@ -638,6 +1005,8 @@ function updateAgentControls() {
   input.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy;
   send.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy || !input.value.trim();
   $$('.agent-prompt').forEach(btn => { btn.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy; });
+  $('#agent-copy-thread').disabled = !hasEntry || !(state.agentMessages || []).length;
+  renderAiStatus();
 }
 
 function renderAgent() {
@@ -669,9 +1038,9 @@ async function sendAgentMessage(text) {
   const content = String(text || '').trim();
   if (!entry || !content || state.agentBusy) return;
   if (!requireAuth('login')) return;
-  if (!currentAiConfig().apiKey.trim()) {
-    $('#agent-settings-panel').classList.remove('hidden');
-    toast('请先填写你的 API Key');
+  if (!hasUsableAiConfig()) {
+    openAiConfigModal('agent', 'agent', content);
+    toast('请先保存一个可用的 AI 配置');
     return;
   }
 
@@ -840,63 +1209,316 @@ function renderManage() {
   }
 }
 
-function renderAiSettings() {
-  const providerSelect = $('#ai-provider');
-  providerSelect.innerHTML = Object.entries(AI_PROVIDERS)
-    .map(([id, p]) => `<option value="${escapeHtml(id)}">${escapeHtml(p.title)}</option>`)
-    .join('');
-  providerSelect.value = state.aiProvider;
-  const provider = AI_PROVIDERS[state.aiProvider];
+function getEditingAiProfile() {
+  return state.aiProfiles.find(profile => profile.id === state.editingAiProfileId)
+    || currentAiProfile();
+}
+
+function renderAiStatus() {
+  const el = $('#agent-profile');
+  if (!el) return;
+  if (!state.me) {
+    el.textContent = '登录后配置模型';
+    return;
+  }
+  const profile = currentAiProfile();
   const config = currentAiConfig();
-  $('#profile-api-key').placeholder = provider.keyPlaceholder;
-  $('#profile-api-key').value = config.apiKey || '';
-  $('#ai-base-url').value = config.baseUrl || provider.defaultBaseUrl;
-  $('#ai-model').value = config.model || provider.defaultModel;
-  $('#ai-config-note').textContent = provider.subtitle;
+  el.textContent = hasUsableAiConfig(config)
+    ? `${profile.name} · ${config.model}`
+    : `${profile.name || 'AI 配置'} · 未填 API Key`;
 }
 
-function saveCurrentAiSettings() {
-  const provider = normalizeProvider(state.aiProvider);
-  state.aiConfigs[provider] = {
-    apiKey: $('#profile-api-key').value.trim(),
-    baseUrl: $('#ai-base-url').value.trim() || AI_PROVIDERS[provider].defaultBaseUrl,
-    model: $('#ai-model').value.trim() || AI_PROVIDERS[provider].defaultModel,
+function aiAlertText() {
+  if (state.aiConfigReason === 'translation') return '生成双语对照翻译需要先保存一个可用的 AI 配置。';
+  if (state.aiConfigReason === 'agent') return '文章对话需要先保存一个可用的 AI 配置，当前问题会保留。';
+  return '';
+}
+
+function renderAiProfileList() {
+  const list = $('#ai-profile-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  for (const profile of state.aiProfiles) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ai-profile-item' + (profile.id === state.editingAiProfileId ? ' active' : '');
+    btn.innerHTML = `
+      <span class="ai-profile-name">${escapeHtml(profile.name)}</span>
+      <span class="ai-profile-meta">${escapeHtml(profile.providerName || profile.provider)} · ${escapeHtml(profile.model || '未填模型')}</span>
+      <span class="ai-profile-key">${profile.apiKey ? escapeHtml(maskApiKey(profile.apiKey)) : '未填 API Key'}${profile.isDefault ? ' · 默认' : ''}</span>`;
+    btn.onclick = () => {
+      state.editingAiProfileId = profile.id;
+      state.activeAiProfileId = profile.id;
+      persistAiProfiles();
+      renderAiSettings();
+      updateAgentControls();
+    };
+    frag.appendChild(btn);
+  }
+  list.appendChild(frag);
+}
+
+function renderTemplateList() {
+  const el = $('#ai-template-list');
+  if (!el) return;
+  const parts = [];
+  for (const category of AI_PROVIDER_CATEGORIES) {
+    const presets = AI_PROVIDER_PRESETS.filter(preset => preset.category === category);
+    if (!presets.length) continue;
+    parts.push(`<div class="ai-template-group"><div class="ai-template-category">${escapeHtml(category)}</div><div class="ai-template-buttons">`);
+    for (const preset of presets) {
+      parts.push(`<button type="button" class="ai-template" data-preset="${escapeHtml(preset.id)}" title="${escapeHtml(preset.description)}">
+        <span>${escapeHtml(preset.name)}${preset.recommended ? ' · 推荐' : ''}</span>
+      </button>`);
+    }
+    parts.push('</div></div>');
+  }
+  parts.push(`<div class="ai-template-group"><div class="ai-template-category">自定义</div><div class="ai-template-buttons"><button type="button" class="ai-template" data-preset="custom"><span>OpenAI 兼容</span></button></div></div>`);
+  el.innerHTML = parts.join('');
+}
+
+function quickModelsForProfile(profile) {
+  const preset = AI_PROVIDER_MAP[profile.provider];
+  const models = preset && Array.isArray(preset.quickModels) ? preset.quickModels : [];
+  return [...new Set([profile.model, ...models].filter(Boolean))];
+}
+
+function renderQuickModels(models) {
+  const el = $('#ai-quick-models');
+  if (!el) return;
+  el.innerHTML = models.slice(0, 18).map(model => (
+    `<button type="button" class="ai-model-chip" data-model="${escapeHtml(model)}">${escapeHtml(model)}</button>`
+  )).join('');
+}
+
+function fillAiProfileForm(profile) {
+  $('#ai-profile-name').value = profile.name || '';
+  $('#ai-provider-id').value = profile.provider || 'custom';
+  $('#ai-provider-name').value = profile.providerName || profile.provider || '';
+  $('#ai-provider-category').value = profile.providerCategory || '';
+  $('#ai-provider-type').value = profile.providerType || 'openai_compatible';
+  $('#ai-api-key-url').value = profile.apiKeyUrl || '';
+  $('#ai-api-key').value = profile.apiKey || '';
+  $('#ai-base-url').value = profile.baseUrl || '';
+  $('#ai-model').value = profile.model || '';
+  $('#ai-temperature').value = String(clampTemperature(profile.temperature));
+  $('#ai-max-tokens').value = String(clampMaxTokens(profile.maxTokens));
+  $('#ai-default-profile').checked = Boolean(profile.isDefault);
+  const keyLink = $('#ai-key-link');
+  keyLink.href = profile.apiKeyUrl || '#';
+  keyLink.classList.toggle('hidden', !profile.apiKeyUrl);
+  $('#ai-config-note').textContent = profile.apiKey
+    ? `当前 API Key：${maskApiKey(profile.apiKey)}`
+    : 'API Key 只保存在当前浏览器，不写入服务器数据库。';
+  renderQuickModels(quickModelsForProfile(profile));
+}
+
+function renderAiSettings() {
+  if (!state.aiProfiles.length) loadAiProfilesForScope();
+  if (!state.editingAiProfileId) state.editingAiProfileId = currentAiProfile().id;
+  renderAiStatus();
+  renderAiProfileList();
+  renderTemplateList();
+  const profile = getEditingAiProfile();
+  if (profile) fillAiProfileForm(profile);
+  const alert = $('#ai-config-alert');
+  const text = aiAlertText();
+  if (alert) {
+    alert.textContent = text;
+    alert.classList.toggle('hidden', !text);
+  }
+  $('#ai-delete-profile').disabled = state.aiProfiles.length <= 1;
+  updateAgentControls();
+}
+
+function readAiProfileForm() {
+  const current = getEditingAiProfile() || createCustomProfile();
+  return normalizeProfile({
+    ...current,
+    name: $('#ai-profile-name').value.trim(),
+    provider: $('#ai-provider-id').value.trim() || 'custom',
+    providerName: $('#ai-provider-name').value.trim() || $('#ai-provider-id').value.trim() || '自定义',
+    providerType: $('#ai-provider-type').value.trim() || 'openai_compatible',
+    providerCategory: $('#ai-provider-category').value.trim(),
+    apiKeyUrl: $('#ai-api-key-url').value.trim(),
+    baseUrl: normalizeBaseUrl($('#ai-base-url').value),
+    model: $('#ai-model').value.trim(),
+    temperature: clampTemperature($('#ai-temperature').value),
+    maxTokens: clampMaxTokens($('#ai-max-tokens').value),
+    apiKey: $('#ai-api-key').value.trim(),
+    isDefault: $('#ai-default-profile').checked,
+    updatedAt: Date.now(),
+  });
+}
+
+function configFromProfile(profile) {
+  return {
+    profileId: profile.id,
+    profileName: profile.name,
+    provider: profile.provider,
+    providerName: profile.providerName,
+    providerType: profile.providerType,
+    apiKey: profile.apiKey,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+    temperature: clampTemperature(profile.temperature),
+    maxTokens: clampMaxTokens(profile.maxTokens),
   };
-  persistAiConfig();
-  updateAgentControls();
 }
 
-function switchAiProvider(provider) {
-  saveCurrentAiSettings();
-  state.aiProvider = normalizeProvider(provider);
-  persistAiConfig();
+function applyAiPreset(presetId) {
+  const current = getEditingAiProfile() || createCustomProfile();
+  const profile = presetId === 'custom'
+    ? createCustomProfile({ id: current.id, apiKey: current.apiKey, isDefault: current.isDefault })
+    : createProfileFromPreset(presetId, { id: current.id, apiKey: current.apiKey, isDefault: current.isDefault });
+  fillAiProfileForm(profile);
+  $('#ai-config-note').textContent = presetId === 'custom'
+    ? '自定义服务需要兼容 OpenAI Chat Completions 协议。'
+    : (AI_PROVIDER_MAP[presetId]?.description || '');
+}
+
+function runPendingAiAction() {
+  const action = state.pendingAiAction;
+  const text = state.pendingAgentText;
+  state.pendingAiAction = '';
+  state.pendingAgentText = '';
+  if (action === 'translation') setTimeout(() => generateTranslation(), 0);
+  if (action === 'agent' && text) setTimeout(() => sendAgentMessage(text), 0);
+}
+
+function saveAiProfileFromForm({ silent = false } = {}) {
+  const profile = readAiProfileForm();
+  if (!profile.name || !profile.baseUrl || !profile.model) {
+    toast('请填写配置名称、Base URL 和模型');
+    return null;
+  }
+
+  const exists = state.aiProfiles.some(item => item.id === profile.id);
+  let nextProfiles = exists
+    ? state.aiProfiles.map(item => (item.id === profile.id ? profile : item))
+    : [...state.aiProfiles, profile];
+  if (profile.isDefault || !nextProfiles.some(item => item.isDefault)) {
+    nextProfiles = nextProfiles.map(item => ({ ...item, isDefault: item.id === profile.id }));
+  }
+  state.aiProfiles = ensureSingleDefault(nextProfiles);
+  state.activeAiProfileId = profile.id;
+  state.editingAiProfileId = profile.id;
+  persistAiProfiles();
   renderAiSettings();
-  updateAgentControls();
+  if (!silent) toast('AI 配置已保存');
+  if (hasUsableAiConfig(currentAiConfig()) && state.pendingAiAction) {
+    closeAiConfigModal();
+    runPendingAiAction();
+  }
+  return profile;
+}
+
+function addAiProfile() {
+  const profile = createProfileFromPreset(DEFAULT_AI_PRESET_ID, {
+    name: `DeepSeek ${state.aiProfiles.length + 1}`,
+    isDefault: state.aiProfiles.length === 0,
+  });
+  state.aiProfiles = ensureSingleDefault([...state.aiProfiles, profile]);
+  state.activeAiProfileId = profile.id;
+  state.editingAiProfileId = profile.id;
+  persistAiProfiles();
+  renderAiSettings();
+}
+
+function deleteAiProfile() {
+  const profile = getEditingAiProfile();
+  if (!profile || state.aiProfiles.length <= 1) return;
+  if (!window.confirm(`确定删除「${profile.name}」吗？`)) return;
+  state.aiProfiles = ensureSingleDefault(state.aiProfiles.filter(item => item.id !== profile.id));
+  state.activeAiProfileId = (state.aiProfiles.find(item => item.isDefault) || state.aiProfiles[0]).id;
+  state.editingAiProfileId = state.activeAiProfileId;
+  persistAiProfiles();
+  renderAiSettings();
+  toast('AI 配置已删除');
+}
+
+function openAiConfigModal(reason = '', pendingAction = '', pendingText = '') {
+  if (!requireAuth('login')) {
+    toast('登录后可以配置自己的 API Key');
+    return false;
+  }
+  state.aiConfigReason = reason;
+  state.pendingAiAction = pendingAction || '';
+  state.pendingAgentText = pendingText || '';
+  renderAiSettings();
+  $('#ai-config-modal').classList.remove('hidden');
+  const config = currentAiConfig();
+  setTimeout(() => {
+    const target = hasUsableAiConfig(config) ? $('#ai-model') : $('#ai-api-key');
+    if (target) target.focus();
+  }, 30);
+  return true;
+}
+
+function closeAiConfigModal() {
+  $('#ai-config-modal').classList.add('hidden');
+  state.aiConfigReason = '';
+  renderAiSettings();
+}
+
+async function fetchAiModels() {
+  if (!requireAuth('login')) return;
+  const profile = readAiProfileForm();
+  const config = configFromProfile(profile);
+  if (!config.apiKey || !config.baseUrl) {
+    toast('请先填写 API Key 和 Base URL');
+    return;
+  }
+  const btn = $('#ai-fetch-models');
+  btn.disabled = true;
+  btn.textContent = '获取中…';
+  $('#ai-config-note').textContent = '正在读取模型列表…';
+  try {
+    const data = await api('/api/ai/models', {
+      method: 'POST',
+      aiConfig: config,
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const models = data.models || [];
+    if (!models.length) {
+      $('#ai-config-note').textContent = '连接成功，但接口没有返回模型列表。';
+      return;
+    }
+    renderQuickModels(models);
+    if (!$('#ai-model').value.trim()) $('#ai-model').value = models[0];
+    $('#ai-config-note').textContent = `已获取 ${models.length} 个模型，点击下方模型可填入。`;
+  } catch (err) {
+    $('#ai-config-note').textContent = err.message;
+    toast('获取模型失败: ' + err.message, 5000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '获取模型';
+  }
 }
 
 async function testAiConnection() {
-  saveCurrentAiSettings();
   if (!requireAuth('login')) return;
-  if (!currentAiConfig().apiKey.trim()) {
-    toast('请先填写 API Key');
+  const profile = readAiProfileForm();
+  const config = configFromProfile(profile);
+  if (!hasUsableAiConfig(config)) {
+    toast('请先填写 API Key、Base URL 和模型');
     return;
   }
   const btn = $('#ai-test');
   btn.disabled = true;
   btn.textContent = '测试中…';
+  $('#ai-config-note').textContent = '正在测试模型连接…';
   try {
-    const data = await api('/api/ai/models', {
+    const data = await api('/api/ai/test', {
       method: 'POST',
-      ai: true,
+      aiConfig: config,
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
-    const models = data.models || [];
-    if (models.length && !models.includes(currentAiConfig().model)) {
-      $('#ai-config-note').textContent = `连接可用，发现 ${models.length} 个模型`;
-    } else {
-      $('#ai-config-note').textContent = '连接可用';
-    }
+    $('#ai-config-note').textContent = `连接成功：${data.model || config.model} · ${data.latencyMs || data.latency_ms || '-'}ms`;
+    toast('连接成功');
   } catch (err) {
     $('#ai-config-note').textContent = err.message;
     toast('连接测试失败: ' + err.message, 5000);
@@ -967,14 +1589,27 @@ $('#agent-input').onkeydown = (e) => {
 };
 $('#agent-close').onclick = () => setAgentCollapsed(true);
 $('#agent-open').onclick = () => setAgentCollapsed(false);
-$('#agent-settings').onclick = () => {
-  renderAiSettings();
-  $('#agent-settings-panel').classList.toggle('hidden');
+$('#agent-copy-thread').onclick = copyAgentThread;
+$('#agent-settings').onclick = () => openAiConfigModal('settings');
+$('#ai-config-close').onclick = closeAiConfigModal;
+$('#ai-config-modal').onclick = (e) => { if (e.target.id === 'ai-config-modal') closeAiConfigModal(); };
+$('#ai-add-profile').onclick = addAiProfile;
+$('#ai-delete-profile').onclick = deleteAiProfile;
+$('#ai-profile-form').onsubmit = (e) => {
+  e.preventDefault();
+  saveAiProfileFromForm();
 };
-$('#ai-provider').onchange = (e) => switchAiProvider(e.target.value);
-$('#profile-api-key').oninput = saveCurrentAiSettings;
-$('#ai-base-url').oninput = saveCurrentAiSettings;
-$('#ai-model').oninput = saveCurrentAiSettings;
+$('#ai-template-list').onclick = (e) => {
+  const btn = e.target.closest('.ai-template');
+  if (btn) applyAiPreset(btn.dataset.preset);
+};
+$('#ai-quick-models').onclick = (e) => {
+  const btn = e.target.closest('.ai-model-chip');
+  if (!btn) return;
+  $('#ai-model').value = btn.dataset.model || btn.textContent.trim();
+};
+$('#ai-max-tokens').oninput = (e) => { e.target.value = e.target.value.replace(/[^\d]/g, ''); };
+$('#ai-fetch-models').onclick = fetchAiModels;
 $('#ai-test').onclick = testAiConnection;
 $$('.agent-prompt').forEach(btn => {
   btn.onclick = () => sendAgentMessage(btn.dataset.prompt || btn.textContent);
@@ -1020,12 +1655,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     document.getElementById('app').classList.remove('reading');
     $('#manage-modal').classList.add('hidden');
+    $('#ai-config-modal').classList.add('hidden');
   }
 });
 
 /* ---------- Init ---------- */
 (async function init() {
   document.body.dataset.theme = storage.getItem('fr_theme') || 'light';
+  loadAiProfilesForScope();
   renderAiSettings();
   renderAuthState();
   setAgentCollapsed(state.agentCollapsed);

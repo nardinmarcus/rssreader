@@ -80,8 +80,12 @@ function requestAiConfig(req) {
   return {
     apiKey: String(req.get('x-ai-key') || req.get('x-deepseek-key') || '').trim(),
     provider: String(req.get('x-ai-provider') || 'deepseek').trim(),
+    providerName: String(req.get('x-ai-provider-name') || '').trim(),
+    providerType: String(req.get('x-ai-provider-type') || 'openai_compatible').trim(),
     baseUrl: String(req.get('x-ai-base-url') || '').trim(),
     model: String(req.get('x-ai-model') || '').trim(),
+    temperature: String(req.get('x-ai-temperature') || '').trim(),
+    maxTokens: String(req.get('x-ai-max-tokens') || '').trim(),
   };
 }
 
@@ -244,6 +248,15 @@ app.post('/api/ai/models', requireLogin, async (req, res) => {
     res.json(result);
   } catch (e) {
     sendError(res, e, 'models request failed');
+  }
+});
+
+app.post('/api/ai/test', requireLogin, async (req, res) => {
+  try {
+    const result = await deepseek.testConnection(requestAiConfig(req));
+    res.json(result);
+  } catch (e) {
+    sendError(res, e, 'AI connection test failed');
   }
 });
 
