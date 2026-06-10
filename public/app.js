@@ -971,7 +971,7 @@ function visibleEntries() {
       .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
       .slice()
       .sort((a, b) => {
-        const assetDelta = Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0);
+        const assetDelta = assetLatestAtForType(b, state.assetFilter) - assetLatestAtForType(a, state.assetFilter);
         return assetDelta || (b.publishedTs || 0) - (a.publishedTs || 0);
       });
   }
