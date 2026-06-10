@@ -294,6 +294,7 @@ const state = {
   rewrite: null,
   rewriteGenerating: false,
   readerTab: 'original',
+  pendingAssetJump: null,
   fetchingOriginal: false,
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
@@ -763,7 +764,7 @@ function scrollReaderTarget(selector) {
   if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function jumpToArticleAsset(type) {
+function performArticleAssetJump(type) {
   if (!state.activeEntry) return;
   if (type === 'translation') {
     handleReaderTab('translation');
@@ -785,6 +786,23 @@ function jumpToArticleAsset(type) {
     if (messages) messages.scrollTop = messages.scrollHeight;
     scrollReaderTarget('#agent-pane');
   }
+}
+
+function settlePendingAssetJump(type, { clear = true } = {}) {
+  if (state.pendingAssetJump !== type) return;
+  const entryId = state.activeEntry && state.activeEntry.id;
+  [0, 180, 520].forEach((delay, index, delays) => {
+    setTimeout(() => {
+      if (!state.activeEntry || state.activeEntry.id !== entryId || state.pendingAssetJump !== type) return;
+      performArticleAssetJump(type);
+      if (clear && index === delays.length - 1) state.pendingAssetJump = null;
+    }, delay);
+  });
+}
+
+function jumpToArticleAsset(type) {
+  state.pendingAssetJump = type;
+  performArticleAssetJump(type);
 }
 
 function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
@@ -970,6 +988,7 @@ function renderOriginalContent(entry, content) {
   const fallback = entry && entry.summary ? `<p>${escapeHtml(entry.summary)}</p>` : '<p>（无内容，请打开原文）</p>';
   $('#reader-content').innerHTML = sanitize(content || fallback);
   $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
 }
 
 function setReaderTab(tab) {
@@ -1024,6 +1043,7 @@ function renderTranslation(translation, { loading = false } = {}) {
       <p class="translation-source">${escapeHtml(pair.source)}</p>
       <p class="translation-target">${escapeHtml(pair.target)}</p>
     </div>`).join('');
+  settlePendingAssetJump('translation');
 }
 
 async function loadTranslation(entry) {
@@ -1062,6 +1082,7 @@ function renderRewrite(rewrite) {
   $('#reader-rewrite').textContent = rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
   $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
   content.innerHTML = renderMarkdownLite(rewrite.body);
+  settlePendingAssetJump('rewrite');
 }
 
 async function loadRewrite(entry) {
@@ -1218,6 +1239,7 @@ function renderComments() {
       <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
       <div class="comment-body">${renderMarkdownLite(comment.body)}</div>
     </div>`).join('');
+  settlePendingAssetJump('comments');
 }
 
 async function loadComments(entry) {
@@ -1300,6 +1322,7 @@ function renderAgentMessages(extraPending = false) {
   }
   el.appendChild(frag);
   el.scrollTop = el.scrollHeight;
+  settlePendingAssetJump('chat');
 }
 
 function copyAgentThread() {
@@ -1420,6 +1443,7 @@ async function openEntry(e) {
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
   state.rewriteGenerating = false;
+  state.pendingAssetJump = null;
   state.fetchingOriginal = false;
   updateFetchOriginalButton(e);
   setReaderTab('original');
@@ -1465,6 +1489,7 @@ async function reload({ keepReader = false } = {}) {
     state.pendingTranslationGenerate = false;
     state.rewrite = null;
     state.rewriteGenerating = false;
+    state.pendingAssetJump = null;
     state.fetchingOriginal = false;
     state.readerTab = 'original';
     $('#reader').classList.add('hidden');
