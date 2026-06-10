@@ -78,6 +78,8 @@ const state = {
   filterCategory: null,
   q: '',
   activeEntry: null,
+  guestRead: new Set(readJson('fr_read', '[]')),
+  guestStarred: new Set(readJson('fr_starred', '[]')),
   read: new Set(readJson('fr_read', '[]')),
   starred: new Set(readJson('fr_starred', '[]')),
   agentMessages: [],
@@ -92,8 +94,11 @@ const state = {
 };
 
 function persist() {
-  storage.setItem('fr_read', JSON.stringify([...state.read].slice(-5000)));
-  storage.setItem('fr_starred', JSON.stringify([...state.starred]));
+  if (state.me) return;
+  state.guestRead = new Set(state.read);
+  state.guestStarred = new Set(state.starred);
+  storage.setItem('fr_read', JSON.stringify([...state.guestRead].slice(-5000)));
+  storage.setItem('fr_starred', JSON.stringify([...state.guestStarred]));
 }
 
 function toast(msg, ms = 2200) {
@@ -222,10 +227,54 @@ async function loadEntries() {
   const data = await api('/api/entries?' + p.toString());
   state.entries = data.entries;
 }
+
+function applyGuestEntryStates() {
+  state.read = new Set(state.guestRead);
+  state.starred = new Set(state.guestStarred);
+}
+
+async function loadUserEntryStates() {
+  if (!state.me) {
+    applyGuestEntryStates();
+    return;
+  }
+  const data = await api('/api/me/entry-states');
+  state.read = new Set((data.states && data.states.read) || []);
+  state.starred = new Set((data.states && data.states.starred) || []);
+}
+
+function renderEntryStateUi() {
+  renderList();
+  renderSidebar();
+  if (state.activeEntry) {
+    const starBtn = $('#reader-star');
+    starBtn.classList.toggle('starred', state.starred.has(state.activeEntry.id));
+    starBtn.textContent = state.starred.has(state.activeEntry.id) ? '★ 已收藏' : '★ 收藏';
+  }
+}
+
+async function syncEntryState(entryId, patch) {
+  if (!state.me) {
+    persist();
+    return;
+  }
+  try {
+    await api('/api/me/entry-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entryId, ...patch }),
+    });
+  } catch (err) {
+    toast('同步阅读状态失败: ' + err.message, 4000);
+  }
+}
+
 async function loadMe() {
   const data = await api('/api/me');
   state.me = data.user || null;
+  await loadUserEntryStates();
   renderAuthState();
+  renderEntryStateUi();
   renderComments();
   renderAgent();
   return state.me;
@@ -338,7 +387,9 @@ async function submitAuth() {
     });
     state.me = data.user || null;
     closeAuth();
+    await loadUserEntryStates();
     renderAuthState();
+    renderEntryStateUi();
     renderComments();
     renderAgent();
     toast(state.authMode === 'register' ? '注册成功' : '已登录');
@@ -352,7 +403,9 @@ async function submitAuth() {
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   state.me = null;
+  applyGuestEntryStates();
   renderAuthState();
+  renderEntryStateUi();
   renderComments();
   renderAgent();
   toast('已退出登录');
@@ -650,7 +703,9 @@ async function sendAgentMessage(text) {
 
 async function openEntry(e) {
   state.activeEntry = e;
+  const wasRead = state.read.has(e.id);
   state.read.add(e.id);
+  if (!wasRead) syncEntryState(e.id, { read: true });
   persist();
 
   const src = sourceById(e.sourceId);
@@ -674,8 +729,7 @@ async function openEntry(e) {
   document.getElementById('app').classList.add('reading');
   renderAgent();
 
-  renderList();
-  renderSidebar();
+  renderEntryStateUi();
 
   // content is loaded lazily — the list API omits it to stay lightweight
   let content = e.content || contentCache.get(e.id);
@@ -862,16 +916,33 @@ function setAgentCollapsed(collapsed) {
 /* ---------- Events ---------- */
 $$('.view-btn').forEach(b => b.onclick = () => selectView(b.dataset.view));
 $('#refresh-btn').onclick = refreshAll;
-$('#mark-read-btn').onclick = () => {
-  visibleEntries().forEach(e => state.read.add(e.id));
-  persist(); renderList(); renderSidebar();
+$('#mark-read-btn').onclick = async () => {
+  const ids = visibleEntries().map(e => e.id);
+  ids.forEach(id => state.read.add(id));
+  persist();
+  renderEntryStateUi();
+  if (state.me && ids.length) {
+    try {
+      await api('/api/me/entry-states/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entryIds: ids }),
+      });
+    } catch (err) {
+      toast('同步已读失败: ' + err.message, 4000);
+      return;
+    }
+  }
   toast('已全部标为已读');
 };
 $('#reader-star').onclick = () => {
   const e = state.activeEntry;
   if (!e) return;
-  state.starred.has(e.id) ? state.starred.delete(e.id) : state.starred.add(e.id);
-  persist(); openEntry(e);
+  const nextStarred = !state.starred.has(e.id);
+  nextStarred ? state.starred.add(e.id) : state.starred.delete(e.id);
+  persist();
+  renderEntryStateUi();
+  syncEntryState(e.id, { starred: nextStarred });
 };
 $('#reader-bilingual').onclick = generateTranslation;
 $('#comment-form').onsubmit = (e) => {

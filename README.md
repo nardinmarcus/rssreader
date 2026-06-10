@@ -28,6 +28,7 @@ npm start          # 默认端口 8080，可用 PORT=3000 npm start 覆盖
 - 注册用户：发布人工点评、生成并保存正文双语翻译、围绕当前文章与 AI 对话
 - 管理员：手动刷新、启用/禁用信息源、触发标题补翻译
 - 管理员通过环境变量 seed；如果 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 变化，重启后会同步更新管理员密码
+- 未登录时已读/收藏只保存在当前浏览器；登录后已读/收藏按账号保存到 SQLite，不同账号互相隔离
 
 ```bash
 cp .env.example .env
@@ -111,6 +112,9 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/me` | 当前登录用户 |
+| GET | `/api/me/entry-states` | 登录用户读取自己的已读/收藏状态 |
+| POST | `/api/me/entry-state` | 登录用户更新单篇已读/收藏状态 |
+| POST | `/api/me/entry-states/read` | 登录用户批量标记已读 |
 | POST | `/api/auth/register` | 注册并登录；body `{"email":"","password":"","displayName":""}` |
 | POST | `/api/auth/login` | 登录；body `{"email":"","password":""}` |
 | POST | `/api/auth/logout` | 退出登录 |

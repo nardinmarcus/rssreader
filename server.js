@@ -206,6 +206,38 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/me/entry-states', requireLogin, (req, res) => {
+  res.json({ states: store.getUserEntryStates(req.user.id) });
+});
+
+app.post('/api/me/entry-state', requireLogin, (req, res) => {
+  const { entryId, read, starred } = req.body || {};
+  const entry = fetcher.getEntryById(entryId);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const entryState = store.setUserEntryState(req.user.id, entry.id, {
+      read: typeof read === 'boolean' ? read : undefined,
+      starred: typeof starred === 'boolean' ? starred : undefined,
+    });
+    res.json({ entryState });
+  } catch (e) {
+    sendError(res, e, 'entry state update failed');
+  }
+});
+
+app.post('/api/me/entry-states/read', requireLogin, (req, res) => {
+  const requested = Array.isArray(req.body && req.body.entryIds) ? req.body.entryIds : [];
+  const entryIds = requested
+    .map(id => fetcher.getEntryById(id))
+    .filter(Boolean)
+    .map(entry => entry.id);
+  try {
+    res.json({ states: store.markEntriesRead(req.user.id, entryIds) });
+  } catch (e) {
+    sendError(res, e, 'entry states update failed');
+  }
+});
+
 app.post('/api/ai/models', requireLogin, async (req, res) => {
   try {
     const result = await deepseek.listModels(requestAiConfig(req));
