@@ -7,7 +7,7 @@
 - 默认浅色阅读界面，桌面四栏：订阅源 / 文章列表 / 阅读器 / Article Agent
 - Google S2 favicon
 - 英文标题抓取后自动用 DeepSeek 翻译，列表展示中英双语
-- 单篇文章支持生成并保存双语对照翻译，已翻译内容复用缓存
+- 单篇文章详情页支持原文 / 中文翻译 / 乔木风格重写三个 Tab，翻译和重写内容复用缓存
 - 人工点评公开保存，便于后来访问者浏览
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开
 - 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
@@ -24,8 +24,8 @@ npm start          # 默认端口 8080，可用 PORT=3000 npm start 覆盖
 
 ## 账号与权限
 
-- 公开游客：浏览文章、已保存的双语翻译、人工点评和文章对话
-- 注册用户：发布人工点评、生成并保存正文双语翻译、围绕当前文章与 AI 对话
+- 公开游客：浏览文章、已保存的双语翻译、乔木风格重写、人工点评和文章对话
+- 注册用户：发布人工点评、生成并保存正文双语翻译和乔木风格重写、围绕当前文章与 AI 对话
 - 管理员：手动刷新、启用/禁用信息源、触发标题补翻译
 - 管理员通过环境变量 seed；如果 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 变化，重启后会同步更新管理员密码
 - 未登录时已读/收藏只保存在当前浏览器；登录后已读/收藏按账号保存到 SQLite，不同账号互相隔离
@@ -50,7 +50,7 @@ npm start
 - 海外聚合：OpenRouter、Groq、Together
 - 自定义：任意 OpenAI-compatible Chat Completions 服务
 
-生成正文双语翻译时，如果当前用户没有配置可用 Profile，后端会使用站点服务端 DeepSeek Key 生成并缓存公开翻译；如果用户配置了自己的 Profile，则优先使用用户自己的 key。文章对话、测试连接和获取模型列表使用用户自己的 API key。用户的 API key 只随请求发送到本站后端代理调用，不会落库。Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址。
+生成正文双语翻译或乔木风格重写时，如果当前用户没有配置可用 Profile，后端会使用站点服务端 DeepSeek Key 生成并缓存公开资产；如果用户配置了自己的 Profile，则优先使用用户自己的 key。文章对话、测试连接和获取模型列表使用用户自己的 API key。用户的 API key 只随请求发送到本站后端代理调用，不会落库。Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址。
 
 可选配置：
 
@@ -64,7 +64,7 @@ npm start
 | `ADMIN_NAME` | `向阳乔木` | 管理员公开显示名 |
 | `COOKIE_SECURE` | 空 | 设为 `1` 时强制 session cookie 使用 Secure |
 
-文章、翻译、点评、公开对话保存在 `data/qmreader.sqlite`。同一篇文章翻译过后会直接读取缓存。需要重新生成全文翻译时可调用接口传 `{"force":true}`。
+文章、翻译、乔木风格重写、点评、公开对话保存在 `data/qmreader.sqlite`。同一篇文章生成过后会直接读取缓存。需要重新生成全文翻译或重写时可调用接口传 `{"force":true}`。
 
 ## 目录结构
 
@@ -127,6 +127,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/api/entry/:id` | 单篇全文 |
 | GET | `/api/entry/:id/translation` | 读取单篇双语翻译缓存 |
 | POST | `/api/entry/:id/translation` | 登录用户生成并保存单篇双语翻译 |
+| GET | `/api/entry/:id/rewrite` | 读取公开乔木风格重写 |
+| POST | `/api/entry/:id/rewrite` | 登录用户生成并保存乔木风格重写 |
 | GET | `/api/entry/:id/comments` | 读取公开人工点评 |
 | POST | `/api/entry/:id/comments` | 登录用户发布公开人工点评 |
 | GET | `/api/entry/:id/chat` | 读取公开文章对话 |

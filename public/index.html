@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=11" />
+  <link rel="stylesheet" href="styles.css?v=12" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -64,10 +64,39 @@
           <div class="reader-toolbar">
             <a id="reader-open" class="ghost-btn" target="_blank" rel="noopener">↗ 打开原文</a>
             <button id="reader-star" class="ghost-btn">★ 收藏</button>
-            <button id="reader-bilingual" class="ghost-btn">双语翻译</button>
           </div>
         </header>
         <div id="reader-audio"></div>
+        <div class="reader-tabs" role="tablist" aria-label="文章阅读模式">
+          <button class="reader-tab active" type="button" data-tab="original">原文</button>
+          <button class="reader-tab" type="button" data-tab="translation">中文翻译</button>
+          <button class="reader-tab" type="button" data-tab="rewrite">乔木风格重写</button>
+        </div>
+        <section id="reader-original-panel" class="reader-tab-panel">
+          <div id="reader-content" class="reader-content"></div>
+        </section>
+        <section id="reader-translation" class="reader-translation reader-tab-panel hidden">
+          <div class="reader-section-head">
+            <span>中文翻译</span>
+            <span id="translation-meta"></span>
+          </div>
+          <div id="translation-list" class="translation-list"></div>
+          <div id="translation-empty" class="asset-empty hidden">
+            <p>这篇文章还没有中文翻译。</p>
+            <button id="reader-bilingual" class="ghost-btn primary" type="button">生成中文翻译</button>
+          </div>
+        </section>
+        <section id="reader-rewrite-panel" class="reader-tab-panel hidden">
+          <div class="reader-section-head">
+            <span>乔木风格重写</span>
+            <span id="rewrite-meta"></span>
+          </div>
+          <div id="rewrite-content" class="rewrite-content"></div>
+          <div id="rewrite-empty" class="asset-empty hidden">
+            <p>这篇文章还没有乔木风格重写。</p>
+            <button id="reader-rewrite" class="ghost-btn primary" type="button">生成乔木风格重写</button>
+          </div>
+        </section>
         <section id="reader-comments" class="reader-comments">
           <div class="reader-section-head">
             <span>人工点评</span>
@@ -82,14 +111,6 @@
             <button id="comment-send" class="ghost-btn" type="submit">发布</button>
           </form>
         </section>
-        <section id="reader-translation" class="reader-translation hidden">
-          <div class="reader-section-head">
-            <span>双语对照</span>
-            <span id="translation-meta"></span>
-          </div>
-          <div id="translation-list" class="translation-list"></div>
-        </section>
-        <div id="reader-content" class="reader-content"></div>
       </article>
     </section>
 
@@ -246,6 +267,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=11"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>

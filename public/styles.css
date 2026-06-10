@@ -289,14 +289,51 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 #reader-audio { margin-top: 18px; }
 #reader-audio audio { width: 100%; }
 
+.reader-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+  margin: 18px 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
+  backdrop-filter: blur(12px);
+}
+.reader-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+.reader-tab:hover {
+  color: var(--text-0);
+  background: var(--bg-2);
+}
+.reader-tab.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.reader-tab-panel { min-width: 0; }
+
 .reader-comments,
-.reader-translation {
+.reader-translation,
+#reader-rewrite-panel {
   margin-top: 20px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-1);
   padding: 14px 16px 15px;
 }
+.reader-comments { margin-top: 28px; }
 .reader-section-head {
   display: flex;
   align-items: center;
@@ -338,6 +375,19 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: flex;
 }
 .asset-gate .ghost-btn { flex: none; }
+.asset-empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
 .comment-form input,
 .comment-form textarea {
   background: var(--bg-2);
@@ -372,24 +422,43 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .translation-source { color: var(--text-2); }
 .translation-target { color: var(--text-0); }
 
-.reader-content { margin-top: 24px; font-size: 15.5px; line-height: 1.8; color: var(--text-0); }
-.reader-content p { margin: 0 0 1em; }
-.reader-content h1, .reader-content h2, .reader-content h3, .reader-content h4 { margin: 1.4em 0 0.6em; line-height: 1.4; }
-.reader-content img { max-width: 100%; height: auto; border-radius: 10px; margin: 8px 0; }
-.reader-content a { color: var(--accent); text-decoration: none; }
-.reader-content a:hover { text-decoration: underline; }
-.reader-content blockquote {
+.reader-content,
+.rewrite-content { font-size: 15.5px; line-height: 1.8; color: var(--text-0); }
+.rewrite-content {
+  margin-top: 14px;
+  font-size: 16px;
+  line-height: 1.85;
+}
+.reader-content p,
+.rewrite-content p { margin: 0 0 1em; }
+.reader-content h1, .reader-content h2, .reader-content h3, .reader-content h4,
+.rewrite-content h1, .rewrite-content h2, .rewrite-content h3, .rewrite-content h4 { margin: 1.4em 0 0.6em; line-height: 1.4; }
+.rewrite-content h2 { font-size: 22px; }
+.rewrite-content h3 { font-size: 18px; }
+.reader-content img,
+.rewrite-content img { max-width: 100%; height: auto; border-radius: 10px; margin: 8px 0; }
+.reader-content a,
+.rewrite-content a { color: var(--accent); text-decoration: none; }
+.reader-content a:hover,
+.rewrite-content a:hover { text-decoration: underline; }
+.reader-content blockquote,
+.rewrite-content blockquote {
   border-left: 3px solid var(--accent); padding: 2px 0 2px 16px;
   color: var(--text-1); margin: 1em 0;
 }
-.reader-content pre {
+.reader-content pre,
+.rewrite-content pre {
   background: var(--bg-2); border: 1px solid var(--border);
   border-radius: 10px; padding: 14px; overflow-x: auto;
   font-size: 13px; line-height: 1.6;
 }
-.reader-content code { background: var(--bg-2); border-radius: 5px; padding: 1px 5px; font-size: 0.9em; }
-.reader-content pre code { background: none; padding: 0; }
-.reader-content ul, .reader-content ol { padding-left: 1.4em; margin: 0 0 1em; }
+.reader-content code,
+.rewrite-content code { background: var(--bg-2); border-radius: 5px; padding: 1px 5px; font-size: 0.9em; }
+.reader-content pre code,
+.rewrite-content pre code { background: none; padding: 0; }
+.reader-content ul, .reader-content ol,
+.rewrite-content ul, .rewrite-content ol { padding-left: 1.4em; margin: 0 0 1em; }
+.rewrite-content li + li { margin-top: 5px; }
 .reader-content table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 14px; }
 .reader-content td, .reader-content th { border: 1px solid var(--border); padding: 6px 10px; }
 .reader-content iframe { max-width: 100%; border-radius: 10px; }

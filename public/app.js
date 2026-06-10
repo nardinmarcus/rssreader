@@ -288,6 +288,8 @@ const state = {
   agentMessages: [],
   comments: [],
   translation: null,
+  rewrite: null,
+  readerTab: 'original',
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
   me: null,
@@ -329,22 +331,36 @@ function escapeJsString(value) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 }
 
-function renderMarkdownLite(value) {
-  const escaped = escapeHtml(value).replace(/\r\n/g, '\n');
-  const blocks = escaped.split(/\n{2,}/).map(block => {
-    const lines = block.split('\n');
-    if (lines.every(line => /^[-*]\s+/.test(line.trim()))) {
-      return `<ul>${lines.map(line => `<li>${line.trim().replace(/^[-*]\s+/, '')}</li>`).join('')}</ul>`;
-    }
-    if (lines.every(line => /^\d+\.\s+/.test(line.trim()))) {
-      return `<ol>${lines.map(line => `<li>${line.trim().replace(/^\d+\.\s+/, '')}</li>`).join('')}</ol>`;
-    }
-    return `<p>${lines.join('<br>')}</p>`;
-  }).join('');
-
-  return blocks
+function renderInlineMarkdown(value) {
+  return String(value || '')
+    .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_, alt, src) => `<img src="${src}" alt="${alt}" loading="lazy" referrerpolicy="no-referrer" />`)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, label, href) => `<a href="${href}" target="_blank" rel="noopener">${label}</a>`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function renderMarkdownLite(value) {
+  const escaped = escapeHtml(value).replace(/\r\n/g, '\n').replace(/\n\s*-{3,}\s*\n/g, '\n\n');
+  const blocks = escaped.split(/\n{2,}/).map(block => {
+    const lines = block.split('\n');
+    const first = lines[0].trim();
+    if (/^#{1,4}\s+/.test(first) && lines.length === 1) {
+      const level = Math.min(first.match(/^#+/)[0].length, 4);
+      return `<h${level}>${renderInlineMarkdown(first.replace(/^#{1,4}\s+/, ''))}</h${level}>`;
+    }
+    if (lines.every(line => /^&gt;\s+/.test(line.trim()))) {
+      return `<blockquote>${lines.map(line => renderInlineMarkdown(line.trim().replace(/^&gt;\s+/, ''))).join('<br>')}</blockquote>`;
+    }
+    if (lines.every(line => /^[-*]\s+/.test(line.trim()))) {
+      return `<ul>${lines.map(line => `<li>${renderInlineMarkdown(line.trim().replace(/^[-*]\s+/, ''))}</li>`).join('')}</ul>`;
+    }
+    if (lines.every(line => /^\d+\.\s+/.test(line.trim()))) {
+      return `<ol>${lines.map(line => `<li>${renderInlineMarkdown(line.trim().replace(/^\d+\.\s+/, ''))}</li>`).join('')}</ol>`;
+    }
+    return `<p>${renderInlineMarkdown(lines.join('<br>'))}</p>`;
+  }).join('');
+
+  return blocks;
 }
 
 async function copyText(value, success = '已复制') {
@@ -539,6 +555,21 @@ function translationAiConfig() {
     model: '',
     temperature: 0.15,
     maxTokens: 4500,
+  };
+}
+
+function rewriteAiConfig() {
+  const config = currentAiConfig();
+  if (hasUsableAiConfig(config)) return { ...config, temperature: config.temperature || 0.6, maxTokens: Math.max(config.maxTokens || 0, 7000) };
+  return {
+    provider: 'deepseek',
+    providerName: 'DeepSeek',
+    providerType: 'openai_compatible',
+    apiKey: '',
+    baseUrl: '',
+    model: '',
+    temperature: 0.6,
+    maxTokens: 7000,
   };
 }
 
@@ -831,18 +862,28 @@ function renderTitle(e) {
   $('#reader-title-zh').textContent = e.titleZh ? e.title : '';
 }
 
+function setReaderTab(tab) {
+  const next = ['original', 'translation', 'rewrite'].includes(tab) ? tab : 'original';
+  state.readerTab = next;
+  $$('.reader-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === next));
+  $('#reader-original-panel').classList.toggle('hidden', next !== 'original');
+  $('#reader-translation').classList.toggle('hidden', next !== 'translation');
+  $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
+}
+
 function renderTranslation(translation) {
   state.translation = translation || null;
-  const wrap = $('#reader-translation');
   const list = $('#translation-list');
+  const empty = $('#translation-empty');
   list.innerHTML = '';
   if (!translation || !Array.isArray(translation.content) || !translation.content.length) {
-    wrap.classList.add('hidden');
-    $('#reader-bilingual').textContent = '双语翻译';
+    empty.classList.remove('hidden');
+    $('#reader-bilingual').textContent = '生成中文翻译';
+    $('#translation-meta').textContent = '暂无';
     return;
   }
-  wrap.classList.remove('hidden');
-  $('#reader-bilingual').textContent = '查看双语';
+  empty.classList.add('hidden');
+  $('#reader-bilingual').textContent = '重新生成中文翻译';
   $('#translation-meta').textContent = [translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
   list.innerHTML = translation.content.map(pair => `
     <div class="translation-pair">
@@ -862,15 +903,44 @@ async function loadTranslation(entry) {
   }
 }
 
+function renderRewrite(rewrite) {
+  state.rewrite = rewrite || null;
+  const content = $('#rewrite-content');
+  const empty = $('#rewrite-empty');
+  content.innerHTML = '';
+  if (!rewrite || !rewrite.body) {
+    empty.classList.remove('hidden');
+    $('#rewrite-meta').textContent = '暂无';
+    $('#reader-rewrite').textContent = '生成乔木风格重写';
+    return;
+  }
+  empty.classList.add('hidden');
+  $('#reader-rewrite').textContent = '重新生成乔木风格重写';
+  $('#rewrite-meta').textContent = [rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
+  content.innerHTML = renderMarkdownLite(rewrite.body);
+}
+
+async function loadRewrite(entry) {
+  renderRewrite(null);
+  try {
+    const data = await api(`/api/entry/${entry.id}/rewrite`);
+    if (state.activeEntry?.id !== entry.id) return;
+    renderRewrite(data.rewrite);
+  } catch {
+    renderRewrite(null);
+  }
+}
+
 async function generateTranslation() {
   const entry = state.activeEntry;
   if (!entry) return;
   const btn = $('#reader-bilingual');
   if (state.translation) {
-    $('#reader-translation').scrollIntoView({ block: 'start', behavior: 'smooth' });
+    setReaderTab('translation');
     return;
   }
   if (!requireAuth('login')) return;
+  setReaderTab('translation');
   btn.disabled = true;
   btn.textContent = '翻译中…';
   try {
@@ -882,6 +952,7 @@ async function generateTranslation() {
     });
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
+    setReaderTab('translation');
     toast(data.cached ? '已显示缓存翻译' : '双语翻译已保存');
   } catch (err) {
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
@@ -891,6 +962,40 @@ async function generateTranslation() {
   } finally {
     btn.disabled = false;
     if (!state.translation) btn.textContent = '双语翻译';
+  }
+}
+
+async function generateRewrite() {
+  const entry = state.activeEntry;
+  if (!entry) return;
+  const btn = $('#reader-rewrite');
+  if (state.rewrite) {
+    setReaderTab('rewrite');
+    return;
+  }
+  if (!requireAuth('login')) return;
+  setReaderTab('rewrite');
+  btn.disabled = true;
+  btn.textContent = '重写中…';
+  try {
+    const data = await api(`/api/entry/${entry.id}/rewrite`, {
+      method: 'POST',
+      aiConfig: rewriteAiConfig(),
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    renderRewrite(data.rewrite);
+    setReaderTab('rewrite');
+    toast(data.cached ? '已显示缓存重写' : '乔木风格重写已保存');
+  } catch (err) {
+    if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
+      openAiConfigModal('settings');
+    }
+    toast('重写失败: ' + err.message, 5000);
+  } finally {
+    btn.disabled = false;
+    if (!state.rewrite) btn.textContent = '生成乔木风格重写';
   }
 }
 
@@ -1102,7 +1207,11 @@ async function openEntry(e) {
   starBtn.classList.toggle('starred', state.starred.has(e.id));
   starBtn.textContent = state.starred.has(e.id) ? '★ 已收藏' : '★ 收藏';
   $('#comment-input').value = '';
+  state.translation = null;
+  state.rewrite = null;
+  setReaderTab('original');
   loadTranslation(e);
+  loadRewrite(e);
   loadComments(e);
   loadAgentMessages(e);
 
@@ -1139,6 +1248,8 @@ async function reload({ keepReader = false } = {}) {
     state.agentMessages = [];
     state.comments = [];
     state.translation = null;
+    state.rewrite = null;
+    state.readerTab = 'original';
     $('#reader').classList.add('hidden');
     $('#reader-empty').classList.remove('hidden');
     document.getElementById('app').classList.remove('reading');
@@ -1580,6 +1691,10 @@ $('#reader-star').onclick = () => {
   syncEntryState(e.id, { starred: nextStarred });
 };
 $('#reader-bilingual').onclick = generateTranslation;
+$('#reader-rewrite').onclick = generateRewrite;
+$$('.reader-tab').forEach(btn => {
+  btn.onclick = () => setReaderTab(btn.dataset.tab);
+});
 $('#comment-form').onsubmit = (e) => {
   e.preventDefault();
   submitComment();

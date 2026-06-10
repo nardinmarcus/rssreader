@@ -299,6 +299,27 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
   }
 });
 
+app.get('/api/entry/:id/rewrite', (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  res.json({ rewrite: store.getRewrite(entry.id) });
+});
+
+app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const result = await deepseek.rewriteEntry(entry, {
+      ...requestAiConfig(req),
+      author: requestAuthor(req),
+      force: Boolean(req.body && req.body.force),
+    });
+    res.json(result);
+  } catch (e) {
+    sendError(res, e, 'rewrite failed');
+  }
+});
+
 app.get('/api/entry/:id/comments', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
