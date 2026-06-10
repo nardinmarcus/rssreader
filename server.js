@@ -304,6 +304,29 @@ function entryLastModified(entry) {
   return timestampIso(timestamp);
 }
 
+function entryAssetTypeTimestamp(entry, type = '') {
+  const assetType = normalizeAssetDirectoryType(type);
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (!assetType) return Math.max(Number(assets.latestAt) || 0, Number(entry && entry.publishedTs) || 0);
+  if (!hasPublicAssetType(entry, assetType)) return 0;
+  const itemAt = Number(assets.items?.[assetType]?.[0]?.at || 0);
+  const previewAt = Number(assets.previews?.[assetType]?.at || 0);
+  const latestAt = Array.isArray(assets.latestTypes) && assets.latestTypes.includes(assetType)
+    ? Number(assets.latestAt) || 0
+    : 0;
+  return Math.max(itemAt, previewAt, latestAt);
+}
+
+function entryAssetTypeLastModified(entry, type = '', fallback = '') {
+  return timestampIso(entryAssetTypeTimestamp(entry, type)) || fallback;
+}
+
+function latestAssetTypeLastModified(entries, type = '') {
+  let latest = 0;
+  for (const entry of entries) latest = Math.max(latest, entryAssetTypeTimestamp(entry, type));
+  return timestampIso(latest);
+}
+
 function assetItemLastModified(item, fallback = '') {
   return timestampIso(item && (item.updatedAt || item.createdAt)) || fallback;
 }
@@ -362,18 +385,20 @@ function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true 
 function publicExactAssetSitemapUrls(req, entry, lastmod = '') {
   const urls = [];
   if (hasPublicAssetType(entry, 'comments')) {
+    const commentsLastmod = entryAssetTypeLastModified(entry, 'comments', lastmod);
     for (const comment of store.getComments(entry.id)) {
       urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'comments', comment, { includeHash: false }), {
-        lastmod: assetItemLastModified(comment, lastmod),
+        lastmod: assetItemLastModified(comment, commentsLastmod),
         changefreq: 'monthly',
         priority: '0.72',
       }));
     }
   }
   if (hasPublicAssetType(entry, 'chat')) {
+    const chatLastmod = entryAssetTypeLastModified(entry, 'chat', lastmod);
     for (const message of store.getChatMessages(entry.id)) {
       urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'chat', message, { includeHash: false }), {
-        lastmod: assetItemLastModified(message, lastmod),
+        lastmod: assetItemLastModified(message, chatLastmod),
         changefreq: 'monthly',
         priority: '0.72',
       }));
@@ -485,7 +510,7 @@ function renderSitemap(req) {
 
   const assetEntries = entries.filter(hasPublicAssets);
   if (assetEntries.length) {
-    const latestAssetLastmod = entryLastModified(assetEntries[0]);
+    const latestAssetLastmod = latestAssetTypeLastModified(assetEntries);
     urls.push([
       `  <url>`,
       `    <loc>${escapeHtml(assetDirectoryUrl(req))}</loc>`,
@@ -498,14 +523,15 @@ function renderSitemap(req) {
     for (const type of Object.keys(ASSET_DIRECTORY_META)) {
       const typeEntries = assetEntries.filter(entry => hasPublicAssetType(entry, type));
       if (!typeEntries.length) continue;
+      const typeLastmod = latestAssetTypeLastModified(typeEntries, type);
       urls.push([
         `  <url>`,
         `    <loc>${escapeHtml(assetDirectoryUrl(req, type))}</loc>`,
-        `    <lastmod>${escapeHtml(entryLastModified(typeEntries[0]))}</lastmod>`,
+        typeLastmod ? `    <lastmod>${escapeHtml(typeLastmod)}</lastmod>` : '',
         `    <changefreq>weekly</changefreq>`,
         `    <priority>0.65</priority>`,
         `  </url>`,
-      ].join('\n'));
+      ].filter(Boolean).join('\n'));
     }
   }
 
@@ -523,10 +549,11 @@ function renderSitemap(req) {
     ].filter(Boolean).join('\n'));
 
     for (const type of publicAssetTypes(entry)) {
+      const typeLastmod = entryAssetTypeLastModified(entry, type, lastmod);
       urls.push([
         `  <url>`,
         `    <loc>${escapeHtml(entryPublicUrl(req, entry, type))}</loc>`,
-        lastmod ? `    <lastmod>${escapeHtml(lastmod)}</lastmod>` : '',
+        typeLastmod ? `    <lastmod>${escapeHtml(typeLastmod)}</lastmod>` : '',
         `    <changefreq>weekly</changefreq>`,
         `    <priority>0.75</priority>`,
         `  </url>`,
