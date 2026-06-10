@@ -1081,6 +1081,12 @@ function renderAssetDashboard() {
 function assetActivityLabel(entry) {
   if (state.view !== 'assets') return '';
   const assets = entry && entry.assets ? entry.assets : {};
+  if (state.assetFilter) {
+    const filteredAt = assetLatestAtForType(entry, state.assetFilter);
+    if (!filteredAt) return '';
+    const filteredLabel = ASSET_TYPE_LABELS[state.assetFilter] || '资产';
+    return `${filteredLabel} · 最近沉淀 ${formatAssetTime(filteredAt)}`;
+  }
   if (!assets.latestAt) return '';
   const types = Array.isArray(assets.latestTypes) ? assets.latestTypes : [];
   const labels = types.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean);
