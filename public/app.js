@@ -288,8 +288,13 @@ const state = {
   agentMessages: [],
   comments: [],
   translation: null,
+  translationLoading: false,
+  translationGenerating: false,
+  pendingTranslationGenerate: false,
   rewrite: null,
+  rewriteGenerating: false,
   readerTab: 'original',
+  fetchingOriginal: false,
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
   me: null,
@@ -862,6 +867,20 @@ function renderTitle(e) {
   $('#reader-title-zh').textContent = e.titleZh ? e.title : '';
 }
 
+function updateFetchOriginalButton(entry = state.activeEntry) {
+  const btn = $('#reader-fetch-original');
+  const canFetch = Boolean(entry && /^https?:\/\//i.test(entry.link || ''));
+  btn.classList.toggle('hidden', !canFetch);
+  btn.disabled = !canFetch || state.fetchingOriginal;
+  btn.textContent = state.fetchingOriginal ? '获取中…' : '获取原文';
+}
+
+function renderOriginalContent(entry, content) {
+  const fallback = entry && entry.summary ? `<p>${escapeHtml(entry.summary)}</p>` : '<p>（无内容，请打开原文）</p>';
+  $('#reader-content').innerHTML = sanitize(content || fallback);
+  $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+}
+
 function setReaderTab(tab) {
   const next = ['original', 'translation', 'rewrite'].includes(tab) ? tab : 'original';
   state.readerTab = next;
@@ -871,20 +890,44 @@ function setReaderTab(tab) {
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
 }
 
-function renderTranslation(translation) {
-  state.translation = translation || null;
+function handleReaderTab(tab) {
+  setReaderTab(tab);
+  if (tab !== 'translation' || state.translation) return;
+  if (state.translationLoading) {
+    state.pendingTranslationGenerate = true;
+    return;
+  }
+  generateTranslation();
+}
+
+function renderTranslation(translation, { loading = false } = {}) {
+  const hasContent = Boolean(translation && Array.isArray(translation.content) && translation.content.length);
+  state.translation = hasContent ? translation : null;
   const list = $('#translation-list');
   const empty = $('#translation-empty');
+  const emptyText = empty.querySelector('p');
+  const action = $('#reader-bilingual');
   list.innerHTML = '';
-  if (!translation || !Array.isArray(translation.content) || !translation.content.length) {
+  if (loading) {
     empty.classList.remove('hidden');
-    $('#reader-bilingual').textContent = '生成中文翻译';
+    if (emptyText) emptyText.textContent = '正在检查这篇文章的翻译缓存…';
+    action.disabled = true;
+    action.textContent = '检查中…';
+    $('#translation-meta').textContent = '检查中';
+    return;
+  }
+  if (!hasContent) {
+    empty.classList.remove('hidden');
+    if (emptyText) emptyText.textContent = '这篇文章还没有中文翻译。';
+    action.disabled = false;
+    action.textContent = '生成中文翻译';
     $('#translation-meta').textContent = '暂无';
     return;
   }
   empty.classList.add('hidden');
-  $('#reader-bilingual').textContent = '重新生成中文翻译';
-  $('#translation-meta').textContent = [translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
+  action.disabled = false;
+  action.textContent = translation.stale ? '更新中文翻译' : '重新生成中文翻译';
+  $('#translation-meta').textContent = [translation.stale ? '原文已更新' : '', translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
   list.innerHTML = translation.content.map(pair => `
     <div class="translation-pair">
       <p class="translation-source">${escapeHtml(pair.source)}</p>
@@ -893,13 +936,20 @@ function renderTranslation(translation) {
 }
 
 async function loadTranslation(entry) {
-  renderTranslation(null);
+  state.translationLoading = true;
+  renderTranslation(null, { loading: true });
   try {
     const data = await api(`/api/entry/${entry.id}/translation`);
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
   } catch {
     renderTranslation(null);
+  } finally {
+    state.translationLoading = false;
+    if (state.pendingTranslationGenerate && state.activeEntry?.id === entry.id && state.readerTab === 'translation' && !state.translation) {
+      state.pendingTranslationGenerate = false;
+      generateTranslation();
+    }
   }
 }
 
@@ -931,16 +981,23 @@ async function loadRewrite(entry) {
   }
 }
 
-async function generateTranslation() {
+async function generateTranslation({ force = false } = {}) {
   const entry = state.activeEntry;
   if (!entry) return;
   const btn = $('#reader-bilingual');
-  if (state.translation) {
+  if (state.translation && !force) {
     setReaderTab('translation');
     return;
   }
+  if (state.translationLoading) {
+    state.pendingTranslationGenerate = true;
+    setReaderTab('translation');
+    return;
+  }
+  if (state.translationGenerating) return;
   if (!requireAuth('login')) return;
   setReaderTab('translation');
+  state.translationGenerating = true;
   btn.disabled = true;
   btn.textContent = '翻译中…';
   try {
@@ -948,7 +1005,7 @@ async function generateTranslation() {
       method: 'POST',
       aiConfig: translationAiConfig(),
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ force }),
     });
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
@@ -960,21 +1017,25 @@ async function generateTranslation() {
     }
     toast('翻译失败: ' + err.message, 5000);
   } finally {
+    state.translationGenerating = false;
     btn.disabled = false;
-    if (!state.translation) btn.textContent = '双语翻译';
+    if (!state.translation) btn.textContent = '生成中文翻译';
+    else btn.textContent = state.translation.stale ? '更新中文翻译' : '重新生成中文翻译';
   }
 }
 
-async function generateRewrite() {
+async function generateRewrite({ force = false } = {}) {
   const entry = state.activeEntry;
   if (!entry) return;
   const btn = $('#reader-rewrite');
-  if (state.rewrite) {
+  if (state.rewrite && !force) {
     setReaderTab('rewrite');
     return;
   }
+  if (state.rewriteGenerating) return;
   if (!requireAuth('login')) return;
   setReaderTab('rewrite');
+  state.rewriteGenerating = true;
   btn.disabled = true;
   btn.textContent = '重写中…';
   try {
@@ -982,7 +1043,7 @@ async function generateRewrite() {
       method: 'POST',
       aiConfig: rewriteAiConfig(),
       headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ force }),
     });
     if (state.activeEntry?.id !== entry.id) return;
     renderRewrite(data.rewrite);
@@ -994,8 +1055,51 @@ async function generateRewrite() {
     }
     toast('重写失败: ' + err.message, 5000);
   } finally {
+    state.rewriteGenerating = false;
     btn.disabled = false;
     if (!state.rewrite) btn.textContent = '生成乔木风格重写';
+    else btn.textContent = '重新生成乔木风格重写';
+  }
+}
+
+async function fetchOriginalContent() {
+  const entry = state.activeEntry;
+  if (!entry) return;
+  if (!entry.link || !/^https?:\/\//i.test(entry.link)) {
+    toast('这篇文章没有可抓取的原文链接');
+    return;
+  }
+  if (!requireAuth('login')) return;
+  state.fetchingOriginal = true;
+  updateFetchOriginalButton(entry);
+  setReaderTab('original');
+  $('#reader-content').innerHTML = '<p style="color:var(--text-2)">正在获取原文内容…</p>';
+  try {
+    const data = await api(`/api/entry/${entry.id}/content`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    const updated = { ...entry, ...(data.entry || {}) };
+    state.activeEntry = updated;
+    const idx = state.entries.findIndex(item => item.id === updated.id);
+    if (idx >= 0) state.entries[idx] = { ...state.entries[idx], ...updated, content: undefined };
+    contentCache.set(updated.id, updated.content || '');
+    renderTitle(updated);
+    renderOriginalContent(updated, updated.content);
+    renderList();
+    state.translation = null;
+    state.rewrite = null;
+    loadTranslation(updated);
+    loadRewrite(updated);
+    toast('原文已获取并保存');
+  } catch (err) {
+    renderOriginalContent(entry, contentCache.get(entry.id) || entry.content || '');
+    toast('获取原文失败: ' + err.message, 5000);
+  } finally {
+    state.fetchingOriginal = false;
+    updateFetchOriginalButton(state.activeEntry);
   }
 }
 
@@ -1208,7 +1312,13 @@ async function openEntry(e) {
   starBtn.textContent = state.starred.has(e.id) ? '★ 已收藏' : '★ 收藏';
   $('#comment-input').value = '';
   state.translation = null;
+  state.translationLoading = false;
+  state.translationGenerating = false;
+  state.pendingTranslationGenerate = false;
   state.rewrite = null;
+  state.rewriteGenerating = false;
+  state.fetchingOriginal = false;
+  updateFetchOriginalButton(e);
   setReaderTab('original');
   loadTranslation(e);
   loadRewrite(e);
@@ -1233,8 +1343,7 @@ async function openEntry(e) {
     } catch { /* fall through to summary */ }
     if (state.activeEntry?.id !== e.id) return; // user moved on
   }
-  $('#reader-content').innerHTML = sanitize(content || `<p>${e.summary || '（无内容，请打开原文）'}</p>`);
-  $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  renderOriginalContent(e, content);
 }
 
 /* ---------- Navigation ---------- */
@@ -1248,7 +1357,12 @@ async function reload({ keepReader = false } = {}) {
     state.agentMessages = [];
     state.comments = [];
     state.translation = null;
+    state.translationLoading = false;
+    state.translationGenerating = false;
+    state.pendingTranslationGenerate = false;
     state.rewrite = null;
+    state.rewriteGenerating = false;
+    state.fetchingOriginal = false;
     state.readerTab = 'original';
     $('#reader').classList.add('hidden');
     $('#reader-empty').classList.remove('hidden');
@@ -1690,10 +1804,11 @@ $('#reader-star').onclick = () => {
   renderEntryStateUi();
   syncEntryState(e.id, { starred: nextStarred });
 };
-$('#reader-bilingual').onclick = generateTranslation;
-$('#reader-rewrite').onclick = generateRewrite;
+$('#reader-fetch-original').onclick = fetchOriginalContent;
+$('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(state.translation) });
+$('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
 $$('.reader-tab').forEach(btn => {
-  btn.onclick = () => setReaderTab(btn.dataset.tab);
+  btn.onclick = () => handleReaderTab(btn.dataset.tab);
 });
 $('#comment-form').onsubmit = (e) => {
   e.preventDefault();

@@ -343,10 +343,23 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-size: 12px;
   font-weight: 700;
 }
-.reader-section-head span:last-child {
+.reader-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.reader-section-actions span {
   color: var(--text-2);
   font-weight: 500;
   font-size: 11.5px;
+}
+.reader-section-actions .ghost-btn {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .comments-list { margin-top: 12px; display: grid; gap: 10px; }
 .comments-empty { color: var(--text-2); font-size: 13px; }
@@ -1036,6 +1049,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   .reader h1 { font-size: 22px; }
   .reader-title-zh { font-size: 16px; }
   .reader-section-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .reader-section-actions { justify-content: space-between; width: 100%; }
   .translation-pair { grid-template-columns: 1fr; }
   .comment-form { grid-template-columns: 1fr; }
   .sidebar-footer {

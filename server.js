@@ -93,6 +93,16 @@ function requestAuthor(req) {
   return req.user ? req.user.displayName : '读者';
 }
 
+function translationResponse(entry) {
+  const translation = store.getTranslation(entry.id);
+  if (!translation) return null;
+  const contentHash = store.hashText((entry.title || '') + '\n' + (entry.content || entry.summary || ''));
+  return {
+    ...translation,
+    stale: Boolean(translation.contentHash && translation.contentHash !== contentHash),
+  };
+}
+
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
   const entries = fetcher.getEntries({ limit: 1000 })
@@ -278,10 +288,21 @@ app.get('/api/entry/:id', (req, res) => {
   res.json({ entry });
 });
 
+app.post('/api/entry/:id/content', requireLogin, async (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const updated = await fetcher.fetchEntryOriginal(entry);
+    res.json({ entry: updated });
+  } catch (e) {
+    sendError(res, e, 'fetch original content failed');
+  }
+});
+
 app.get('/api/entry/:id/translation', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ translation: require('./lib/store').getTranslation(entry.id) });
+  res.json({ translation: translationResponse(entry) });
 });
 
 app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
