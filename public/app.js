@@ -360,7 +360,7 @@ function routeStateFromUrl() {
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
   if (view === 'assets') {
-    const prefix = assetFilter ? `${ASSET_TYPE_LABELS[assetFilter] || '公开'}资产` : '公开资产';
+    const prefix = assetFilter ? `${assetDirectoryLabel(assetFilter)}资产` : '公开资产';
     return q ? `${prefix} · “${q}” · QMReader` : `${prefix} · QMReader`;
   }
   return 'QMReader · RSS 阅读器';
@@ -1008,6 +1008,17 @@ const ASSET_TYPE_LABELS = {
   chat: '对话',
 };
 
+const ASSET_DIRECTORY_LABELS = {
+  translation: '中文翻译',
+  rewrite: '乔木风格重写',
+  comments: '人工点评',
+  chat: '文章对话',
+};
+
+function assetDirectoryLabel(type) {
+  return ASSET_DIRECTORY_LABELS[type] || ASSET_TYPE_LABELS[type] || '公开';
+}
+
 const ASSET_FILTERS = {
   translation: { label: '中译', count: entry => Number(entry.assets?.translation ? 1 : 0), title: '查看有中文翻译的文章' },
   rewrite: { label: '重写', count: entry => Number(entry.assets?.rewrite ? 1 : 0), title: '查看有乔木风格重写的文章' },
@@ -1215,7 +1226,7 @@ function renderAssetActivityStrip() {
     const activeEntryCount = state.assetFilter
       ? entries.filter(entry => entryHasAssetType(entry, state.assetFilter)).length
       : total;
-    const activeLabel = state.assetFilter ? `${ASSET_TYPE_LABELS[state.assetFilter] || '公开'}资产` : '公开资产';
+    const activeLabel = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
     el.classList.toggle('hidden', !total && !state.assetFilter);
     if (!total && !state.assetFilter) {
       el.innerHTML = '';
@@ -1698,7 +1709,7 @@ function updateListTitle() {
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
-  else if (state.view === 'assets') title = state.assetFilter ? `资产 · ${ASSET_TYPE_LABELS[state.assetFilter] || '筛选'}` : '资产';
+  else if (state.view === 'assets') title = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
   updateSearchPlaceholder();
