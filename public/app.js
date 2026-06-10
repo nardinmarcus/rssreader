@@ -1357,7 +1357,10 @@ function renderTranslation(translation, { loading = false } = {}) {
   const empty = $('#translation-empty');
   const emptyText = empty.querySelector('p');
   const action = $('#reader-bilingual');
+  const copy = $('#translation-copy');
   list.innerHTML = '';
+  copy.classList.toggle('hidden', !hasContent);
+  copy.disabled = !hasContent;
   if (loading) {
     empty.classList.remove('hidden');
     if (emptyText) emptyText.textContent = '正在检查这篇文章的翻译缓存…';
@@ -1387,6 +1390,14 @@ function renderTranslation(translation, { loading = false } = {}) {
   settlePendingAssetJump('translation');
 }
 
+function copyTranslationText() {
+  const translation = state.translation;
+  const lines = translation && Array.isArray(translation.content)
+    ? translation.content.map(pair => String(pair.target || '').trim()).filter(Boolean)
+    : [];
+  copyText(lines.join('\n\n'), '译文已复制');
+}
+
 async function loadTranslation(entry) {
   state.translationLoading = true;
   renderTranslation(null, { loading: true });
@@ -1412,7 +1423,10 @@ function renderRewrite(rewrite) {
   state.rewrite = rewrite || null;
   const content = $('#rewrite-content');
   const empty = $('#rewrite-empty');
+  const copy = $('#rewrite-copy');
   content.innerHTML = '';
+  copy.classList.toggle('hidden', !rewrite || !rewrite.body);
+  copy.disabled = !rewrite || !rewrite.body;
   if (!rewrite || !rewrite.body) {
     empty.classList.remove('hidden');
     $('#rewrite-meta').textContent = '暂无';
@@ -1425,6 +1439,10 @@ function renderRewrite(rewrite) {
   content.innerHTML = renderMarkdownLite(rewrite.body);
   renderReaderAssetSummary();
   settlePendingAssetJump('rewrite');
+}
+
+function copyRewriteText() {
+  copyText(state.rewrite && state.rewrite.body, '重写已复制');
 }
 
 async function loadRewrite(entry) {
@@ -2428,6 +2446,8 @@ $('#reader-asset-summary').onclick = (e) => {
 };
 $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(state.translation) });
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
+$('#translation-copy').onclick = copyTranslationText;
+$('#rewrite-copy').onclick = copyRewriteText;
 $$('.reader-tab').forEach(btn => {
   btn.onclick = () => handleReaderTab(btn.dataset.tab);
 });
