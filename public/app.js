@@ -284,6 +284,7 @@ const state = {
   view: 'all',            // all | unread | starred | assets
   filterSource: null,
   filterCategory: null,
+  assetFilter: null,
   q: '',
   activeEntry: null,
   guestRead: new Set(readJson('fr_read', '[]')),
@@ -746,6 +747,7 @@ function renderSidebar() {
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-assets').textContent = state.entries.filter(hasEntryAssets).length || '';
+  renderAssetDashboard();
 
   $$('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
 }
@@ -756,6 +758,15 @@ function hasEntryAssets(entry) {
   return Boolean(assets.translation || assets.rewrite || assets.comments || assets.chatMessages);
 }
 
+function entryHasAssetType(entry, type) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'translation') return Boolean(assets.translation);
+  if (type === 'rewrite') return Boolean(assets.rewrite);
+  if (type === 'comments') return Boolean(assets.comments);
+  if (type === 'chat') return Boolean(assets.chatMessages);
+  return hasEntryAssets(entry);
+}
+
 function visibleEntries() {
   let list = state.entries;
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
@@ -763,6 +774,7 @@ function visibleEntries() {
   if (state.view === 'assets') {
     list = list
       .filter(hasEntryAssets)
+      .filter(entry => !state.assetFilter || entryHasAssetType(entry, state.assetFilter))
       .slice()
       .sort((a, b) => {
         const assetDelta = Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0);
@@ -798,6 +810,62 @@ const ASSET_TYPE_LABELS = {
   comments: '点评',
   chat: '对话',
 };
+
+const ASSET_FILTERS = {
+  translation: { label: '中译', count: entry => Number(entry.assets?.translation ? 1 : 0), title: '查看有中文翻译的文章' },
+  rewrite: { label: '重写', count: entry => Number(entry.assets?.rewrite ? 1 : 0), title: '查看有乔木风格重写的文章' },
+  comments: { label: '点评', count: entry => Number(entry.assets?.comments || 0), title: '查看有人工点评的文章' },
+  chat: { label: '对话', count: entry => Number(entry.assets?.chatMessages || 0), title: '查看有文章对话的文章' },
+};
+
+function assetTypeCount(entries, type) {
+  const def = ASSET_FILTERS[type];
+  if (!def) return 0;
+  return entries.reduce((sum, entry) => sum + def.count(entry), 0);
+}
+
+function assetDashboardStats() {
+  const entries = state.entries.filter(hasEntryAssets);
+  const latest = entries
+    .slice()
+    .sort((a, b) => Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0))[0] || null;
+  return {
+    entries,
+    latest,
+    counts: Object.fromEntries(Object.keys(ASSET_FILTERS).map(type => [type, assetTypeCount(entries, type)])),
+  };
+}
+
+function renderAssetDashboard() {
+  const dashboard = $('#asset-dashboard');
+  if (!dashboard) return;
+  dashboard.classList.toggle('hidden', !state.entries.length);
+
+  const { entries, latest, counts } = assetDashboardStats();
+  const total = entries.length;
+  $('#asset-dashboard-total').textContent = total ? `${total} 篇` : '0 篇';
+  const recentTypes = latest && Array.isArray(latest.assets?.latestTypes)
+    ? latest.assets.latestTypes.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean)
+    : [];
+  $('#asset-dashboard-recent').textContent = latest && latest.assets?.latestAt
+    ? `${recentTypes.length ? recentTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
+    : '暂无沉淀';
+
+  const open = $('#asset-dashboard-open');
+  open.disabled = total === 0;
+  open.classList.toggle('active', state.view === 'assets' && !state.assetFilter && !state.filterSource && !state.filterCategory);
+
+  for (const [type, def] of Object.entries(ASSET_FILTERS)) {
+    const btn = $(`[data-asset-filter="${type}"]`);
+    const count = counts[type] || 0;
+    if (!btn) continue;
+    btn.disabled = count === 0;
+    btn.title = count ? def.title : '暂无这类资产';
+    btn.classList.toggle('active', state.view === 'assets' && state.assetFilter === type && !state.filterSource && !state.filterCategory);
+    const value = btn.querySelector('strong');
+    if (value) value.textContent = count;
+  }
+}
 
 function assetActivityLabel(entry) {
   if (state.view !== 'assets') return '';
@@ -1041,7 +1109,9 @@ function renderList() {
   const el = $('#entry-list');
   el.innerHTML = '';
   if (!list.length) {
-    const text = state.view === 'assets'
+    const text = state.view === 'assets' && state.assetFilter
+      ? `还没有${ASSET_TYPE_LABELS[state.assetFilter] || ''}资产<br/>换个类型或先沉淀一篇文章`
+      : state.view === 'assets'
       ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
       : '这里空空如也<br/>试试刷新或切换视图';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
@@ -1083,7 +1153,7 @@ function updateListTitle() {
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
-  else if (state.view === 'assets') title = '资产';
+  else if (state.view === 'assets') title = state.assetFilter ? `资产 · ${ASSET_TYPE_LABELS[state.assetFilter] || '筛选'}` : '资产';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
 }
@@ -1698,17 +1768,28 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
 function selectSource(id) {
   state.filterSource = state.filterSource === id ? null : id;
   state.filterCategory = null;
+  state.assetFilter = null;
   reload();
 }
 function selectCategory(cat) {
   state.filterCategory = state.filterCategory === cat ? null : cat;
   state.filterSource = null;
+  state.assetFilter = null;
   reload();
 }
 function selectView(v) {
   state.view = v;
   state.filterSource = null;
   state.filterCategory = null;
+  state.assetFilter = null;
+  reload();
+}
+
+function selectAssetFilter(type = null) {
+  state.view = 'assets';
+  state.filterSource = null;
+  state.filterCategory = null;
+  state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
   reload();
 }
 
@@ -2099,6 +2180,12 @@ function setAgentCollapsed(collapsed) {
 
 /* ---------- Events ---------- */
 $$('.view-btn').forEach(b => b.onclick = () => selectView(b.dataset.view));
+$('#asset-dashboard-open').onclick = () => selectAssetFilter(null);
+$('#asset-dashboard').onclick = (e) => {
+  const btn = e.target.closest('[data-asset-filter]');
+  if (!btn || btn.disabled) return;
+  selectAssetFilter(btn.dataset.assetFilter);
+};
 $('#refresh-btn').onclick = refreshAll;
 $('#mark-read-btn').onclick = async () => {
   const ids = visibleEntries().map(e => e.id);

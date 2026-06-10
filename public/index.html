@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=21" />
+  <link rel="stylesheet" href="styles.css?v=22" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -22,6 +22,28 @@
         <button class="view-btn" data-view="unread"><span class="view-ico">●</span>未读<span class="count" id="count-unread"></span></button>
         <button class="view-btn" data-view="starred"><span class="view-ico">★</span>收藏<span class="count" id="count-starred"></span></button>
         <button class="view-btn" data-view="assets"><span class="view-ico">◆</span>资产<span class="count" id="count-assets"></span></button>
+      </div>
+
+      <div id="asset-dashboard" class="asset-dashboard hidden">
+        <button id="asset-dashboard-open" class="asset-dashboard-open" type="button">
+          <span class="asset-dashboard-kicker">公开资产</span>
+          <strong id="asset-dashboard-total">0 篇</strong>
+          <span id="asset-dashboard-recent">暂无沉淀</span>
+        </button>
+        <div class="asset-dashboard-grid" aria-label="资产类型筛选">
+          <button class="asset-stat asset-stat-translation" type="button" data-asset-filter="translation">
+            <span>中译</span><strong id="asset-stat-translation">0</strong>
+          </button>
+          <button class="asset-stat asset-stat-rewrite" type="button" data-asset-filter="rewrite">
+            <span>重写</span><strong id="asset-stat-rewrite">0</strong>
+          </button>
+          <button class="asset-stat asset-stat-comments" type="button" data-asset-filter="comments">
+            <span>点评</span><strong id="asset-stat-comments">0</strong>
+          </button>
+          <button class="asset-stat asset-stat-chat" type="button" data-asset-filter="chat">
+            <span>对话</span><strong id="asset-stat-chat">0</strong>
+          </button>
+        </div>
       </div>
 
       <div class="sidebar-scroll" id="feed-groups"><!-- groups injected --></div>
@@ -276,6 +298,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=22"></script>
 </body>
 </html>
