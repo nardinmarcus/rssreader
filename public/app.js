@@ -886,7 +886,7 @@ function renderSidebar() {
   $('#count-all').textContent = state.entries.length || '';
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
-  $('#count-assets').textContent = state.entries.filter(hasEntryAssets).length || '';
+  $('#count-assets').textContent = assetTotalCount(state.entries.filter(hasEntryAssets)) || '';
   renderAssetDashboard();
 
   $$('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
@@ -1021,15 +1021,29 @@ function assetTypeCount(entries, type) {
   return entries.reduce((sum, entry) => sum + def.count(entry), 0);
 }
 
+function assetTotalCount(entries) {
+  return Object.keys(ASSET_FILTERS).reduce((sum, type) => sum + assetTypeCount(entries, type), 0);
+}
+
+function assetLatestAtForType(entry, type = '') {
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (!type) return Number(assets.latestAt || 0);
+  const itemAt = Number((assets.items && assets.items[type] && assets.items[type][0] && assets.items[type][0].at) || 0);
+  const previewAt = Number((assets.previews && assets.previews[type] && assets.previews[type].at) || 0);
+  return Math.max(itemAt, previewAt);
+}
+
 function assetDashboardStats() {
   const entries = state.entries.filter(hasEntryAssets);
   const latest = entries
     .slice()
     .sort((a, b) => Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0))[0] || null;
+  const counts = Object.fromEntries(Object.keys(ASSET_FILTERS).map(type => [type, assetTypeCount(entries, type)]));
   return {
     entries,
     latest,
-    counts: Object.fromEntries(Object.keys(ASSET_FILTERS).map(type => [type, assetTypeCount(entries, type)])),
+    counts,
+    totalAssets: Object.values(counts).reduce((sum, count) => sum + count, 0),
   };
 }
 
@@ -1038,14 +1052,14 @@ function renderAssetDashboard() {
   if (!dashboard) return;
   dashboard.classList.toggle('hidden', !state.entries.length);
 
-  const { entries, latest, counts } = assetDashboardStats();
+  const { entries, latest, counts, totalAssets } = assetDashboardStats();
   const total = entries.length;
-  $('#asset-dashboard-total').textContent = total ? `${total} 篇` : '0 篇';
+  $('#asset-dashboard-total').textContent = totalAssets ? `${totalAssets} 条` : '0 条';
   const recentTypes = latest && Array.isArray(latest.assets?.latestTypes)
     ? latest.assets.latestTypes.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean)
     : [];
   $('#asset-dashboard-recent').textContent = latest && latest.assets?.latestAt
-    ? `${recentTypes.length ? recentTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
+    ? `${total} 篇文章 · ${recentTypes.length ? recentTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
     : '暂无沉淀';
 
   const open = $('#asset-dashboard-open');
@@ -1189,19 +1203,34 @@ function renderAssetActivityStrip() {
   if (!el) return;
   el.classList.remove('asset-filter-strip');
   if (state.view === 'assets') {
-    const { entries, latest, counts } = assetDashboardStats();
+    const { entries, latest, counts, totalAssets } = assetDashboardStats();
     const total = entries.length;
+    const activeAssetCount = state.assetFilter ? (counts[state.assetFilter] || 0) : totalAssets;
+    const activeEntryCount = state.assetFilter
+      ? entries.filter(entry => entryHasAssetType(entry, state.assetFilter)).length
+      : total;
+    const activeLabel = state.assetFilter ? `${ASSET_TYPE_LABELS[state.assetFilter] || '公开'}资产` : '公开资产';
     el.classList.toggle('hidden', !total && !state.assetFilter);
     if (!total && !state.assetFilter) {
       el.innerHTML = '';
       return;
     }
     el.classList.add('asset-filter-strip');
-    const latestTypes = latest && Array.isArray(latest.assets?.latestTypes)
+    const activeEntries = state.assetFilter
+      ? entries.filter(entry => entryHasAssetType(entry, state.assetFilter))
+      : entries;
+    const activeLatest = activeEntries
+      .slice()
+      .sort((a, b) => assetLatestAtForType(b, state.assetFilter) - assetLatestAtForType(a, state.assetFilter))[0] || null;
+    const activeLatestAt = activeLatest ? assetLatestAtForType(activeLatest, state.assetFilter) : 0;
+    const latestTypes = !state.assetFilter && latest && Array.isArray(latest.assets?.latestTypes)
       ? latest.assets.latestTypes.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean)
       : [];
-    const latestText = latest && latest.assets?.latestAt
-      ? `${latestTypes.length ? latestTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
+    const latestLabel = state.assetFilter
+      ? (ASSET_TYPE_LABELS[state.assetFilter] || '资产')
+      : (latestTypes.length ? latestTypes.join(' / ') : '资产');
+    const latestText = activeLatestAt
+      ? `${latestLabel} · ${formatAssetTime(activeLatestAt)}`
       : '暂无沉淀';
     const matchedCount = state.q
       ? entries
@@ -1209,11 +1238,14 @@ function renderAssetActivityStrip() {
         .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
         .length
       : null;
-    const statusText = matchedCount === null ? latestText : `匹配 ${matchedCount} 篇 · ${latestText}`;
+    const scopeText = `${activeAssetCount} 条 · ${activeEntryCount} 篇文章`;
+    const statusText = matchedCount === null
+      ? `${scopeText} · ${latestText}`
+      : `匹配 ${matchedCount} 篇 · ${scopeText} · ${latestText}`;
     const feedHref = state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml';
     const chips = [
-      `<button type="button" class="asset-filter-chip${!state.assetFilter ? ' active' : ''}" data-asset-strip-filter="">
-        <span>全部</span><strong>${total}</strong>
+      `<button type="button" class="asset-filter-chip${!state.assetFilter ? ' active' : ''}" data-asset-strip-filter="" title="查看全部公开资产">
+        <span>全部</span><strong>${totalAssets}</strong>
       </button>`,
       ...Object.entries(ASSET_FILTERS).map(([type, def]) => {
         const count = counts[type] || 0;
@@ -1224,8 +1256,8 @@ function renderAssetActivityStrip() {
     ];
     el.innerHTML = `
       <div class="asset-filter-head">
-        <span>公开资产</span>
-        <strong>${total} 篇</strong>
+        <span>${escapeHtml(activeLabel)}</span>
+        <strong>${activeAssetCount} 条</strong>
         <em>${escapeHtml(statusText)}</em>
         <button type="button" class="asset-copy-link" data-asset-copy-list title="复制当前资产页链接" aria-label="复制当前资产页链接">⧉</button>
         <a class="asset-feed-link" href="${escapeHtml(feedHref)}" target="_blank" rel="noopener" title="订阅公开资产 RSS">RSS</a>
