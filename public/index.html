@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=14" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -135,14 +135,14 @@
       </header>
       <div id="agent-messages" class="agent-messages"></div>
       <div class="agent-prompts">
-        <button class="agent-prompt" data-prompt="这篇文章最值得我花时间读的结论是什么？用一句话先给判断，再说明依据。">先给判断</button>
-        <button class="agent-prompt" data-prompt="把文章里的关键事实、数据、案例列出来，并逐条说明它们证明了什么。">证据清单</button>
+        <button class="agent-prompt" data-prompt="用 5 条 bullet 总结这篇文章最值得关注的观点。">总结要点</button>
+        <button class="agent-prompt" data-prompt="这篇文章有哪些值得怀疑或需要验证的地方？">质疑观点</button>
+        <button class="agent-prompt" data-prompt="如果我是 AI 产品创作者，读完这篇文章下一步可以做什么？">行动建议</button>
+        <button class="agent-prompt" data-prompt="给这篇文章提炼 5 句适合转发引用的金句，保留上下文含义。">金句摘录</button>
+        <button class="agent-prompt" data-prompt="把文章里的关键事实、数据、案例列出来，并逐条说明它们分别证明了什么。">证据清单</button>
         <button class="agent-prompt" data-prompt="这篇文章的论证依赖哪些前提？哪些前提一旦不成立，结论就会变弱？">前提拆解</button>
-        <button class="agent-prompt" data-prompt="指出这篇文章最容易被忽略的盲点、风险和待验证问题，不要泛泛而谈。">风险盲点</button>
-        <button class="agent-prompt" data-prompt="把这篇文章放到最近 AI/科技趋势里看，它和哪些正在发生的变化有关？">趋势坐标</button>
+        <button class="agent-prompt" data-prompt="帮我写一段适合发到 X / 即刻的中文分享文案，短一点但有观点。">分享文案</button>
         <button class="agent-prompt" data-prompt="如果向阳乔木要基于这篇文章写一篇中文内容，最有传播潜力的切入角度有哪些？给 3 个。">选题角度</button>
-        <button class="agent-prompt" data-prompt="提炼可复用的写作素材：金句、数据、案例、类比、反常识点各给几条。">素材提炼</button>
-        <button class="agent-prompt" data-prompt="预测技术背景读者读完会追问的 5 个问题，并基于文章给出简短回答。">读者追问</button>
       </div>
       <form id="agent-form" class="agent-form">
         <textarea id="agent-input" rows="2" placeholder="问当前文章…" disabled></textarea>
@@ -272,6 +272,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

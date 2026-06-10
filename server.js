@@ -103,6 +103,16 @@ function translationResponse(entry) {
   };
 }
 
+function rewriteResponse(entry) {
+  const rewrite = store.getRewrite(entry.id);
+  if (!rewrite) return null;
+  const contentHash = deepseek.rewriteContentHash(entry);
+  return {
+    ...rewrite,
+    stale: Boolean(rewrite.contentHash && rewrite.contentHash !== contentHash),
+  };
+}
+
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
   const entries = fetcher.getEntries({ limit: 1000 })
@@ -323,7 +333,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
 app.get('/api/entry/:id/rewrite', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ rewrite: store.getRewrite(entry.id) });
+  res.json({ rewrite: rewriteResponse(entry) });
 });
 
 app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {

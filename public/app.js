@@ -965,8 +965,8 @@ function renderRewrite(rewrite) {
     return;
   }
   empty.classList.add('hidden');
-  $('#reader-rewrite').textContent = '重新生成乔木风格重写';
-  $('#rewrite-meta').textContent = [rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
+  $('#reader-rewrite').textContent = rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
+  $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
   content.innerHTML = renderMarkdownLite(rewrite.body);
 }
 
@@ -1058,7 +1058,7 @@ async function generateRewrite({ force = false } = {}) {
     state.rewriteGenerating = false;
     btn.disabled = false;
     if (!state.rewrite) btn.textContent = '生成乔木风格重写';
-    else btn.textContent = '重新生成乔木风格重写';
+    else btn.textContent = state.rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
   }
 }
 
