@@ -276,7 +276,7 @@ function normalizeProfile(raw, index = 0) {
 const state = {
   sources: [],
   entries: [],
-  view: 'all',            // all | unread | starred
+  view: 'all',            // all | unread | starred | assets
   filterSource: null,
   filterCategory: null,
   q: '',
@@ -701,15 +701,22 @@ function renderSidebar() {
   $('#count-all').textContent = state.entries.length || '';
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
+  $('#count-assets').textContent = state.entries.filter(hasEntryAssets).length || '';
 
   $$('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
 }
 
 /* ---------- Entry list ---------- */
+function hasEntryAssets(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  return Boolean(assets.translation || assets.rewrite || assets.comments || assets.chatMessages);
+}
+
 function visibleEntries() {
   let list = state.entries;
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
   if (state.view === 'starred') list = list.filter(e => state.starred.has(e.id));
+  if (state.view === 'assets') list = list.filter(hasEntryAssets);
   return list;
 }
 
@@ -845,7 +852,10 @@ function renderList() {
   const el = $('#entry-list');
   el.innerHTML = '';
   if (!list.length) {
-    el.innerHTML = '<div class="list-empty">这里空空如也<br/>试试刷新或切换视图</div>';
+    const text = state.view === 'assets'
+      ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
+      : '这里空空如也<br/>试试刷新或切换视图';
+    el.innerHTML = `<div class="list-empty">${text}</div>`;
     return;
   }
   const frag = document.createDocumentFragment();
@@ -882,6 +892,7 @@ function updateListTitle() {
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
+  else if (state.view === 'assets') title = '资产';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
 }

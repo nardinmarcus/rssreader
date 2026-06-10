@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=15" />
+  <link rel="stylesheet" href="styles.css?v=16" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -21,6 +21,7 @@
         <button class="view-btn active" data-view="all"><span class="view-ico">▤</span>全部<span class="count" id="count-all"></span></button>
         <button class="view-btn" data-view="unread"><span class="view-ico">●</span>未读<span class="count" id="count-unread"></span></button>
         <button class="view-btn" data-view="starred"><span class="view-ico">★</span>收藏<span class="count" id="count-starred"></span></button>
+        <button class="view-btn" data-view="assets"><span class="view-ico">◆</span>资产<span class="count" id="count-assets"></span></button>
       </div>
 
       <div class="sidebar-scroll" id="feed-groups"><!-- groups injected --></div>
@@ -273,6 +274,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>
