@@ -50,7 +50,7 @@ npm start
 - 海外聚合：OpenRouter、Groq、Together
 - 自定义：任意 OpenAI-compatible Chat Completions 服务
 
-用户的 API key 会随生成正文翻译、文章对话、测试连接请求发送到本站后端代理调用，不会落库。Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址。
+生成正文双语翻译时，如果当前用户没有配置可用 Profile，后端会使用站点服务端 DeepSeek Key 生成并缓存公开翻译；如果用户配置了自己的 Profile，则优先使用用户自己的 key。文章对话、测试连接和获取模型列表使用用户自己的 API key。用户的 API key 只随请求发送到本站后端代理调用，不会落库。Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址。
 
 可选配置：
 

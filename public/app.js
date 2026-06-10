@@ -527,6 +527,21 @@ function aiHeaders() {
   return aiHeadersFromConfig(currentAiConfig());
 }
 
+function translationAiConfig() {
+  const config = currentAiConfig();
+  if (hasUsableAiConfig(config)) return config;
+  return {
+    provider: 'deepseek',
+    providerName: 'DeepSeek',
+    providerType: 'openai_compatible',
+    apiKey: '',
+    baseUrl: '',
+    model: '',
+    temperature: 0.15,
+    maxTokens: 4500,
+  };
+}
+
 async function api(path, opts) {
   const headers = { ...(opts && opts.headers ? opts.headers : {}) };
   if (opts && opts.aiConfig) Object.assign(headers, aiHeadersFromConfig(opts.aiConfig));
@@ -856,17 +871,12 @@ async function generateTranslation() {
     return;
   }
   if (!requireAuth('login')) return;
-  if (!hasUsableAiConfig()) {
-    openAiConfigModal('translation', 'translation');
-    toast('请先保存一个可用的 AI 配置');
-    return;
-  }
   btn.disabled = true;
   btn.textContent = '翻译中…';
   try {
     const data = await api(`/api/entry/${entry.id}/translation`, {
       method: 'POST',
-      ai: true,
+      aiConfig: translationAiConfig(),
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
@@ -874,6 +884,9 @@ async function generateTranslation() {
     renderTranslation(data.translation);
     toast(data.cached ? '已显示缓存翻译' : '双语翻译已保存');
   } catch (err) {
+    if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
+      openAiConfigModal('translation', 'translation');
+    }
     toast('翻译失败: ' + err.message, 5000);
   } finally {
     btn.disabled = false;
