@@ -337,9 +337,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas:
     "type title"
+    "type preview"
     "type meta";
-  align-items: center;
-  gap: 2px 8px;
+  align-items: start;
+  gap: 3px 8px;
   text-align: left;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -358,6 +359,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .asset-activity-type {
   grid-area: type;
   min-width: 38px;
+  margin-top: 1px;
   padding: 3px 6px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -376,6 +378,17 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   white-space: nowrap;
   color: var(--text-0);
   font-size: 12.5px;
+}
+.asset-activity-preview {
+  grid-area: preview;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--text-1);
+  font-size: 11.5px;
+  line-height: 1.42;
 }
 .asset-activity-meta {
   grid-area: meta;

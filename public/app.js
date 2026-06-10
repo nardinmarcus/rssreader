@@ -997,11 +997,13 @@ function assetActivityLabel(entry) {
 
 function assetPreviewForEntry(entry) {
   if (state.view !== 'assets') return null;
+  return assetPreviewForType(entry, state.assetFilter);
+}
+
+function assetPreviewForType(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
   const previews = assets.previews || {};
-  const preview = state.assetFilter && previews[state.assetFilter]
-    ? previews[state.assetFilter]
-    : assets.preview;
+  const preview = type && previews[type] ? previews[type] : assets.preview;
   if (!preview || !preview.type || !preview.text) return null;
   return preview;
 }
@@ -1040,10 +1042,16 @@ function latestAssetActivity(limit = 4) {
       const type = entryPrimaryAssetType(entry);
       const latestTypes = Array.isArray(entry.assets?.latestTypes) ? entry.assets.latestTypes : [];
       const labels = latestTypes.map(item => ASSET_TYPE_LABELS[item]).filter(Boolean);
+      const preview = assetPreviewForType(entry, type);
+      const previewMeta = preview
+        ? [preview.author, preview.model].filter(Boolean).join(' · ')
+        : '';
       return {
         entry,
         type,
         labels: labels.length ? labels.join(' / ') : (ASSET_TYPE_LABELS[type] || '资产'),
+        preview,
+        previewMeta,
       };
     });
 }
@@ -1104,12 +1112,16 @@ function renderAssetActivityStrip() {
       <button type="button" data-asset-open-all>全部资产</button>
     </div>
     <div class="asset-activity-list">
-      ${items.map(({ entry, type, labels }) => {
+      ${items.map(({ entry, type, labels, preview, previewMeta }) => {
         const src = sourceById(entry.sourceId);
-        return `<button type="button" class="asset-activity-item asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}">
+        const itemId = preview && preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
+        const previewText = preview && preview.text ? preview.text : '';
+        const meta = [src && src.name, previewMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
+        return `<button type="button" class="asset-activity-item asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}"${itemId}>
           <span class="asset-activity-type">${escapeHtml(labels)}</span>
           <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
-          <span class="asset-activity-meta">${escapeHtml([src && src.name, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · '))}</span>
+          ${previewText ? `<span class="asset-activity-preview">${escapeHtml(previewText)}</span>` : ''}
+          <span class="asset-activity-meta">${escapeHtml(meta)}</span>
         </button>`;
       }).join('')}
     </div>`;
@@ -2694,7 +2706,13 @@ $('#asset-activity-strip').onclick = async (e) => {
   if (!btn) return;
   const entry = state.entries.find(item => item.id === btn.dataset.assetEntry);
   if (!entry) return;
-  await openEntry(entry, { focus: btn.dataset.assetFocus });
+  const focus = btn.dataset.assetFocus;
+  const itemId = btn.dataset.assetItemId || '';
+  await openEntry(entry, {
+    focus,
+    commentId: focus === 'comments' ? itemId : '',
+    chatMessageId: focus === 'chat' ? itemId : '',
+  });
 };
 $('#refresh-btn').onclick = refreshAll;
 $('#mark-read-btn').onclick = async () => {
