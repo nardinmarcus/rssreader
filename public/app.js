@@ -1180,7 +1180,22 @@ function renderAuthState() {
   $('#refresh-btn').classList.toggle('hidden', !isAdmin());
   $('#manage-btn').classList.toggle('hidden', !isAdmin());
   $('.sidebar-footer').classList.toggle('hidden', !isAdmin());
+  renderSidebarAiSettings();
   updateAgentControls();
+}
+
+function renderSidebarAiSettings() {
+  const btn = $('#sidebar-ai-settings');
+  if (!btn) return;
+  const loggedIn = Boolean(state.me);
+  const config = currentAiConfig();
+  const profile = currentAiProfile();
+  const ready = loggedIn && hasUsableAiConfig(config);
+  btn.classList.toggle('ready', ready);
+  btn.textContent = ready ? '⚿ AI 已配置' : '⚿ AI 设置';
+  btn.title = loggedIn
+    ? (ready ? `${profile.name} · ${config.model}` : 'AI 模型配置')
+    : '登录后配置自己的 API Key';
 }
 
 function setAuthMode(mode) {
@@ -2087,6 +2102,7 @@ function getEditingAiProfile() {
 
 function renderAiStatus() {
   const el = $('#agent-profile');
+  renderSidebarAiSettings();
   if (!el) return;
   if (!state.me) {
     el.textContent = '登录后配置模型';
@@ -2510,6 +2526,7 @@ $('#agent-close').onclick = () => setAgentCollapsed(true);
 $('#agent-open').onclick = () => setAgentCollapsed(false);
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
+$('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#ai-config-close').onclick = closeAiConfigModal;
 $('#ai-config-modal').onclick = (e) => { if (e.target.id === 'ai-config-modal') closeAiConfigModal(); };
 $('#ai-add-profile').onclick = addAiProfile;

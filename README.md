@@ -42,7 +42,7 @@ npm start
 
 阅读器内置服务端 DeepSeek 调用，用于抓取后自动补翻译英文标题。站长密钥只在 Node 服务端读取，不会下发到浏览器。
 
-注册用户在右侧 Article Agent 设置中配置自己的 AI 服务，支持多个 Profile、默认配置、服务商模板、快捷模型、获取模型列表和连接测试。配置按登录账号分区保存在浏览器 localStorage：
+注册用户可以从左侧账号区的 `AI 设置` 或右侧 Article Agent 设置中配置自己的 AI 服务，支持多个 Profile、默认配置、服务商模板、快捷模型、获取模型列表和连接测试。配置按登录账号分区保存在浏览器 localStorage：
 
 - 国内大模型：DeepSeek、Kimi、智谱、阿里百炼、火山方舟
 - 国内聚合：硅基流动、AiHubMix

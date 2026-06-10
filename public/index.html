@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=32" />
+  <link rel="stylesheet" href="styles.css?v=33" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -51,6 +51,7 @@
       <div class="account-strip">
         <button id="auth-open" class="ghost-btn">登录 / 注册</button>
         <div id="account-info" class="account-info hidden"></div>
+        <button id="sidebar-ai-settings" class="ghost-btn account-ai-settings" type="button" title="AI 模型配置">⚿ AI 设置</button>
         <button id="logout-btn" class="icon-btn hidden" title="退出登录">⎋</button>
       </div>
 
@@ -301,6 +302,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=32"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

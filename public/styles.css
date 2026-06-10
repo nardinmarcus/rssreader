@@ -243,6 +243,15 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: var(--bg-1);
 }
 .account-strip .ghost-btn { flex: 1; }
+.account-strip .account-ai-settings {
+  flex: none;
+  white-space: nowrap;
+}
+.account-strip .account-ai-settings.ready {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: var(--accent-soft);
+}
 .account-info {
   flex: 1;
   min-width: 0;
@@ -1455,6 +1464,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .account-info { display: none; }
   #auth-open::before { content: '⎋'; font-size: 15px; }
+  #sidebar-ai-settings::before { content: '⚿'; font-size: 15px; }
   #refresh-btn::before { content: '↻'; font-size: 15px; }
   #manage-btn::before { content: '⚙'; font-size: 15px; }
   .asset-dashboard { display: none; }
