@@ -484,6 +484,10 @@ app.get('/robots.txt', (req, res) => {
   ].join('\n'));
 });
 
+app.get('/favicon.ico', (req, res) => {
+  res.redirect(302, '/favicon.svg');
+});
+
 app.get('/sitemap.xml', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=900');
   res.type('application/xml').send(renderSitemap(req));
