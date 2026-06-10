@@ -22,6 +22,13 @@ const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' }
 const READER_TABS = ['original', 'translation', 'rewrite'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '乔木风格重写', comments: '人工点评', chat: '文章对话' };
+const COMMENT_TEMPLATES = {
+  insight: '观点：',
+  question: '疑问：',
+  action: '行动：',
+  quote: '引用：',
+  source: '资料：',
+};
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
@@ -1662,6 +1669,32 @@ function copyComment(commentId) {
   copyText(comment.body, '点评已复制');
 }
 
+function autosizeCommentInput() {
+  const input = $('#comment-input');
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+}
+
+function insertCommentTemplate(type) {
+  const prefix = COMMENT_TEMPLATES[type];
+  const input = $('#comment-input');
+  if (!prefix || !input) return;
+  const value = input.value;
+  const start = input.selectionStart ?? value.length;
+  const end = input.selectionEnd ?? value.length;
+  const selected = value.slice(start, end);
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const leading = before && !before.endsWith('\n') ? '\n' : '';
+  const insert = `${leading}${prefix}${selected ? selected : ' '}`;
+  input.value = `${before}${insert}${after}`;
+  const nextCursor = before.length + insert.length;
+  input.focus();
+  input.setSelectionRange(nextCursor, nextCursor);
+  autosizeCommentInput();
+}
+
 async function loadComments(entry) {
   state.comments = [];
   renderComments();
@@ -1690,6 +1723,7 @@ async function submitComment() {
     });
     state.comments = data.comments || [];
     $('#comment-input').value = '';
+    autosizeCommentInput();
     updateEntryAssets(entry.id, { comments: state.comments.length });
     renderComments();
     toast('点评已发布');
@@ -2500,6 +2534,18 @@ $$('.reader-tab').forEach(btn => {
 $('#comment-form').onsubmit = (e) => {
   e.preventDefault();
   submitComment();
+};
+$('#comment-tools').onclick = (e) => {
+  const btn = e.target.closest('[data-comment-template]');
+  if (!btn) return;
+  insertCommentTemplate(btn.dataset.commentTemplate);
+};
+$('#comment-input').oninput = autosizeCommentInput;
+$('#comment-input').onkeydown = (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    submitComment();
+  }
 };
 $('#comments-list').onclick = (e) => {
   const btn = e.target.closest('[data-comment-copy]');

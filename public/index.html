@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
-  <link rel="stylesheet" href="styles.css?v=33" />
+  <link rel="stylesheet" href="styles.css?v=34" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -142,6 +142,13 @@
             <button id="comment-login" class="ghost-btn" type="button">登录后发布点评</button>
           </div>
           <form id="comment-form" class="comment-form">
+            <div id="comment-tools" class="comment-tools" aria-label="点评模板">
+              <button type="button" class="comment-template" data-comment-template="insight">观点</button>
+              <button type="button" class="comment-template" data-comment-template="question">疑问</button>
+              <button type="button" class="comment-template" data-comment-template="action">行动</button>
+              <button type="button" class="comment-template" data-comment-template="quote">引用</button>
+              <button type="button" class="comment-template" data-comment-template="source">资料</button>
+            </div>
             <textarea id="comment-input" rows="2" placeholder="写下你的人工点评..."></textarea>
             <button id="comment-send" class="ghost-btn" type="submit">发布</button>
           </form>
@@ -302,6 +309,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="purify.min.js"></script>
-  <script src="app.js?v=33"></script>
+  <script src="app.js?v=34"></script>
 </body>
 </html>

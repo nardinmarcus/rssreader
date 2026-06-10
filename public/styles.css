@@ -760,6 +760,29 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   gap: 8px;
   margin-top: 12px;
 }
+.comment-tools {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.comment-template {
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1;
+}
+.comment-template:hover,
+.comment-template:focus-visible {
+  color: var(--text-0);
+  border-color: var(--text-2);
+  outline: none;
+}
 .asset-gate {
   margin-top: 12px;
   display: flex;
