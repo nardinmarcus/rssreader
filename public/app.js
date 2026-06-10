@@ -361,6 +361,26 @@ function readerAssetUrl(type, entry = state.activeEntry) {
   return readerUrlFor(entry, tab, type).href;
 }
 
+function readerShareFocus() {
+  if (state.readerFocus && ASSET_FILTER_TYPES.includes(state.readerFocus)) return state.readerFocus;
+  if (state.readerTab === 'translation' && state.translation) return 'translation';
+  if (state.readerTab === 'rewrite' && state.rewrite) return 'rewrite';
+  return null;
+}
+
+function copyReaderLink() {
+  const entry = state.activeEntry;
+  if (!entry) return;
+  const focus = readerShareFocus();
+  const tab = focus === 'translation' ? 'translation' : focus === 'rewrite' ? 'rewrite' : state.readerTab;
+  const url = readerUrlFor(entry, tab, focus);
+  document.title = readerRouteTitle(entry, focus);
+  if (url.href !== window.location.href) {
+    history.replaceState({ entryId: entry.id, tab, focus }, '', url);
+  }
+  copyText(url.href, focus && ASSET_FOCUS_LABELS[focus] ? `${ASSET_FOCUS_LABELS[focus]}链接已复制` : '文章链接已复制');
+}
+
 function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   const url = new URL(window.location.href);
   url.search = '';
@@ -2425,9 +2445,7 @@ $('#reader-star').onclick = () => {
 };
 $('#reader-fetch-original').onclick = fetchOriginalContent;
 $('#reader-copy-link').onclick = () => {
-  if (!state.activeEntry) return;
-  syncReaderUrl({ replace: true });
-  copyText(window.location.href, '文章链接已复制');
+  copyReaderLink();
 };
 $('#reader-assets').onclick = (e) => {
   const btn = e.target.closest('[data-asset]');
