@@ -83,6 +83,18 @@ function normalizeAssetDirectoryType(value) {
   return ASSET_DIRECTORY_META[value] ? value : '';
 }
 
+function requestAssetDirectoryType(req) {
+  const queryType = normalizeAssetDirectoryType(String(req.query.asset || ''));
+  if (queryType) return queryType;
+  const match = String(req.path || '').match(/^\/assets\/([^/.]+)\/?$/);
+  return normalizeAssetDirectoryType(match ? match[1] : '');
+}
+
+function isAssetDirectoryRequest(req) {
+  if (String(req.query.view || '') === 'assets') return true;
+  return /^\/assets(?:\/[^/.]+)?\/?$/.test(String(req.path || ''));
+}
+
 function requestAssetFocus(req) {
   if (String(req.query.comment || '').trim()) return 'comments';
   if (String(req.query.chat || '').trim()) return 'chat';
@@ -95,8 +107,8 @@ function requestAssetFocus(req) {
 }
 
 function assetDirectoryMeta(req) {
-  if (String(req.query.view || '') !== 'assets') return null;
-  const type = normalizeAssetDirectoryType(String(req.query.asset || ''));
+  if (!isAssetDirectoryRequest(req)) return null;
+  const type = requestAssetDirectoryType(req);
   if (!type) {
     return {
       title: '公开资产 · QMReader',
@@ -248,10 +260,8 @@ function entryPublicUrl(req, entry, focus = '') {
 }
 
 function assetDirectoryUrl(req, type = '') {
-  const query = type
-    ? `?view=assets&asset=${encodeURIComponent(type)}`
-    : '?view=assets';
-  return publicUrl(req, `/${query}`);
+  const assetType = normalizeAssetDirectoryType(type);
+  return publicUrl(req, assetType ? `/assets/${assetType}` : '/assets');
 }
 
 function assetFeedUrl(req, type = '') {
@@ -503,6 +513,18 @@ app.get('/assets/:type.xml', (req, res) => {
   if (!type) return res.status(404).type('text/plain').send('Not found');
   res.setHeader('Cache-Control', 'public, max-age=900');
   res.type('application/rss+xml').send(renderAssetFeed(req, type));
+});
+
+app.get('/assets', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req));
+});
+
+app.get('/assets/:type', (req, res) => {
+  const type = normalizeAssetDirectoryType(String(req.params.type || ''));
+  if (!type) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {

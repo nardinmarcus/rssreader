@@ -336,6 +336,10 @@ const state = {
 
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
+  const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
+  const pathAssetFilter = pathMatch ? (ASSET_FILTER_TYPES.includes(pathMatch[1]) ? pathMatch[1] : null) : null;
+  const isAssetPath = Boolean(pathMatch);
+  const queryAssetFilter = ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null;
   const hash = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
   const queryCommentId = String(params.get('comment') || '').trim();
   const queryChatMessageId = String(params.get('chat') || '').trim();
@@ -345,8 +349,8 @@ function routeStateFromUrl() {
   return {
     entryId: String(params.get('entry') || '').trim(),
     tab: normalizeReaderTab(params.get('tab')),
-    view: params.get('view') === 'assets' ? 'assets' : '',
-    assetFilter: ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null,
+    view: isAssetPath || params.get('view') === 'assets' ? 'assets' : '',
+    assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
     commentId,
     chatMessageId,
@@ -368,6 +372,7 @@ function readerRouteTitle(entry = state.activeEntry, focus = state.readerFocus) 
 
 function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = state.readerFocus) {
   const url = new URL(window.location.href);
+  url.pathname = '/';
   url.search = '';
   url.hash = '';
   if (entry && entry.id) {
@@ -423,13 +428,13 @@ function copyReaderLink() {
 
 function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   const url = new URL(window.location.href);
+  url.pathname = '/';
   url.search = '';
   url.hash = '';
   if (view === 'assets') {
-    url.searchParams.set('view', 'assets');
-    if (assetFilter && ASSET_FILTER_TYPES.includes(assetFilter)) {
-      url.searchParams.set('asset', assetFilter);
-    }
+    url.pathname = assetFilter && ASSET_FILTER_TYPES.includes(assetFilter)
+      ? `/assets/${assetFilter}`
+      : '/assets';
   }
   return url;
 }

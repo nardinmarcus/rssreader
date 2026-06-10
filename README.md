@@ -10,7 +10,7 @@
 - 单篇文章详情页支持原文 / 中文翻译 / 乔木风格重写三个 Tab，翻译和重写内容复用缓存
 - 人工点评公开保存，支持结构化点评模板、类型标签和单条点评链接，便于后来访问者浏览和复用
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用
-- 公开资产视图按最新沉淀排序，支持按中译 / 重写 / 点评 / 对话筛选，并在列表中预览最新翻译、重写、点评或对话内容；点评/对话预览和单条链接可直达具体条目
+- 公开资产视图按最新沉淀排序，可通过 `/assets`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，并在列表中预览最新翻译、重写、点评或对话内容；点评/对话预览和单条链接可直达具体条目
 - 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息，sitemap 包含单条点评 / 对话入口，便于社交分享和搜索收录
 - 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
@@ -136,6 +136,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/entry/:id/comments` | 登录用户发布公开人工点评 |
 | GET | `/api/entry/:id/chat` | 读取公开文章对话 |
 | POST | `/api/entry/:id/chat` | 登录用户以当前文章为上下文对话；body `{"messages":[{"role":"user","content":"..."}]}` |
+| GET | `/assets` | 公开资产网页目录 |
+| GET | `/assets/:type` | 按类型浏览公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | GET | `/assets.xml` | 公开资产 RSS 订阅流 |
 | GET | `/assets/:type.xml` | 按类型订阅公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | POST | `/api/translate-titles` | 管理员手动触发英文标题补翻译 |
