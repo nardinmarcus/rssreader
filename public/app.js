@@ -319,6 +319,7 @@ const state = {
   readerFocus: null,
   pendingAssetJump: null,
   pendingCommentId: '',
+  pendingChatMessageId: '',
   fetchingOriginal: false,
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
@@ -337,14 +338,16 @@ function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const hash = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
   const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : '';
+  const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : '';
   const focus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
   return {
     entryId: String(params.get('entry') || '').trim(),
     tab: normalizeReaderTab(params.get('tab')),
     view: params.get('view') === 'assets' ? 'assets' : '',
     assetFilter: ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null,
-    focus: commentId ? 'comments' : focus,
+    focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
     commentId,
+    chatMessageId,
   };
 }
 
@@ -387,6 +390,13 @@ function commentUrl(commentId, entry = state.activeEntry) {
   return url.href;
 }
 
+function chatMessageUrl(messageId, entry = state.activeEntry) {
+  if (!entry || !messageId) return '';
+  const url = readerUrlFor(entry, 'original', 'chat');
+  url.hash = `chat-${encodeURIComponent(messageId)}`;
+  return url.href;
+}
+
 function readerShareFocus() {
   if (state.readerFocus && ASSET_FILTER_TYPES.includes(state.readerFocus)) return state.readerFocus;
   if (state.readerTab === 'translation' && state.translation) return 'translation';
@@ -420,15 +430,16 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   return url;
 }
 
-function syncReaderUrl({ replace = false, commentId = '' } = {}) {
+function syncReaderUrl({ replace = false, commentId = '', chatMessageId = '' } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
   const url = readerUrlFor(entry, state.readerTab);
   if (commentId) url.hash = `comment-${encodeURIComponent(commentId)}`;
+  if (chatMessageId) url.hash = `chat-${encodeURIComponent(chatMessageId)}`;
   document.title = readerRouteTitle(entry);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
-  history[method]({ entryId: entry.id, tab: state.readerTab, commentId }, '', url);
+  history[method]({ entryId: entry.id, tab: state.readerTab, commentId, chatMessageId }, '', url);
 }
 
 function syncListUrl({ replace = false } = {}) {
@@ -1145,6 +1156,7 @@ function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = 
     state.readerFocus = 'chat';
     if (syncUrl) syncReaderUrl({ replace: replaceUrl });
     setAgentCollapsed(false);
+    if (highlightAgentMessageFromRoute()) return;
     const messages = $('#agent-messages');
     if (messages) messages.scrollTop = messages.scrollHeight;
     scrollReaderTarget('#agent-pane');
@@ -1802,6 +1814,7 @@ async function submitComment() {
 function renderAgentMessages(extraPending = false) {
   const el = $('#agent-messages');
   const thread = state.agentMessages || [];
+  const hadPendingChatMessage = Boolean(state.pendingChatMessageId);
   el.innerHTML = '';
   if (!state.activeEntry) {
     el.innerHTML = '<div class="agent-empty">未选择文章</div>';
@@ -1817,6 +1830,7 @@ function renderAgentMessages(extraPending = false) {
   for (const message of messages) {
     const row = document.createElement('div');
     row.className = `agent-msg ${message.role}${message.pending ? ' pending' : ''}`;
+    if (message.id) row.id = `chat-${message.id}`;
     const head = document.createElement('div');
     head.className = 'agent-msg-head';
     const role = document.createElement('div');
@@ -1824,13 +1838,25 @@ function renderAgentMessages(extraPending = false) {
     role.textContent = message.author || (message.role === 'user' ? '读者' : 'AI');
     head.appendChild(role);
     if (!message.pending) {
+      const actions = document.createElement('div');
+      actions.className = 'agent-msg-actions';
+      if (message.id) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'agent-msg-action agent-msg-link';
+        link.title = '复制这条对话链接';
+        link.textContent = '#';
+        link.onclick = () => copyAgentMessageLink(message.id);
+        actions.appendChild(link);
+      }
       const copy = document.createElement('button');
       copy.type = 'button';
-      copy.className = 'agent-msg-copy';
+      copy.className = 'agent-msg-action agent-msg-copy';
       copy.title = '复制这条消息';
       copy.textContent = '⧉';
       copy.onclick = () => copyText(message.content, '消息已复制');
-      head.appendChild(copy);
+      actions.appendChild(copy);
+      head.appendChild(actions);
     }
     const body = document.createElement('div');
     body.className = 'agent-msg-body';
@@ -1840,9 +1866,35 @@ function renderAgentMessages(extraPending = false) {
     frag.appendChild(row);
   }
   el.appendChild(frag);
-  el.scrollTop = el.scrollHeight;
+  if (hadPendingChatMessage) {
+    if (highlightAgentMessageFromRoute()) state.pendingAssetJump = null;
+  } else {
+    el.scrollTop = el.scrollHeight;
+  }
   renderReaderAssetSummary();
   settlePendingAssetJump('chat');
+}
+
+function copyAgentMessageLink(messageId) {
+  const url = chatMessageUrl(messageId);
+  if (!url) {
+    toast('找不到这条对话链接');
+    return;
+  }
+  copyText(url, '对话链接已复制');
+}
+
+function highlightAgentMessageFromRoute() {
+  const messageId = state.pendingChatMessageId;
+  if (!messageId) return false;
+  const target = document.getElementById(`chat-${messageId}`);
+  if (!target) return false;
+  state.pendingChatMessageId = '';
+  setAgentCollapsed(false);
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('agent-msg-target');
+  setTimeout(() => target.classList.remove('agent-msg-target'), 2400);
+  return true;
 }
 
 function copyAgentThread() {
@@ -1937,7 +1989,7 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e, { tab = 'original', focus = null, commentId = '', updateUrl = true, replaceUrl = false } = {}) {
+async function openEntry(e, { tab = 'original', focus = null, commentId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
   state.activeEntry = e;
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
   const requestedTab = requestedFocus === 'translation'
@@ -1972,6 +2024,7 @@ async function openEntry(e, { tab = 'original', focus = null, commentId = '', up
   state.readerFocus = requestedFocus;
   state.pendingAssetJump = requestedFocus;
   state.pendingCommentId = commentId || '';
+  state.pendingChatMessageId = chatMessageId || '';
   if (requestedFocus === 'chat') setAgentCollapsed(false);
   state.fetchingOriginal = false;
   renderReaderAssets(e);
@@ -1982,7 +2035,7 @@ async function openEntry(e, { tab = 'original', focus = null, commentId = '', up
   loadRewrite(e);
   loadComments(e);
   loadAgentMessages(e);
-  if (updateUrl) syncReaderUrl({ replace: replaceUrl, commentId });
+  if (updateUrl) syncReaderUrl({ replace: replaceUrl, commentId, chatMessageId });
 
   $('#reader-audio').innerHTML = e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '';
   $('#reader-pane').scrollTop = 0;
@@ -2018,6 +2071,7 @@ function closeReaderFromRoute() {
   state.readerFocus = null;
   state.pendingAssetJump = null;
   state.pendingCommentId = '';
+  state.pendingChatMessageId = '';
   state.fetchingOriginal = false;
   state.readerTab = 'original';
   $('#reader').classList.add('hidden');
@@ -2028,7 +2082,7 @@ function closeReaderFromRoute() {
   renderAgent();
 }
 
-async function openEntryById(entryId, { tab = 'original', focus = null, commentId = '', updateUrl = false, replaceUrl = true } = {}) {
+async function openEntryById(entryId, { tab = 'original', focus = null, commentId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
   let entry = state.entries.find(item => item.id === id);
@@ -2037,7 +2091,7 @@ async function openEntryById(entryId, { tab = 'original', focus = null, commentI
     entry = data.entry;
   }
   if (!entry) return false;
-  await openEntry(entry, { tab, focus, commentId, updateUrl, replaceUrl });
+  await openEntry(entry, { tab, focus, commentId, chatMessageId, updateUrl, replaceUrl });
   return true;
 }
 
@@ -2062,7 +2116,7 @@ async function openEntryFromUrl() {
     return false;
   }
   try {
-    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, commentId: route.commentId, updateUrl: false });
+    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, commentId: route.commentId, chatMessageId: route.chatMessageId, updateUrl: false });
   } catch (err) {
     toast('找不到这篇文章: ' + err.message, 4000);
     closeReaderFromRoute();
