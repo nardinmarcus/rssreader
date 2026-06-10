@@ -781,7 +781,7 @@ async function loadEntries() {
   const p = new URLSearchParams();
   if (state.filterSource) p.set('source', state.filterSource);
   if (state.filterCategory) p.set('category', state.filterCategory);
-  if (state.q) p.set('q', state.q);
+  if (state.q && state.view !== 'assets') p.set('q', state.q);
   const data = await api('/api/entries?' + p.toString());
   state.entries = data.entries;
 }
@@ -898,6 +898,52 @@ function entryHasAssetType(entry, type) {
   return hasEntryAssets(entry);
 }
 
+function normalizeSearchText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function sourceNameForEntry(entry) {
+  return sourceById(entry && entry.sourceId)?.name || (entry && entry.sourceId) || '';
+}
+
+function assetSearchText(entry) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const previews = assets.previews || {};
+  const parts = [];
+  for (const type of ASSET_FILTER_TYPES) {
+    const preview = previews[type];
+    if (!preview || !entryHasAssetType(entry, type)) continue;
+    const display = assetPreviewDisplay(preview);
+    parts.push(
+      ASSET_TYPE_LABELS[type],
+      ASSET_FOCUS_LABELS[type],
+      display.label,
+      display.text,
+      preview.author,
+      preview.model,
+      preview.role,
+    );
+  }
+  return parts.filter(Boolean).join(' ');
+}
+
+function entrySearchText(entry, { includeAssets = false } = {}) {
+  return [
+    entry.title,
+    entry.titleZh,
+    entry.summary,
+    entry.summaryZh,
+    sourceNameForEntry(entry),
+    includeAssets ? assetSearchText(entry) : '',
+  ].filter(Boolean).join(' ');
+}
+
+function entryMatchesSearch(entry, { includeAssets = false } = {}) {
+  const needle = normalizeSearchText(state.q);
+  if (!needle) return true;
+  return normalizeSearchText(entrySearchText(entry, { includeAssets })).includes(needle);
+}
+
 function visibleEntries() {
   let list = state.entries;
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
@@ -906,6 +952,7 @@ function visibleEntries() {
     list = list
       .filter(hasEntryAssets)
       .filter(entry => !state.assetFilter || entryHasAssetType(entry, state.assetFilter))
+      .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
       .slice()
       .sort((a, b) => {
         const assetDelta = Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0);
@@ -1111,6 +1158,13 @@ function renderAssetActivityStrip() {
     const latestText = latest && latest.assets?.latestAt
       ? `${latestTypes.length ? latestTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
       : '暂无沉淀';
+    const matchedCount = state.q
+      ? entries
+        .filter(entry => !state.assetFilter || entryHasAssetType(entry, state.assetFilter))
+        .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
+        .length
+      : null;
+    const statusText = matchedCount === null ? latestText : `匹配 ${matchedCount} 篇 · ${latestText}`;
     const feedHref = state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml';
     const chips = [
       `<button type="button" class="asset-filter-chip${!state.assetFilter ? ' active' : ''}" data-asset-strip-filter="">
@@ -1127,7 +1181,7 @@ function renderAssetActivityStrip() {
       <div class="asset-filter-head">
         <span>公开资产</span>
         <strong>${total} 篇</strong>
-        <em>${escapeHtml(latestText)}</em>
+        <em>${escapeHtml(statusText)}</em>
         <a class="asset-feed-link" href="${escapeHtml(feedHref)}" target="_blank" rel="noopener" title="订阅公开资产 RSS">RSS</a>
       </div>
       <div class="asset-filter-list" aria-label="资产类型筛选">
@@ -1477,7 +1531,9 @@ function renderList() {
   el.innerHTML = '';
   renderAssetActivityStrip();
   if (!list.length) {
-    const text = state.view === 'assets' && state.assetFilter
+    const text = state.view === 'assets' && state.q
+      ? `没有匹配“${escapeHtml(state.q)}”的公开资产<br/>换个关键词试试`
+      : state.view === 'assets' && state.assetFilter
       ? `还没有${ASSET_TYPE_LABELS[state.assetFilter] || ''}资产<br/>换个类型或先沉淀一篇文章`
       : state.view === 'assets'
       ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
@@ -1550,6 +1606,13 @@ function updateListTitle() {
   else if (state.view === 'assets') title = state.assetFilter ? `资产 · ${ASSET_TYPE_LABELS[state.assetFilter] || '筛选'}` : '资产';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
+  updateSearchPlaceholder();
+}
+
+function updateSearchPlaceholder() {
+  const search = $('#search');
+  if (!search) return;
+  search.placeholder = state.view === 'assets' ? '搜索资产…' : '搜索文章…';
 }
 
 /* ---------- Reader ---------- */
