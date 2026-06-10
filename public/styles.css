@@ -398,7 +398,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .asset-filter-head {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 7px;
   padding: 0 2px;
@@ -423,6 +423,13 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-style: normal;
   text-align: right;
 }
+.asset-feed-link {
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.asset-feed-link:hover { text-decoration: underline; }
 .asset-filter-list {
   display: flex;
   gap: 6px;
@@ -1688,11 +1695,15 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .asset-activity-item strong { font-size: 12px; }
   .asset-filter-head {
-    grid-template-columns: auto auto;
+    grid-template-columns: auto auto minmax(0, 1fr);
   }
   .asset-filter-head em {
     grid-column: 1 / -1;
+    grid-row: 2;
     text-align: left;
+  }
+  .asset-feed-link {
+    justify-self: end;
   }
   .asset-filter-list {
     margin-inline: -1px;

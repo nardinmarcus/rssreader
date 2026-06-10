@@ -233,6 +233,108 @@ function assetDirectoryUrl(req, type = '') {
   return publicUrl(req, `/${query}`);
 }
 
+function assetFeedUrl(req, type = '') {
+  const assetType = normalizeAssetDirectoryType(type);
+  return publicUrl(req, assetType ? `/assets/${assetType}.xml` : '/assets.xml');
+}
+
+function entryAssetItemUrl(req, entry, type, preview = {}) {
+  const query = new URLSearchParams({ entry: entry.id, focus: type });
+  const itemId = String(preview.id || '').trim();
+  let hash = '';
+  if (type === 'comments' && itemId) {
+    query.set('comment', itemId);
+    hash = `#comment-${encodeURIComponent(itemId)}`;
+  }
+  if (type === 'chat' && itemId) {
+    query.set('chat', itemId);
+    hash = `#chat-${encodeURIComponent(itemId)}`;
+  }
+  return publicUrl(req, `/?${query.toString()}${hash}`);
+}
+
+function rssDate(timestamp) {
+  const t = Number(timestamp) || 0;
+  if (!t) return '';
+  try {
+    return new Date(t).toUTCString();
+  } catch {
+    return '';
+  }
+}
+
+function publicAssetFeedItems(req, type = '') {
+  const assetType = normalizeAssetDirectoryType(type);
+  return fetcher.getEntries({ limit: 1000 })
+    .filter(entry => entry && entry.id && hasPublicAssets(entry))
+    .flatMap(entry => {
+      const assets = entry.assets || {};
+      const previews = assets.previews || {};
+      const types = assetType ? [assetType] : publicAssetTypes(entry);
+      return types
+        .filter(itemType => hasPublicAssetType(entry, itemType))
+        .map(itemType => {
+          const preview = previews[itemType] || {};
+          const label = ASSET_DIRECTORY_META[itemType].label;
+          const at = Number(preview.at) || Number(assets.latestAt) || Number(entry.publishedTs) || Date.now();
+          const source = [preview.author, preview.model].filter(Boolean).join(' · ');
+          const description = preview.text
+            ? assetPreviewDescription(itemType, preview)
+            : clipText(`${label}：${entry.summaryZh || entry.summary || entry.titleZh || entry.title || ''}`, 220);
+          const title = `${label}：${entry.titleZh || entry.title || '无标题'}`;
+          const link = entryAssetItemUrl(req, entry, itemType, preview);
+          return {
+            type: itemType,
+            title,
+            link,
+            description,
+            source,
+            at,
+            guid: `qmreader:${entry.id}:${itemType}:${preview.id || at}`,
+          };
+        });
+    })
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 80);
+}
+
+function renderAssetFeed(req, type = '') {
+  const assetType = normalizeAssetDirectoryType(type);
+  const meta = assetType ? ASSET_DIRECTORY_META[assetType] : null;
+  const items = publicAssetFeedItems(req, assetType);
+  const title = meta ? `${meta.label}资产 · QMReader` : 'QMReader 公开资产';
+  const description = meta ? meta.description : DEFAULT_DESCRIPTION;
+  const selfUrl = assetFeedUrl(req, assetType);
+  const directoryUrl = assetDirectoryUrl(req, assetType);
+  const lastBuildDate = rssDate(items[0]?.at || Date.now());
+  const itemXml = items.map(item => [
+    '    <item>',
+    `      <title>${escapeHtml(item.title)}</title>`,
+    `      <link>${escapeHtml(item.link)}</link>`,
+    `      <guid isPermaLink="false">${escapeHtml(item.guid)}</guid>`,
+    `      <pubDate>${escapeHtml(rssDate(item.at))}</pubDate>`,
+    `      <category>${escapeHtml(ASSET_DIRECTORY_META[item.type].label)}</category>`,
+    item.source ? `      <dc:creator>${escapeHtml(item.source)}</dc:creator>` : '',
+    `      <description>${escapeHtml(item.description)}</description>`,
+    '    </item>',
+  ].filter(Boolean).join('\n')).join('\n');
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+    '  <channel>',
+    `    <title>${escapeHtml(title)}</title>`,
+    `    <link>${escapeHtml(directoryUrl)}</link>`,
+    `    <description>${escapeHtml(description)}</description>`,
+    '    <language>zh-CN</language>',
+    `    <lastBuildDate>${escapeHtml(lastBuildDate)}</lastBuildDate>`,
+    `    <atom:link href="${escapeHtml(selfUrl)}" rel="self" type="application/rss+xml" />`,
+    itemXml,
+    '  </channel>',
+    '</rss>',
+    '',
+  ].join('\n');
+}
+
 function renderSitemap(req) {
   const entries = fetcher.getEntries({ limit: 1000 })
     .filter(entry => entry && entry.id)
@@ -340,6 +442,18 @@ app.get('/robots.txt', (req, res) => {
 app.get('/sitemap.xml', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=900');
   res.type('application/xml').send(renderSitemap(req));
+});
+
+app.get('/assets.xml', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=900');
+  res.type('application/rss+xml').send(renderAssetFeed(req));
+});
+
+app.get('/assets/:type.xml', (req, res) => {
+  const type = normalizeAssetDirectoryType(String(req.params.type || ''));
+  if (!type) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'public, max-age=900');
+  res.type('application/rss+xml').send(renderAssetFeed(req, type));
 });
 
 app.use(express.static(path.join(__dirname, 'public'), {

@@ -1067,6 +1067,7 @@ function renderAssetActivityStrip() {
     const latestText = latest && latest.assets?.latestAt
       ? `${latestTypes.length ? latestTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
       : '暂无沉淀';
+    const feedHref = state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml';
     const chips = [
       `<button type="button" class="asset-filter-chip${!state.assetFilter ? ' active' : ''}" data-asset-strip-filter="">
         <span>全部</span><strong>${total}</strong>
@@ -1083,6 +1084,7 @@ function renderAssetActivityStrip() {
         <span>公开资产</span>
         <strong>${total} 篇</strong>
         <em>${escapeHtml(latestText)}</em>
+        <a class="asset-feed-link" href="${escapeHtml(feedHref)}" target="_blank" rel="noopener" title="订阅公开资产 RSS">RSS</a>
       </div>
       <div class="asset-filter-list" aria-label="资产类型筛选">
         ${chips.join('')}
