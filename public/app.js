@@ -1000,8 +1000,9 @@ function assetPreviewHtml(preview) {
   const type = ASSET_FILTER_TYPES.includes(preview.type) ? preview.type : 'comments';
   const label = ASSET_TYPE_LABELS[type] || '资产';
   const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
+  const itemId = preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
   return `
-    <button type="button" class="entry-asset-preview asset-preview-${type}" data-asset="${escapeHtml(type)}" title="查看${escapeHtml(label)}资产">
+    <button type="button" class="entry-asset-preview asset-preview-${type}" data-asset="${escapeHtml(type)}"${itemId} title="查看${escapeHtml(label)}资产">
       <span class="entry-asset-preview-type">${escapeHtml(label)}</span>
       <span class="entry-asset-preview-text">${escapeHtml(preview.text)}</span>
       ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
@@ -1382,7 +1383,13 @@ function renderList() {
       if (asset) {
         event.preventDefault();
         event.stopPropagation();
-        openEntry(e, { focus: asset.dataset.asset });
+        const itemId = asset.dataset.assetItemId || '';
+        const focus = asset.dataset.asset;
+        openEntry(e, {
+          focus,
+          commentId: focus === 'comments' ? itemId : '',
+          chatMessageId: focus === 'chat' ? itemId : '',
+        });
         return;
       }
       openEntry(e);
