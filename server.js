@@ -144,6 +144,7 @@ function socialMetaTags(req, entry) {
   const description = entry
     ? entryShareDescription(entry, focus, req)
     : clipText(directoryMeta?.description || DEFAULT_DESCRIPTION);
+  const modifiedTime = entry ? entryShareModifiedTime(entry, focus, req) : '';
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
   const tags = [
@@ -164,6 +165,10 @@ function socialMetaTags(req, entry) {
   }
   if (entry && entry.published) {
     tags.push(`<meta property="article:published_time" content="${escapeHtml(entry.published)}" />`);
+  }
+  if (modifiedTime) {
+    tags.push(`<meta property="article:modified_time" content="${escapeHtml(modifiedTime)}" />`);
+    tags.push(`<meta property="og:updated_time" content="${escapeHtml(modifiedTime)}" />`);
   }
   return { title, tags: tags.join('\n  ') };
 }
@@ -231,6 +236,13 @@ function entryShareDescription(entry, focus = '', req = null) {
   const preview = focus && previews[focus] ? previews[focus] : null;
   if (preview && preview.text) return assetPreviewDescription(focus, preview);
   return clipText(entry.summaryZh || entry.summary || DEFAULT_DESCRIPTION);
+}
+
+function entryShareModifiedTime(entry, focus = '', req = null) {
+  const exactPreview = exactAssetPreview(entry, focus, req);
+  if (exactPreview && exactPreview.at) return timestampIso(exactPreview.at);
+  const focusedAt = focus ? entryAssetTypeTimestamp(entry, focus) : 0;
+  return timestampIso(focusedAt || entryAssetTypeTimestamp(entry));
 }
 
 function assetPreviewDescription(focus, preview) {
