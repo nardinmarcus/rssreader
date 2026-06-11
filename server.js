@@ -201,7 +201,10 @@ function contributorDirectoryMeta() {
 }
 
 function contributorPageMeta(req) {
-  const id = contributorIdFromRequest(req);
+  return contributorPageMetaForId(contributorIdFromRequest(req));
+}
+
+function contributorPageMetaForId(id) {
   if (!id) return null;
   const contributor = store.getContributor(id);
   if (!contributor) return null;
@@ -724,6 +727,10 @@ function assetDirectoryUrl(req, type = '', sort = 'latest') {
   return publicUrl(req, `${path}${query}`);
 }
 
+function contributorPageUrl(req, contributorId) {
+  return publicUrl(req, `/contributors/${encodeURIComponent(contributorId)}`);
+}
+
 function assetFeedUrl(req, type = '', sort = 'latest') {
   const assetType = normalizeAssetDirectoryType(type);
   const path = assetType ? `/assets/${assetType}.xml` : '/assets.xml';
@@ -731,7 +738,19 @@ function assetFeedUrl(req, type = '', sort = 'latest') {
   return publicUrl(req, `${path}${query}`);
 }
 
+function contributorFeedUrl(req, contributorId) {
+  return publicUrl(req, `/contributors/${encodeURIComponent(contributorId)}.xml`);
+}
+
 function rssAlternateTag(req) {
+  const contributorId = contributorIdFromRequest(req);
+  if (contributorId) {
+    const contributorPage = contributorPageMeta(req);
+    if (contributorPage) {
+      const title = `${contributorPage.contributor.displayName || '读者'} 的公开资产 RSS`;
+      return `<link rel="alternate" type="application/rss+xml" title="${escapeHtml(title)}" href="${escapeHtml(contributorFeedUrl(req, contributorId))}" />`;
+    }
+  }
   const type = isAssetDirectoryRequest(req) ? requestAssetDirectoryType(req) : '';
   const sort = isAssetDirectoryRequest(req) ? requestAssetSort(req) : 'latest';
   const meta = type ? ASSET_DIRECTORY_META[type] : null;
@@ -834,6 +853,85 @@ function publicAssetFeedItems(req, type = '') {
     .slice(0, 80);
 }
 
+function contributorFeedItems(req, contributorPage) {
+  const comments = (contributorPage.comments || []).map(comment => {
+    const preview = {
+      id: comment.id,
+      author: comment.contributorName || comment.author || contributorPage.contributor.displayName || '读者',
+      model: comment.model || '',
+      text: comment.body || comment.bodySnippet || '',
+      at: comment.updatedAt || comment.createdAt,
+      helpfulCount: Number(comment.helpfulCount) || 0,
+    };
+    const entry = comment.entry || {};
+    const helpfulCount = Number(preview.helpfulCount) || 0;
+    const baseDescription = assetPreviewDescription('comments', preview);
+    return {
+      type: 'comments',
+      title: assetFeedTitle(entry, 'comments', preview),
+      link: entryAssetItemUrl(req, entry, 'comments', preview),
+      description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
+      source: preview.author,
+      at: Number(preview.at) || 0,
+      guid: `qmreader:contributor:${contributorPage.contributor.id}:comments:${comment.id}`,
+    };
+  });
+  const messages = (contributorPage.messages || []).map(message => {
+    const preview = {
+      id: message.id,
+      role: message.role,
+      author: message.contributorName || message.author || contributorPage.contributor.displayName || '读者',
+      model: message.model || '',
+      text: message.content || message.contentSnippet || '',
+      at: message.createdAt,
+    };
+    const entry = message.entry || {};
+    return {
+      type: 'chat',
+      title: assetFeedTitle(entry, 'chat', preview),
+      link: entryAssetItemUrl(req, entry, 'chat', preview),
+      description: assetPreviewDescription('chat', preview),
+      source: [preview.author, preview.model].filter(Boolean).join(' · '),
+      at: Number(preview.at) || 0,
+      guid: `qmreader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
+    };
+  });
+  return [...comments, ...messages]
+    .filter(item => item.link && item.description)
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 80);
+}
+
+function renderRssChannel({ title, link, description, selfUrl, items }) {
+  const lastBuildDate = rssDate(items.reduce((latest, item) => Math.max(latest, Number(item.at) || 0), 0) || Date.now());
+  const itemXml = items.map(item => [
+    '    <item>',
+    `      <title>${escapeHtml(item.title)}</title>`,
+    `      <link>${escapeHtml(item.link)}</link>`,
+    `      <guid isPermaLink="false">${escapeHtml(item.guid)}</guid>`,
+    `      <pubDate>${escapeHtml(rssDate(item.at))}</pubDate>`,
+    `      <category>${escapeHtml(ASSET_DIRECTORY_META[item.type]?.label || '公开资产')}</category>`,
+    item.source ? `      <dc:creator>${escapeHtml(item.source)}</dc:creator>` : '',
+    `      <description>${escapeHtml(item.description)}</description>`,
+    '    </item>',
+  ].filter(Boolean).join('\n')).join('\n');
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+    '  <channel>',
+    `    <title>${escapeHtml(title)}</title>`,
+    `    <link>${escapeHtml(link)}</link>`,
+    `    <description>${escapeHtml(description)}</description>`,
+    '    <language>zh-CN</language>',
+    `    <lastBuildDate>${escapeHtml(lastBuildDate)}</lastBuildDate>`,
+    `    <atom:link href="${escapeHtml(selfUrl)}" rel="self" type="application/rss+xml" />`,
+    itemXml,
+    '  </channel>',
+    '</rss>',
+    '',
+  ].join('\n');
+}
+
 function renderAssetFeed(req, type = '') {
   const assetType = normalizeAssetDirectoryType(type);
   const sort = requestAssetSort(req);
@@ -844,33 +942,19 @@ function renderAssetFeed(req, type = '') {
   const description = `${meta ? meta.description : DEFAULT_DESCRIPTION}${sort === 'helpful' ? ' 当前订阅按读者“有用”反馈优先排序。' : ''}`;
   const selfUrl = assetFeedUrl(req, assetType, sort);
   const directoryUrl = assetDirectoryUrl(req, assetType, sort);
-  const lastBuildDate = rssDate(items.reduce((latest, item) => Math.max(latest, Number(item.at) || 0), 0) || Date.now());
-  const itemXml = items.map(item => [
-    '    <item>',
-    `      <title>${escapeHtml(item.title)}</title>`,
-    `      <link>${escapeHtml(item.link)}</link>`,
-    `      <guid isPermaLink="false">${escapeHtml(item.guid)}</guid>`,
-    `      <pubDate>${escapeHtml(rssDate(item.at))}</pubDate>`,
-    `      <category>${escapeHtml(ASSET_DIRECTORY_META[item.type].label)}</category>`,
-    item.source ? `      <dc:creator>${escapeHtml(item.source)}</dc:creator>` : '',
-    `      <description>${escapeHtml(item.description)}</description>`,
-    '    </item>',
-  ].filter(Boolean).join('\n')).join('\n');
-  return [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">',
-    '  <channel>',
-    `    <title>${escapeHtml(title)}</title>`,
-    `    <link>${escapeHtml(directoryUrl)}</link>`,
-    `    <description>${escapeHtml(description)}</description>`,
-    '    <language>zh-CN</language>',
-    `    <lastBuildDate>${escapeHtml(lastBuildDate)}</lastBuildDate>`,
-    `    <atom:link href="${escapeHtml(selfUrl)}" rel="self" type="application/rss+xml" />`,
-    itemXml,
-    '  </channel>',
-    '</rss>',
-    '',
-  ].join('\n');
+  return renderRssChannel({ title, link: directoryUrl, description, selfUrl, items });
+}
+
+function renderContributorFeed(req, contributorPage) {
+  const displayName = contributorPage.contributor.displayName || '读者';
+  const items = contributorFeedItems(req, contributorPage);
+  return renderRssChannel({
+    title: `${displayName} 的公开资产 · QMReader`,
+    link: contributorPageUrl(req, contributorPage.contributor.id),
+    description: `${contributorPage.description} 当前订阅包含该贡献者公开点评和文章对话。`,
+    selfUrl: contributorFeedUrl(req, contributorPage.contributor.id),
+    items,
+  });
 }
 
 function renderSitemap(req) {
@@ -1040,6 +1124,13 @@ app.get('/assets/:type', (req, res) => {
 app.get('/contributors', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req));
+});
+
+app.get('/contributors/:id.xml', (req, res) => {
+  const contributorPage = contributorPageMetaForId(req.params.id);
+  if (!contributorPage) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'public, max-age=900');
+  res.type('application/rss+xml').send(renderContributorFeed(req, contributorPage));
 });
 
 app.get('/contributors/:id', (req, res) => {
