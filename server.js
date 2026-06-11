@@ -269,21 +269,29 @@ function assetDirectoryStats(type = '', q = '') {
 
 function entryAssetCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
-  if (type === 'translation') return assets.translation ? 1 : 0;
-  if (type === 'rewrite') return assets.rewrite ? 1 : 0;
+  if (type === 'translation') return aiAssetCount(assets, 'translation');
+  if (type === 'rewrite') return aiAssetCount(assets, 'rewrite');
   if (type === 'comments') return Number(assets.comments) || 0;
   if (type === 'chat') return Number(assets.chatMessages) || 0;
   return Object.keys(ASSET_DIRECTORY_META).reduce((sum, itemType) => sum + entryAssetCount(entry, itemType), 0);
+}
+
+function aiAssetCount(assets, type) {
+  const count = Number(assets && assets[`${type}Count`]) || 0;
+  if (count) return count;
+  const items = assets && assets.items && Array.isArray(assets.items[type]) ? assets.items[type] : [];
+  if (items.length) return items.length;
+  return assets && assets[type] ? 1 : 0;
 }
 
 function entryDirectorySearchText(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const parts = [entry.title, entry.titleZh, entry.summary, entry.summaryZh];
   for (const preview of Object.values(assets.previews || {})) {
-    parts.push(preview.type, preview.author, preview.model, preview.role, preview.text);
+    parts.push(preview.type, preview.author, preview.title, preview.model, preview.role, preview.text);
   }
   for (const items of Object.values(assets.items || {})) {
-    for (const item of items || []) parts.push(item.type, item.author, item.model, item.role, item.text);
+    for (const item of items || []) parts.push(item.type, item.author, item.title, item.model, item.role, item.text);
   }
   return parts.filter(Boolean).join(' ');
 }
@@ -458,9 +466,21 @@ function assetDirectoryStructuredData(req, directoryMeta, { title, description, 
   const type = requestAssetDirectoryType(req);
   const stats = directoryMeta.stats || assetDirectoryStats(type, String(req.query.q || '').trim());
   const label = type ? `${ASSET_DIRECTORY_META[type].label}资产` : '公开资产';
-  const entries = (stats.entries || [])
-    .slice()
-    .sort((a, b) => entryAssetTypeTimestamp(b, type) - entryAssetTypeTimestamp(a, type))
+  const items = (stats.entries || [])
+    .flatMap(entry => {
+      const assets = entry.assets || {};
+      const previews = assets.previews || {};
+      const types = type ? [type] : publicAssetTypes(entry);
+      return types
+        .filter(itemType => hasPublicAssetType(entry, itemType))
+        .flatMap(itemType => assetFeedPreviews(entry, itemType, previews).map(preview => ({
+          entry,
+          type: itemType,
+          preview,
+          at: Number(preview.at) || entryAssetTypeTimestamp(entry, itemType),
+        })));
+    })
+    .sort((a, b) => Number(b.at || 0) - Number(a.at || 0))
     .slice(0, 10);
   return {
     '@context': 'https://schema.org',
@@ -474,12 +494,13 @@ function assetDirectoryStructuredData(req, directoryMeta, { title, description, 
       '@type': 'ItemList',
       name: label,
       numberOfItems: stats.assetCount || 0,
-      itemListElement: entries.map((entry, index) => ({
+      itemListElement: items.map((item, index) => ({
         '@type': 'ListItem',
         position: index + 1,
-        url: entryPublicUrl(req, entry, type),
-        name: clipText(entry.titleZh || entry.title || '文章', 120),
-        dateModified: entryAssetTypeLastModified(entry, type) || entryLastModified(entry) || undefined,
+        url: entryAssetItemUrl(req, item.entry, item.type, item.preview, { includeHash: false }),
+        name: assetFeedTitle(item.entry, item.type, item.preview),
+        description: clipText(item.preview && item.preview.text, 180),
+        dateModified: timestampIso(item.at) || entryAssetTypeLastModified(item.entry, item.type) || entryLastModified(item.entry) || undefined,
       })),
     },
   };
@@ -559,7 +580,10 @@ function entryShareTitle(entry, focus = '', req = null) {
 }
 
 function assetShareTitle(entry, focus = '', preview = null) {
-  const articleTitle = clipText(entry.titleZh || entry.title || '文章', 72);
+  const snapshotTitle = (focus === 'translation' || focus === 'rewrite') && preview && preview.title
+    ? preview.title
+    : '';
+  const articleTitle = clipText(snapshotTitle || entry.titleZh || entry.title || '文章', 72);
   const label = ASSET_DIRECTORY_META[focus]?.label || '';
   if (!label) return `${articleTitle} · QMReader`;
   const identity = assetShareIdentity(focus, preview);
@@ -587,6 +611,12 @@ function assetFeedTitle(entry, type, preview = null) {
 }
 
 function assetFeedPreviews(entry, type, previews = {}) {
+  if (type === 'translation' || type === 'rewrite') {
+    const items = store.getEntryAiAssetPreviews(entry.id, type, { limit: 500 });
+    if (items.length) return items;
+    const preview = previews[type] || {};
+    return preview && preview.text ? [preview] : [];
+  }
   if (type === 'comments') {
     return store.getComments(entry.id).map(comment => ({
       type: 'comments',
@@ -610,7 +640,7 @@ function assetFeedPreviews(entry, type, previews = {}) {
       helpfulCount: Number(message.helpfulCount) || 0,
     }));
   }
-  return [previews[type] || {}];
+  return [previews[type] || {}].filter(preview => preview && preview.text);
 }
 
 function entryShareDescription(entry, focus = '', req = null) {
@@ -685,13 +715,13 @@ function exactAssetPreview(entry, focus, req) {
 
 function hasPublicAssets(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
-  return Boolean(assets.translation || assets.rewrite || assets.comments || assets.chatMessages);
+  return Boolean(aiAssetCount(assets, 'translation') || aiAssetCount(assets, 'rewrite') || assets.comments || assets.chatMessages);
 }
 
 function hasPublicAssetType(entry, type) {
   const assets = entry && entry.assets ? entry.assets : {};
-  if (type === 'translation') return Boolean(assets.translation);
-  if (type === 'rewrite') return Boolean(assets.rewrite);
+  if (type === 'translation') return Boolean(aiAssetCount(assets, 'translation'));
+  if (type === 'rewrite') return Boolean(aiAssetCount(assets, 'rewrite'));
   if (type === 'comments') return Boolean(assets.comments);
   if (type === 'chat') return Boolean(assets.chatMessages);
   return hasPublicAssets(entry);
@@ -822,6 +852,17 @@ function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true 
 
 function publicExactAssetSitemapUrls(req, entry, lastmod = '') {
   const urls = [];
+  for (const type of ['translation', 'rewrite']) {
+    if (!hasPublicAssetType(entry, type)) continue;
+    const typeLastmod = entryAssetTypeLastModified(entry, type, lastmod);
+    for (const preview of store.getEntryAiAssetPreviews(entry.id, type, { limit: 500 })) {
+      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, type, preview, { includeHash: false }), {
+        lastmod: assetItemLastModified(preview, typeLastmod),
+        changefreq: 'monthly',
+        priority: '0.72',
+      }));
+    }
+  }
   if (hasPublicAssetType(entry, 'comments')) {
     const commentsLastmod = entryAssetTypeLastModified(entry, 'comments', lastmod);
     for (const comment of store.getComments(entry.id)) {

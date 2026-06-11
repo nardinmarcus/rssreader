@@ -955,16 +955,25 @@ function renderSidebar() {
 
 /* ---------- Entry list ---------- */
 function hasEntryAssets(entry) {
+  return ASSET_FILTER_TYPES.some(type => assetCountForType(entry, type) > 0);
+}
+
+function assetCountForType(entry, type) {
   const assets = entry && entry.assets ? entry.assets : {};
-  return Boolean(assets.translation || assets.rewrite || assets.comments || assets.chatMessages);
+  if (type === 'translation' || type === 'rewrite') {
+    const count = Number(assets[`${type}Count`]) || 0;
+    if (count) return count;
+    const items = assets.items && Array.isArray(assets.items[type]) ? assets.items[type] : [];
+    if (items.length) return items.length;
+    return assets[type] ? 1 : 0;
+  }
+  if (type === 'comments') return Number(assets.comments) || 0;
+  if (type === 'chat') return Number(assets.chatMessages) || 0;
+  return 0;
 }
 
 function entryHasAssetType(entry, type) {
-  const assets = entry && entry.assets ? entry.assets : {};
-  if (type === 'translation') return Boolean(assets.translation);
-  if (type === 'rewrite') return Boolean(assets.rewrite);
-  if (type === 'comments') return Boolean(assets.comments);
-  if (type === 'chat') return Boolean(assets.chatMessages);
+  if (ASSET_FILTER_TYPES.includes(type)) return assetCountForType(entry, type) > 0;
   return hasEntryAssets(entry);
 }
 
@@ -992,13 +1001,14 @@ function assetSearchText(entry) {
         display.label,
         display.text,
         preview.author,
+        preview.title,
         preview.model,
         preview.role,
       );
     }
     for (const item of items[type] || []) {
       const display = assetPreviewDisplay(item);
-      parts.push(display.label, display.text, item.author, item.model, item.role);
+      parts.push(display.label, display.text, item.author, item.title, item.model, item.role);
     }
   }
   return parts.filter(Boolean).join(' ');
@@ -1095,10 +1105,10 @@ function assetDirectoryLabel(type) {
 }
 
 const ASSET_FILTERS = {
-  translation: { label: '中译', count: entry => Number(entry.assets?.translation ? 1 : 0), title: '查看有中文翻译的文章' },
-  rewrite: { label: '重写', count: entry => Number(entry.assets?.rewrite ? 1 : 0), title: '查看有乔木风格重写的文章' },
-  comments: { label: '点评', count: entry => Number(entry.assets?.comments || 0), title: '查看有人工点评的文章' },
-  chat: { label: '对话', count: entry => Number(entry.assets?.chatMessages || 0), title: '查看有文章对话的文章' },
+  translation: { label: '中译', count: entry => assetCountForType(entry, 'translation'), title: '查看有中文翻译的文章' },
+  rewrite: { label: '重写', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有乔木风格重写的文章' },
+  comments: { label: '点评', count: entry => assetCountForType(entry, 'comments'), title: '查看有人工点评的文章' },
+  chat: { label: '对话', count: entry => assetCountForType(entry, 'chat'), title: '查看有文章对话的文章' },
 };
 
 const ASSET_SORTS = {
@@ -1135,8 +1145,8 @@ function assetHelpfulScoreForType(entry, type = '') {
 
 function assetHelpfulItemCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
-  if (type === 'translation') return Number(assets.translationHelpfulCount) > 0 ? 1 : 0;
-  if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) > 0 ? 1 : 0;
+  if (type === 'translation') return Number(assets.translationHelpfulCount) > 0 ? assetCountForType(entry, 'translation') : 0;
+  if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) > 0 ? assetCountForType(entry, 'rewrite') : 0;
   if (type === 'comments') return Number(assets.helpfulComments) || 0;
   if (type === 'chat') return Number(assets.helpfulChats) || 0;
   return (Number(assets.helpfulAssets) || 0) + (Number(assets.helpfulComments) || 0) + (Number(assets.helpfulChats) || 0);
@@ -1317,11 +1327,17 @@ function assetPreviewHtml(preview) {
 }
 
 function assetItemListHtml(entry) {
-  if (state.view !== 'assets' || !['comments', 'chat'].includes(state.assetFilter)) return '';
+  if (state.view !== 'assets' || !ASSET_FILTER_TYPES.includes(state.assetFilter)) return '';
   const assets = entry && entry.assets ? entry.assets : {};
   let items = (assets.items && assets.items[state.assetFilter]) || [];
-  if (['comments', 'chat'].includes(state.assetFilter) && state.assetSort === 'helpful') {
-    const top = state.assetFilter === 'chat' ? assets.topHelpfulChat : assets.topHelpfulComment;
+  if (state.assetSort === 'helpful') {
+    const top = state.assetFilter === 'chat'
+      ? assets.topHelpfulChat
+      : state.assetFilter === 'translation'
+        ? assets.topHelpfulTranslation
+        : state.assetFilter === 'rewrite'
+          ? assets.topHelpfulRewrite
+          : assets.topHelpfulComment;
     const byId = new Map();
     for (const item of [top, ...items]) {
       const key = item && item.id ? item.id : `${item && item.at}:${item && item.text}`;
@@ -1332,10 +1348,12 @@ function assetItemListHtml(entry) {
       .slice(0, 3);
   }
   if (!items.length) return '';
-  const total = state.assetFilter === 'comments' ? Number(assets.comments || 0) : Number(assets.chatMessages || 0);
+  const total = assetCountForType(entry, state.assetFilter);
   const label = ASSET_TYPE_LABELS[state.assetFilter] || '资产';
-  const more = total > items.length
+  const more = total > items.length && ['comments', 'chat'].includes(state.assetFilter)
     ? `<button type="button" class="entry-asset-more" data-asset="${escapeHtml(state.assetFilter)}">查看全部 ${total} 条${escapeHtml(label)}</button>`
+    : total > items.length
+      ? `<span class="entry-asset-more">还有 ${total - items.length} 条${escapeHtml(label)}</span>`
     : '';
   return `<div class="entry-asset-items">
     ${items.map(item => assetPreviewHtml(item)).join('')}
@@ -1385,10 +1403,14 @@ function renderAssetActivityStrip() {
   if (state.view === 'assets') {
     const { entries, latest, counts, totalAssets } = assetDashboardStats();
     const total = entries.length;
-    const activeAssetCount = state.assetFilter ? (counts[state.assetFilter] || 0) : totalAssets;
-    const activeEntryCount = state.assetFilter
-      ? entries.filter(entry => entryHasAssetType(entry, state.assetFilter)).length
-      : total;
+    const allActiveEntries = state.assetFilter
+      ? entries.filter(entry => entryHasAssetType(entry, state.assetFilter))
+      : entries;
+    const scopedEntries = state.q
+      ? allActiveEntries.filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
+      : allActiveEntries;
+    const activeAssetCount = state.assetFilter ? assetTypeCount(scopedEntries, state.assetFilter) : assetTotalCount(scopedEntries);
+    const activeEntryCount = scopedEntries.length;
     const activeLabel = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
     el.classList.toggle('hidden', !total && !state.assetFilter);
     if (!total && !state.assetFilter) {
@@ -1396,10 +1418,7 @@ function renderAssetActivityStrip() {
       return;
     }
     el.classList.add('asset-filter-strip');
-    const activeEntries = state.assetFilter
-      ? entries.filter(entry => entryHasAssetType(entry, state.assetFilter))
-      : entries;
-    const activeLatest = activeEntries
+    const activeLatest = scopedEntries
       .slice()
       .sort((a, b) => assetLatestAtForType(b, state.assetFilter) - assetLatestAtForType(a, state.assetFilter))[0] || null;
     const activeLatestAt = activeLatest ? assetLatestAtForType(activeLatest, state.assetFilter) : 0;
@@ -1412,20 +1431,14 @@ function renderAssetActivityStrip() {
     const latestText = activeLatestAt
       ? `${latestLabel} · ${formatAssetTime(activeLatestAt)}`
       : '暂无沉淀';
-    const activeHelpfulCount = activeEntries.reduce((sum, entry) => sum + assetHelpfulScoreForType(entry, state.assetFilter), 0);
+    const activeHelpfulCount = scopedEntries.reduce((sum, entry) => sum + assetHelpfulScoreForType(entry, state.assetFilter), 0);
     const sortText = state.assetSort === 'helpful'
       ? (activeHelpfulCount ? `有用 ${activeHelpfulCount} 次` : '暂无有用标记')
       : '按最新沉淀';
-    const matchedCount = state.q
-      ? entries
-        .filter(entry => !state.assetFilter || entryHasAssetType(entry, state.assetFilter))
-        .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
-        .length
-      : null;
     const scopeText = `${activeAssetCount} 条 · ${activeEntryCount} 篇文章`;
-    const statusText = matchedCount === null
-      ? `${scopeText} · ${sortText} · ${latestText}`
-      : `匹配 ${matchedCount} 篇 · ${scopeText} · ${sortText} · ${latestText}`;
+    const statusText = state.q
+      ? `匹配 ${scopeText} · ${sortText} · ${latestText}`
+      : `${scopeText} · ${sortText} · ${latestText}`;
     const feedHref = `${state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml'}${state.assetSort === 'helpful' ? '?sort=helpful' : ''}`;
     const sortButtons = Object.entries(ASSET_SORTS).map(([sort, def]) => `
       <button type="button" class="asset-sort-btn${state.assetSort === sort ? ' active' : ''}" data-asset-sort="${escapeHtml(sort)}" aria-pressed="${state.assetSort === sort ? 'true' : 'false'}" title="${escapeHtml(def.title)}">${escapeHtml(def.label)}</button>
@@ -1504,6 +1517,8 @@ function mergeAssets(entry, patch = {}) {
     preview: null,
     previews: {},
     items: {},
+    translationCount: 0,
+    rewriteCount: 0,
     helpfulCount: 0,
     commentHelpfulCount: 0,
     chatHelpfulCount: 0,
@@ -1594,21 +1609,23 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   const messages = (state.agentMessages || []).filter(message => !message.entryId || message.entryId === entry.id);
 
   if (assets.translation) {
+    const total = assetCountForType(entry, 'translation');
     const firstTranslatedParagraph = translation && Array.isArray(translation.content)
       ? translation.content.map(pair => pair && pair.target).find(Boolean)
       : '';
     rows.push({
       type: 'translation',
       label: '中文翻译',
-      value: translation ? assetMetaLine([translation.createdBy, translation.model, assetHelpfulMeta(translation), formatAssetTime(translation.updatedAt)]) : (readerAssetPreviewMeta(entry, 'translation') || '正在加载详情'),
+      value: translation ? assetMetaLine([total > 1 ? `${total} 条` : '', translation.createdBy, translation.model, assetHelpfulMeta(translation), formatAssetTime(translation.updatedAt)]) : (readerAssetPreviewMeta(entry, 'translation', [total > 1 ? `${total} 条` : '']) || '正在加载详情'),
       preview: readerAssetPreview(entry, 'translation', firstTranslatedParagraph),
     });
   }
   if (assets.rewrite) {
+    const total = assetCountForType(entry, 'rewrite');
     rows.push({
       type: 'rewrite',
       label: '乔木重写',
-      value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, assetHelpfulMeta(rewrite), formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite') || '正在加载详情'),
+      value: rewrite ? assetMetaLine([total > 1 ? `${total} 条` : '', rewrite.createdBy, rewrite.model, assetHelpfulMeta(rewrite), formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite', [total > 1 ? `${total} 条` : '']) || '正在加载详情'),
       preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
     });
   }
@@ -1977,6 +1994,7 @@ function renderList() {
         const focus = asset.dataset.asset;
         openEntry(e, {
           focus,
+          aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
           commentId: focus === 'comments' ? itemId : '',
           chatMessageId: focus === 'chat' ? itemId : '',
         });
@@ -4278,6 +4296,7 @@ $('#asset-activity-strip').onclick = async (e) => {
   const itemId = btn.dataset.assetItemId || '';
   await openEntry(entry, {
     focus,
+    aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
     commentId: focus === 'comments' ? itemId : '',
     chatMessageId: focus === 'chat' ? itemId : '',
   });
