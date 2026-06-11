@@ -3013,6 +3013,7 @@ function renderContributorAssets() {
   const profile = state.contributor.profile;
   const rssLink = $('#contributor-rss-link');
   const rssCopy = $('#contributor-rss-copy');
+  const linkCopy = $('#contributor-link-copy');
   const rssUrl = profile ? contributorFeedUrlFor(profile.id).href : '';
   const helpfulCount = Number(profile && profile.helpfulCount) || 0;
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
@@ -3025,6 +3026,7 @@ function renderContributorAssets() {
     rssLink.href = rssUrl || '#';
   }
   if (rssCopy) rssCopy.classList.toggle('hidden', !rssUrl);
+  if (linkCopy) linkCopy.classList.toggle('hidden', !profile);
   renderContributorTabs();
   if (state.contributor.loading) {
     list.innerHTML = '<div class="my-comments-empty">正在读取贡献者资产…</div>';
@@ -4739,6 +4741,19 @@ $('#my-comments-list').onclick = (e) => {
   if (copy) copyMyAssetLink(copy.dataset.myAssetCopy);
 };
 $('#contributor-close').onclick = () => closeContributorModal();
+$('#contributor-link-copy').onclick = () => {
+  if (!state.contributor.profile) {
+    toast('还没有可复制的贡献者页');
+    return;
+  }
+  copyText(
+    contributorUrlFor(state.contributor.profile.id, {
+      sort: state.contributor.sort,
+      tab: state.contributor.tab,
+    }).href,
+    '贡献者页链接已复制',
+  );
+};
 $('#contributor-rss-copy').onclick = () => {
   if (!state.contributor.profile) {
     toast('还没有可复制的贡献者 RSS');

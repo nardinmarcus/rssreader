@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=91" />
+  <link rel="stylesheet" href="/styles.css?v=92" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -262,8 +262,9 @@
           <p id="contributor-subtitle">公开沉淀的翻译、重写、点评和文章对话。</p>
         </div>
         <div class="contributor-modal-actions">
+          <button class="icon-btn contributor-link-copy hidden" id="contributor-link-copy" type="button" title="复制当前贡献者页" aria-label="复制当前贡献者页">⧉</button>
           <a id="contributor-rss-link" class="ghost-btn contributor-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-          <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献者 RSS" aria-label="复制贡献者 RSS">⧉</button>
+          <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献者 RSS" aria-label="复制贡献者 RSS">RSS</button>
           <button class="icon-btn" id="contributor-close">✕</button>
         </div>
       </header>
@@ -377,6 +378,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=91"></script>
+  <script src="/app.js?v=92"></script>
 </body>
 </html>
