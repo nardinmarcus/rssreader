@@ -398,6 +398,7 @@ function routeStateFromUrl() {
   return {
     entryId: String(params.get('entry') || '').trim(),
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
+    contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     tab: normalizeReaderTab(params.get('tab')),
     view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
@@ -514,11 +515,13 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   return url;
 }
 
-function contributorUrlFor(contributorId, { sort = 'latest' } = {}) {
+function contributorUrlFor(contributorId, { sort = 'latest', tab = '' } = {}) {
   const url = new URL(window.location.href);
   url.pathname = `/contributors/${encodeURIComponent(contributorId)}`;
   url.search = '';
   url.hash = '';
+  const assetTab = normalizeUserAssetTab(tab);
+  if (assetTab !== 'translation') url.searchParams.set('type', assetTab);
   if (sort === 'helpful') url.searchParams.set('sort', 'helpful');
   return url;
 }
@@ -2990,9 +2993,18 @@ function sortContributorAssets(items, sort = 'latest') {
 function syncContributorUrl({ replace = true } = {}) {
   const id = state.contributor.id || (state.contributor.profile && state.contributor.profile.id);
   if (!id || !window.location.pathname.startsWith('/contributors/')) return;
-  const url = contributorUrlFor(id, { sort: state.contributor.sort });
+  const url = contributorUrlFor(id, { sort: state.contributor.sort, tab: state.contributor.tab });
   const method = replace ? 'replaceState' : 'pushState';
   history[method]({ contributorId: id }, '', url);
+}
+
+function contributorPageTitle() {
+  const profile = state.contributor.profile;
+  if (!profile) return '贡献者资产 · QMReader';
+  const sortPrefix = state.contributor.sort === 'helpful' ? '有用 · ' : '';
+  const tab = normalizeUserAssetTab(state.contributor.tab);
+  const label = tab === 'translation' ? '公开资产' : userAssetLabel(tab);
+  return `${sortPrefix}${profile.displayName} 的${label} · QMReader`;
 }
 
 function renderContributorAssets() {
@@ -3071,11 +3083,12 @@ function renderContributorAssets() {
   }).join('');
 }
 
-async function openContributor(contributorId, { push = true, sort = state.contributor.sort } = {}) {
+async function openContributor(contributorId, { push = true, sort = state.contributor.sort, tab = state.contributor.tab } = {}) {
   const id = String(contributorId || '').trim();
   if (!id) return;
   const contributorAssetSort = normalizeContributorAssetSort(sort);
-  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: normalizeUserAssetTab(state.contributor.tab), sort: contributorAssetSort, loading: true };
+  const contributorAssetTab = normalizeUserAssetTab(tab);
+  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
   $('#contributor-modal').classList.remove('hidden');
   renderContributorAssets();
   try {
@@ -3088,14 +3101,13 @@ async function openContributor(contributorId, { push = true, sort = state.contri
       rewrites: data.rewrites || [],
       comments: data.comments || [],
       messages: data.messages || [],
-      tab: normalizeUserAssetTab(state.contributor.tab),
+      tab: contributorAssetTab,
       sort: contributorAssetSort,
       loading: false,
     };
     renderContributorAssets();
-    const title = state.contributor.profile ? `${state.contributor.profile.displayName} 的公开资产 · QMReader` : '贡献者资产 · QMReader';
-    document.title = title;
-    if (push) history.pushState({ contributorId: id }, '', contributorUrlFor(id, { sort: state.contributor.sort }));
+    document.title = contributorPageTitle();
+    if (push) history.pushState({ contributorId: id }, '', contributorUrlFor(id, { sort: state.contributor.sort, tab: state.contributor.tab }));
   } catch (err) {
     if (state.contributor.id !== id) return;
     state.contributor.loading = false;
@@ -3758,7 +3770,7 @@ async function openEntryFromUrl() {
     updateListTitle();
     renderSidebar();
     closeReaderFromRoute();
-    await openContributor(route.contributorId, { push: false, sort: route.contributorAssetSort });
+    await openContributor(route.contributorId, { push: false, sort: route.contributorAssetSort, tab: route.contributorAssetType });
     return true;
   }
   $('#contributor-modal').classList.add('hidden');
@@ -4739,6 +4751,8 @@ $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
   btn.onclick = () => {
     state.contributor.tab = normalizeUserAssetTab(btn.dataset.contributorTab);
     renderContributorAssets();
+    syncContributorUrl();
+    document.title = contributorPageTitle();
   };
 });
 $$('#contributor-modal [data-contributor-asset-sort]').forEach(btn => {
@@ -4746,6 +4760,7 @@ $$('#contributor-modal [data-contributor-asset-sort]').forEach(btn => {
     state.contributor.sort = normalizeContributorAssetSort(btn.dataset.contributorAssetSort);
     renderContributorAssets();
     syncContributorUrl();
+    document.title = contributorPageTitle();
   };
 });
 $('#contributor-list').onclick = (e) => {

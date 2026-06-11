@@ -214,11 +214,16 @@ function contributorDirectoryMeta(req = null) {
 }
 
 function contributorPageMeta(req) {
-  return contributorPageMetaForId(contributorIdFromRequest(req));
+  return contributorPageMetaForId(contributorIdFromRequest(req), {
+    type: normalizeAssetDirectoryType(String(req.query.type || req.query.asset || '')),
+    sort: String(req.query.sort || '') === 'helpful' ? 'helpful' : 'latest',
+  });
 }
 
-function contributorPageMetaForId(id) {
+function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   if (!id) return null;
+  const assetType = normalizeAssetDirectoryType(type);
+  const assetSort = sort === 'helpful' ? 'helpful' : 'latest';
   const contributor = store.getContributor(id);
   if (!contributor) return null;
   const translations = store.getUserTranslations(id, { limit: 200 });
@@ -231,13 +236,36 @@ function contributorPageMetaForId(id) {
   const chatCount = messages.length;
   const assetCount = translationCount + rewriteCount + commentCount + chatCount;
   if (!assetCount) return null;
+  const typeCounts = { translation: translationCount, rewrite: rewriteCount, comments: commentCount, chat: chatCount };
+  const visibleAssetCount = assetType ? typeCounts[assetType] || 0 : assetCount;
   const latestAt = Math.max(
     translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
     rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
     comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0),
     messages.reduce((latest, message) => Math.max(latest, Number(message.createdAt) || 0), 0),
   );
+  const typeLatestAt = assetType === 'translation'
+    ? translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0)
+    : assetType === 'rewrite'
+    ? rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0)
+    : assetType === 'comments'
+    ? comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0)
+    : assetType === 'chat'
+    ? messages.reduce((latest, message) => Math.max(latest, Number(message.createdAt) || 0), 0)
+    : latestAt;
   const displayName = clipText(contributor.displayName || '读者', 48);
+  const typeMeta = assetType ? ASSET_DIRECTORY_META[assetType] : null;
+  const sortPrefix = assetSort === 'helpful' ? '有用 · ' : '';
+  const helpfulSentence = Number(contributor.helpfulCount || 0)
+    ? `获得 ${Number(contributor.helpfulCount || 0)} 次有用反馈。`
+    : '';
+  const sortSentence = assetSort === 'helpful' ? '当前按读者有用反馈优先浏览。' : '';
+  const title = typeMeta
+    ? `${sortPrefix}${displayName} 的${typeMeta.label}（${visibleAssetCount} 条） · QMReader`
+    : `${sortPrefix}${displayName} 的公开资产（${assetCount} 条） · QMReader`;
+  const description = typeMeta
+    ? `${displayName} 在 QMReader 沉淀了 ${visibleAssetCount} 条${typeMeta.label}资产。${helpfulSentence}${sortSentence}${typeLatestAt ? `最新更新 ${formatShanghaiMinute(typeLatestAt)}。` : ''}`
+    : `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`;
   return {
     contributor: { ...contributor, displayName },
     translations,
@@ -249,9 +277,12 @@ function contributorPageMetaForId(id) {
     commentCount,
     chatCount,
     assetCount,
-    latestAt,
-    title: `${displayName} 的公开资产（${assetCount} 条） · QMReader`,
-    description: `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${Number(contributor.helpfulCount || 0) ? `获得 ${Number(contributor.helpfulCount || 0)} 次有用反馈。` : ''}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`,
+    visibleAssetCount,
+    assetType,
+    assetSort,
+    latestAt: typeLatestAt || latestAt,
+    title,
+    description,
   };
 }
 
@@ -403,6 +434,7 @@ function contributorAssetStructuredItems(req, contributorPage) {
     id: item.id,
     text: item.contentSnippet || item.summaryZh || '',
     at: item.updatedAt || item.createdAt,
+    helpfulCount: Number(item.helpfulCount) || 0,
     entry: item.entry,
   }));
   const rewriteItems = (contributorPage.rewrites || []).map(item => ({
@@ -410,6 +442,7 @@ function contributorAssetStructuredItems(req, contributorPage) {
     id: item.id,
     text: item.bodySnippet || '',
     at: item.updatedAt || item.createdAt,
+    helpfulCount: Number(item.helpfulCount) || 0,
     entry: item.entry,
   }));
   const commentItems = (contributorPage.comments || []).map(comment => ({
@@ -417,6 +450,7 @@ function contributorAssetStructuredItems(req, contributorPage) {
     id: comment.id,
     text: comment.bodySnippet || comment.body || '',
     at: comment.updatedAt || comment.createdAt,
+    helpfulCount: Number(comment.helpfulCount) || 0,
     entry: comment.entry,
   }));
   const chatItems = (contributorPage.messages || []).map(message => ({
@@ -424,11 +458,19 @@ function contributorAssetStructuredItems(req, contributorPage) {
     id: message.id,
     text: message.contentSnippet || message.content || '',
     at: message.createdAt,
+    helpfulCount: Number(message.helpfulCount) || 0,
     entry: message.entry,
   }));
   return [...translationItems, ...rewriteItems, ...commentItems, ...chatItems]
     .filter(item => item.entry && item.entry.id)
-    .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
+    .filter(item => !contributorPage.assetType || item.type === contributorPage.assetType)
+    .sort((a, b) => {
+      if (contributorPage.assetSort === 'helpful') {
+        const helpfulDelta = Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0);
+        if (helpfulDelta) return helpfulDelta;
+      }
+      return (Number(b.at) || 0) - (Number(a.at) || 0);
+    })
     .slice(0, 10)
     .map((item, index) => {
       const label = ASSET_DIRECTORY_META[item.type]?.label || (item.type === 'chat' ? '文章对话' : '人工点评');
@@ -460,8 +502,10 @@ function contributorPageStructuredData(req, contributorPage, { title, descriptio
     },
     hasPart: {
       '@type': 'ItemList',
-      name: '公开资产',
-      numberOfItems: contributorPage.assetCount || 0,
+      name: contributorPage.assetType ? `${ASSET_DIRECTORY_META[contributorPage.assetType].label}资产` : '公开资产',
+      numberOfItems: typeof contributorPage.visibleAssetCount === 'number'
+        ? contributorPage.visibleAssetCount
+        : contributorPage.assetCount || 0,
       itemListElement: contributorAssetStructuredItems(req, contributorPage),
     },
   };
