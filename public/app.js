@@ -2793,6 +2793,14 @@ function myAssetUrl(type, item) {
   return commentUrl(item.id, entry);
 }
 
+function myPublicProfileUrl() {
+  if (!state.me || !state.me.id) return '';
+  return contributorUrlFor(state.me.id, {
+    sort: state.myAssetSort,
+    tab: state.myAssetTab,
+  }).href;
+}
+
 function normalizeUserAssetTab(type) {
   return ASSET_FILTER_TYPES.includes(type) ? type : 'translation';
 }
@@ -2826,6 +2834,18 @@ function renderMyAssetTabs() {
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
+  renderMyPublicProfileActions();
+}
+
+function renderMyPublicProfileActions() {
+  const url = myPublicProfileUrl();
+  const link = $('#my-public-profile-link');
+  const copy = $('#my-public-profile-copy');
+  if (link) {
+    link.classList.toggle('hidden', !url);
+    link.href = url || '#';
+  }
+  if (copy) copy.classList.toggle('hidden', !url);
 }
 
 function renderMyAssets() {
@@ -2958,6 +2978,15 @@ function copyMyAssetLink(itemId) {
     return;
   }
   copyText(url, `${userAssetLabel(normalizeUserAssetTab(state.myAssetTab))}链接已复制`);
+}
+
+function copyMyPublicProfileLink() {
+  const url = myPublicProfileUrl();
+  if (!url) {
+    toast('还没有可复制的公开资产页');
+    return;
+  }
+  copyText(url, '我的公开资产页已复制');
 }
 
 function contributorAssetItemsForCurrentTab() {
@@ -4746,6 +4775,7 @@ $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#my-comments-btn').onclick = openMyCommentsModal;
 $('#my-comments-close').onclick = closeMyCommentsModal;
+$('#my-public-profile-copy').onclick = copyMyPublicProfileLink;
 $('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
 $$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
   btn.onclick = () => {

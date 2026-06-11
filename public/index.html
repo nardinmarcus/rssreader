@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=93" />
+  <link rel="stylesheet" href="/styles.css?v=94" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -242,7 +242,11 @@
           <h2>我的资产</h2>
           <p>你沉淀过的公开翻译、重写、点评和文章对话，打开后会定位到对应文章。</p>
         </div>
-        <button class="icon-btn" id="my-comments-close">✕</button>
+        <div class="my-assets-header-actions">
+          <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
+          <button class="icon-btn my-public-profile-copy hidden" id="my-public-profile-copy" type="button" title="复制我的公开资产页" aria-label="复制我的公开资产页">⧉</button>
+          <button class="icon-btn" id="my-comments-close">✕</button>
+        </div>
       </header>
       <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
         <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
@@ -383,6 +387,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=93"></script>
+  <script src="/app.js?v=94"></script>
 </body>
 </html>
