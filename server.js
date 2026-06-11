@@ -126,6 +126,16 @@ function isContributorDirectoryRequest(req) {
   return /^\/contributors\/?$/.test(String(req.path || ''));
 }
 
+function contributorIdFromRequest(req) {
+  const match = String(req.path || '').match(/^\/contributors\/([^/?#]+)\/?$/);
+  if (!match) return '';
+  try {
+    return decodeURIComponent(match[1]).trim();
+  } catch {
+    return String(match[1] || '').trim();
+  }
+}
+
 function requestAssetFocus(req) {
   if (String(req.query.comment || '').trim()) return 'comments';
   if (String(req.query.chat || '').trim()) return 'chat';
@@ -187,6 +197,35 @@ function contributorDirectoryMeta() {
       ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开点评和文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
       : '浏览在 QMReader 沉淀过公开点评和文章对话的贡献者。',
     latestAt,
+  };
+}
+
+function contributorPageMeta(req) {
+  const id = contributorIdFromRequest(req);
+  if (!id) return null;
+  const contributor = store.getContributor(id);
+  if (!contributor) return null;
+  const comments = store.getUserComments(id, { limit: 200 });
+  const messages = store.getUserChatMessages(id, { limit: 200 });
+  const commentCount = comments.length;
+  const chatCount = messages.length;
+  const assetCount = commentCount + chatCount;
+  if (!assetCount) return null;
+  const latestAt = Math.max(
+    comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0),
+    messages.reduce((latest, message) => Math.max(latest, Number(message.createdAt) || 0), 0),
+  );
+  const displayName = clipText(contributor.displayName || '读者', 48);
+  return {
+    contributor: { ...contributor, displayName },
+    comments,
+    messages,
+    commentCount,
+    chatCount,
+    assetCount,
+    latestAt,
+    title: `${displayName} 的公开资产（${assetCount} 条） · QMReader`,
+    description: `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${commentCount} 条人工点评和 ${chatCount} 条文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`,
   };
 }
 
@@ -259,22 +298,25 @@ function formatShanghaiMinute(timestamp) {
 
 function socialMetaTags(req, entry) {
   const directoryMeta = entry ? null : assetDirectoryMeta(req);
-  const contributorMeta = !entry && !directoryMeta && isContributorDirectoryRequest(req) ? contributorDirectoryMeta() : null;
+  const contributorPage = !entry && !directoryMeta ? contributorPageMeta(req) : null;
+  const contributorMeta = !entry && !directoryMeta && !contributorPage && isContributorDirectoryRequest(req) ? contributorDirectoryMeta() : null;
   const focus = entry ? requestAssetFocus(req) : '';
   const title = entry
     ? entryShareTitle(entry, focus, req)
-    : (directoryMeta?.title || contributorMeta?.title || DEFAULT_TITLE);
+    : (directoryMeta?.title || contributorPage?.title || contributorMeta?.title || DEFAULT_TITLE);
   const description = entry
     ? entryShareDescription(entry, focus, req)
-    : clipText(directoryMeta?.description || contributorMeta?.description || DEFAULT_DESCRIPTION);
-  const modifiedTime = entry ? entryShareModifiedTime(entry, focus, req) : '';
+    : clipText(directoryMeta?.description || contributorPage?.description || contributorMeta?.description || DEFAULT_DESCRIPTION);
+  const modifiedTime = entry
+    ? entryShareModifiedTime(entry, focus, req)
+    : timestampIso(directoryMeta?.latestAt || contributorPage?.latestAt || contributorMeta?.latestAt);
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
   const tags = [
     `<meta name="description" content="${escapeHtml(description)}" />`,
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
     `<meta property="og:site_name" content="QMReader" />`,
-    `<meta property="og:type" content="${entry ? 'article' : 'website'}" />`,
+    `<meta property="og:type" content="${entry ? 'article' : contributorPage ? 'profile' : 'website'}" />`,
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
     `<meta property="og:url" content="${escapeHtml(url)}" />`,
@@ -290,13 +332,14 @@ function socialMetaTags(req, entry) {
     tags.push(`<meta property="article:published_time" content="${escapeHtml(entry.published)}" />`);
   }
   if (modifiedTime) {
-    tags.push(`<meta property="article:modified_time" content="${escapeHtml(modifiedTime)}" />`);
+    if (entry) tags.push(`<meta property="article:modified_time" content="${escapeHtml(modifiedTime)}" />`);
     tags.push(`<meta property="og:updated_time" content="${escapeHtml(modifiedTime)}" />`);
   }
   const structuredData = shareStructuredData(req, {
     entry,
     focus,
     directoryMeta,
+    contributorPage,
     title,
     description,
     modifiedTime,
@@ -307,15 +350,72 @@ function socialMetaTags(req, entry) {
   return { title, tags: tags.join('\n  ') };
 }
 
-function shareStructuredData(req, { entry, focus, directoryMeta, title, description, modifiedTime, image, url }) {
+function shareStructuredData(req, { entry, focus, directoryMeta, contributorPage, title, description, modifiedTime, image, url }) {
   if (entry) return entryStructuredData(req, entry, { focus, title, description, modifiedTime, image, url });
   if (directoryMeta) return assetDirectoryStructuredData(req, directoryMeta, { title, description, url });
+  if (contributorPage) return contributorPageStructuredData(req, contributorPage, { title, description, url });
   return {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     name: 'QMReader',
     url,
     description,
+  };
+}
+
+function contributorAssetStructuredItems(req, contributorPage) {
+  const commentItems = (contributorPage.comments || []).map(comment => ({
+    type: 'comments',
+    id: comment.id,
+    text: comment.bodySnippet || comment.body || '',
+    at: comment.updatedAt || comment.createdAt,
+    entry: comment.entry,
+  }));
+  const chatItems = (contributorPage.messages || []).map(message => ({
+    type: 'chat',
+    id: message.id,
+    text: message.contentSnippet || message.content || '',
+    at: message.createdAt,
+    entry: message.entry,
+  }));
+  return [...commentItems, ...chatItems]
+    .filter(item => item.entry && item.entry.id)
+    .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
+    .slice(0, 10)
+    .map((item, index) => {
+      const label = item.type === 'chat' ? '文章对话' : '人工点评';
+      return {
+        '@type': 'ListItem',
+        position: index + 1,
+        url: entryAssetItemUrl(req, { id: item.entry.id }, item.type, item, { includeHash: false }),
+        name: `${label}：${clipText(item.entry.titleZh || item.entry.title || '文章', 90)}`,
+        description: clipText(item.text, 180),
+        dateModified: timestampIso(item.at) || undefined,
+      };
+    });
+}
+
+function contributorPageStructuredData(req, contributorPage, { title, description, url }) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'ProfilePage',
+    name: title.replace(/\s·\sQMReader$/, ''),
+    description,
+    url,
+    isPartOf: siteStructuredData(req),
+    dateModified: timestampIso(contributorPage.latestAt) || undefined,
+    mainEntity: {
+      '@type': 'Person',
+      name: contributorPage.contributor.displayName || '读者',
+      identifier: contributorPage.contributor.id,
+      url,
+    },
+    hasPart: {
+      '@type': 'ItemList',
+      name: '公开资产',
+      numberOfItems: contributorPage.assetCount || 0,
+      itemListElement: contributorAssetStructuredItems(req, contributorPage),
+    },
   };
 }
 
