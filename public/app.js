@@ -2912,6 +2912,7 @@ function renderMyAssets() {
         <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
         <div class="my-comment-actions">
           <button type="button" class="ghost-btn" data-my-asset-open="${escapeHtml(item.id)}">打开文章</button>
+          <button type="button" class="ghost-btn" data-my-asset-copy-content="${escapeHtml(item.id)}">⧉ 复制内容</button>
           <button type="button" class="ghost-btn" data-my-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
         </div>
       </article>`;
@@ -2966,6 +2967,57 @@ function userAssetDisplay(type, item) {
   return commentDisplayParts(item.body || item.bodySnippet || '');
 }
 
+function translationAssetText(translation, item = {}) {
+  const content = translation && Array.isArray(translation.content) ? translation.content : [];
+  return [
+    translation?.titleZh || item.titleZh || '',
+    translation?.summaryZh || item.summaryZh || '',
+    ...content.map(pair => String(pair && pair.target || '').trim()).filter(Boolean),
+  ].map(part => String(part || '').trim()).filter(Boolean).join('\n\n');
+}
+
+function assetContentText(type, item, fullAsset = null) {
+  if (!item) return '';
+  const assetType = normalizeUserAssetTab(type);
+  if (assetType === 'translation') return translationAssetText(fullAsset || item, item);
+  if (assetType === 'rewrite') return String((fullAsset && fullAsset.body) || item.body || item.bodySnippet || '').trim();
+  if (assetType === 'chat') {
+    const label = item.role === 'assistant' ? '回答' : '提问';
+    const content = String(item.content || item.contentSnippet || '').trim();
+    return content ? `${label}：\n${content}` : '';
+  }
+  return String(item.body || item.bodySnippet || '').trim();
+}
+
+async function fullAiAssetForCopy(type, item) {
+  const assetType = normalizeUserAssetTab(type);
+  if (!item || !item.id || !['translation', 'rewrite'].includes(assetType)) return null;
+  const entryId = item.entry?.id || item.entryId;
+  if (!entryId) return null;
+  const endpoint = assetType === 'translation' ? 'translation' : 'rewrite';
+  const data = await api(`/api/entry/${encodeURIComponent(entryId)}/${endpoint}?assetId=${encodeURIComponent(item.id)}`);
+  return data && data[endpoint] ? data[endpoint] : null;
+}
+
+async function copyAssetContent(type, item) {
+  const assetType = normalizeUserAssetTab(type);
+  if (!item) {
+    toast('找不到这条资产');
+    return;
+  }
+  try {
+    const fullAsset = await fullAiAssetForCopy(assetType, item);
+    const text = assetContentText(assetType, item, fullAsset);
+    if (!text) {
+      toast('这条资产没有可复制的内容');
+      return;
+    }
+    copyText(text, `${userAssetLabel(assetType)}内容已复制`);
+  } catch (err) {
+    toast('复制内容失败: ' + err.message, 5000);
+  }
+}
+
 async function openMyAsset(itemId) {
   const item = myAssetItemsForCurrentTab().find(asset => asset.id === itemId);
   const entryId = item && (item.entry?.id || item.entryId);
@@ -2991,6 +3043,11 @@ function copyMyAssetLink(itemId) {
     return;
   }
   copyText(url, `${userAssetLabel(normalizeUserAssetTab(state.myAssetTab))}链接已复制`);
+}
+
+function copyMyAssetContent(itemId) {
+  const item = myAssetItemsForCurrentTab().find(asset => asset.id === itemId);
+  copyAssetContent(state.myAssetTab, item);
 }
 
 function copyMyPublicProfileLink() {
@@ -3152,6 +3209,7 @@ function renderContributorAssets() {
         <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
         <div class="my-comment-actions">
           <button type="button" class="ghost-btn" data-contributor-asset-open="${escapeHtml(item.id)}">打开文章</button>
+          <button type="button" class="ghost-btn" data-contributor-asset-copy-content="${escapeHtml(item.id)}">⧉ 复制内容</button>
           <button type="button" class="ghost-btn" data-contributor-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
         </div>
       </article>`;
@@ -3225,6 +3283,11 @@ function copyContributorAssetLink(itemId) {
     return;
   }
   copyText(url, `${userAssetLabel(normalizeUserAssetTab(state.contributor.tab))}链接已复制`);
+}
+
+function copyContributorAssetContent(itemId) {
+  const item = contributorAssetItemsForCurrentTab().find(asset => asset.id === itemId);
+  copyAssetContent(state.contributor.tab, item);
 }
 
 function autosizeCommentEditInput(input) {
@@ -4819,6 +4882,11 @@ $('#my-comments-list').onclick = (e) => {
     openMyAsset(open.dataset.myAssetOpen);
     return;
   }
+  const contentCopy = e.target.closest('[data-my-asset-copy-content]');
+  if (contentCopy) {
+    copyMyAssetContent(contentCopy.dataset.myAssetCopyContent);
+    return;
+  }
   const copy = e.target.closest('[data-my-asset-copy]');
   if (copy) copyMyAssetLink(copy.dataset.myAssetCopy);
 };
@@ -4864,6 +4932,11 @@ $('#contributor-list').onclick = (e) => {
   const open = e.target.closest('[data-contributor-asset-open]');
   if (open) {
     openContributorAsset(open.dataset.contributorAssetOpen);
+    return;
+  }
+  const contentCopy = e.target.closest('[data-contributor-asset-copy-content]');
+  if (contentCopy) {
+    copyContributorAssetContent(contentCopy.dataset.contributorAssetCopyContent);
     return;
   }
   const copy = e.target.closest('[data-contributor-asset-copy]');
