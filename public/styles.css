@@ -1901,10 +1901,12 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .my-asset-tabs {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 10px 12px 0;
 }
 .my-asset-tab {
+  flex: 1 1 92px;
   min-height: 32px;
   padding: 6px 10px;
   border: 1px solid var(--border);

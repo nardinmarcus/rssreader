@@ -322,10 +322,12 @@ const state = {
   starred: new Set(readJson('fr_starred', '[]')),
   agentMessages: [],
   comments: [],
+  myTranslations: [],
+  myRewrites: [],
   myComments: [],
   myChatMessages: [],
-  myAssetTab: 'comments',
-  contributor: { id: '', profile: null, comments: [], messages: [], tab: 'comments', loading: false },
+  myAssetTab: 'translation',
+  contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', loading: false },
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
@@ -1018,6 +1020,8 @@ function contributorSearchText(contributor) {
   return [
     contributor.displayName,
     `${contributor.assetCount || 0} 条`,
+    `${contributor.translationCount || 0} 中译`,
+    `${contributor.rewriteCount || 0} 重写`,
     `${contributor.commentCount || 0} 点评`,
     `${contributor.chatCount || 0} 对话`,
   ].filter(Boolean).join(' ');
@@ -1867,6 +1871,8 @@ function renderContributorDirectory() {
         <div class="contributor-name">${escapeHtml(contributor.displayName || '读者')}</div>
         <div class="contributor-meta">${Number(contributor.assetCount || 0)} 条公开资产 · 最近 ${formatAssetTime(contributor.latestAt)}</div>
         <div class="contributor-stats">
+          <span>中译 ${Number(contributor.translationCount || 0)}</span>
+          <span>重写 ${Number(contributor.rewriteCount || 0)}</span>
           <span>点评 ${Number(contributor.commentCount || 0)}</span>
           <span>对话 ${Number(contributor.chatCount || 0)}</span>
         </div>
@@ -2561,12 +2567,23 @@ function copyCommentLink(commentId) {
 function myAssetUrl(type, item) {
   if (!item) return '';
   const entry = item.entry || { id: item.entryId };
+  if (type === 'translation' || type === 'rewrite') return readerAssetUrl(type, entry);
   if (type === 'chat') return chatMessageUrl(item.id, entry);
   return commentUrl(item.id, entry);
 }
 
+function normalizeUserAssetTab(type) {
+  return ASSET_FILTER_TYPES.includes(type) ? type : 'translation';
+}
+
+function userAssetLabel(type) {
+  return ASSET_DIRECTORY_LABELS[type] || ASSET_TYPE_LABELS[type] || '资产';
+}
+
 function myAssetCounts() {
   return {
+    translation: (state.myTranslations || []).length,
+    rewrite: (state.myRewrites || []).length,
     comments: (state.myComments || []).length,
     chat: (state.myChatMessages || []).length,
   };
@@ -2574,6 +2591,8 @@ function myAssetCounts() {
 
 function renderMyAssetTabs() {
   const counts = myAssetCounts();
+  $('#my-translation-count').textContent = counts.translation;
+  $('#my-rewrite-count').textContent = counts.rewrite;
   $('#my-comments-count').textContent = counts.comments;
   $('#my-chat-count').textContent = counts.chat;
   $$('.my-asset-tab').forEach(btn => {
@@ -2587,29 +2606,36 @@ function renderMyAssets() {
   const list = $('#my-comments-list');
   if (!list) return;
   renderMyAssetTabs();
-  const type = state.myAssetTab === 'chat' ? 'chat' : 'comments';
-  const items = type === 'chat' ? (state.myChatMessages || []) : (state.myComments || []);
+  const type = normalizeUserAssetTab(state.myAssetTab);
+  const items = myAssetItemsForTab(type);
   if (!items.length) {
-    list.innerHTML = `<div class="my-comments-empty">还没有发布过公开${type === 'chat' ? '文章对话' : '点评'}</div>`;
+    list.innerHTML = `<div class="my-comments-empty">还没有沉淀过公开${escapeHtml(userAssetLabel(type))}</div>`;
     return;
   }
   list.innerHTML = items.map(item => {
     const entry = item.entry || {};
-    const isChat = type === 'chat';
-    const display = isChat ? { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' } : commentDisplayParts(item.body || item.bodySnippet || '');
+    const display = userAssetDisplay(type, item);
     const title = entry.titleZh || entry.title || '未命名文章';
-    const meta = isChat ? [
+    const meta = type === 'chat' ? [
       sourceName(entry.sourceId),
       item.author,
       item.model,
       Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
       formatAssetTime(item.createdAt),
-    ].filter(Boolean).join(' · ') : [
+    ].filter(Boolean).join(' · ') : type === 'comments' ? [
       sourceName(entry.sourceId),
       Number(item.updatedAt || 0) > Number(item.createdAt || 0)
         ? `编辑 ${formatAssetTime(item.updatedAt)}`
         : formatAssetTime(item.createdAt),
       Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+    ].filter(Boolean).join(' · ') : [
+      sourceName(entry.sourceId),
+      item.author,
+      item.model,
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+      Number(item.updatedAt || 0) > Number(item.createdAt || 0)
+        ? formatAssetTime(item.updatedAt)
+        : formatAssetTime(item.createdAt),
     ].filter(Boolean).join(' · ');
     return `
       <article class="my-comment-item">
@@ -2635,10 +2661,14 @@ async function openMyCommentsModal() {
   renderMyAssetTabs();
   $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的资产…</div>';
   try {
-    const [commentData, chatData] = await Promise.all([
+    const [translationData, rewriteData, commentData, chatData] = await Promise.all([
+      api('/api/me/translations?limit=100'),
+      api('/api/me/rewrites?limit=100'),
       api('/api/me/comments?limit=100'),
       api('/api/me/chat-messages?limit=100'),
     ]);
+    state.myTranslations = translationData.translations || [];
+    state.myRewrites = rewriteData.rewrites || [];
     state.myComments = commentData.comments || [];
     state.myChatMessages = chatData.messages || [];
     renderMyAssets();
@@ -2651,8 +2681,22 @@ function closeMyCommentsModal() {
   $('#my-comments-modal').classList.add('hidden');
 }
 
+function myAssetItemsForTab(type) {
+  if (type === 'translation') return state.myTranslations || [];
+  if (type === 'rewrite') return state.myRewrites || [];
+  if (type === 'chat') return state.myChatMessages || [];
+  return state.myComments || [];
+}
+
 function myAssetItemsForCurrentTab() {
-  return state.myAssetTab === 'chat' ? (state.myChatMessages || []) : (state.myComments || []);
+  return myAssetItemsForTab(normalizeUserAssetTab(state.myAssetTab));
+}
+
+function userAssetDisplay(type, item) {
+  if (type === 'translation') return { label: '中文翻译', body: item.contentSnippet || item.summaryZh || '' };
+  if (type === 'rewrite') return { label: '乔木重写', body: item.bodySnippet || '' };
+  if (type === 'chat') return { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' };
+  return commentDisplayParts(item.body || item.bodySnippet || '');
 }
 
 async function openMyAsset(itemId) {
@@ -2663,7 +2707,10 @@ async function openMyAsset(itemId) {
     return;
   }
   closeMyCommentsModal();
-  const ok = state.myAssetTab === 'chat'
+  const type = normalizeUserAssetTab(state.myAssetTab);
+  const ok = type === 'translation' || type === 'rewrite'
+    ? await openEntryById(entryId, { focus: type, updateUrl: true, replaceUrl: false })
+    : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
     : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
   if (!ok) toast('找不到这篇文章');
@@ -2676,16 +2723,24 @@ function copyMyAssetLink(itemId) {
     toast('找不到这条资产链接');
     return;
   }
-  copyText(url, `${state.myAssetTab === 'chat' ? '对话' : '点评'}链接已复制`);
+  copyText(url, `${userAssetLabel(normalizeUserAssetTab(state.myAssetTab))}链接已复制`);
 }
 
 function contributorAssetItemsForCurrentTab() {
-  return state.contributor.tab === 'chat' ? (state.contributor.messages || []) : (state.contributor.comments || []);
+  const type = normalizeUserAssetTab(state.contributor.tab);
+  if (type === 'translation') return state.contributor.translations || [];
+  if (type === 'rewrite') return state.contributor.rewrites || [];
+  if (type === 'chat') return state.contributor.messages || [];
+  return state.contributor.comments || [];
 }
 
 function renderContributorTabs() {
+  const translationCount = (state.contributor.translations || []).length;
+  const rewriteCount = (state.contributor.rewrites || []).length;
   const commentCount = (state.contributor.comments || []).length;
   const chatCount = (state.contributor.messages || []).length;
+  $('#contributor-translation-count').textContent = translationCount;
+  $('#contributor-rewrite-count').textContent = rewriteCount;
   $('#contributor-comments-count').textContent = commentCount;
   $('#contributor-chat-count').textContent = chatCount;
   $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
@@ -2703,7 +2758,7 @@ function renderContributorAssets() {
   const rssCopy = $('#contributor-rss-copy');
   const rssUrl = profile ? contributorFeedUrlFor(profile.id).href : '';
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的公开资产` : '贡献者资产';
-  $('#contributor-subtitle').textContent = profile ? '公开沉淀的点评和文章对话。' : '正在读取公开资产…';
+  $('#contributor-subtitle').textContent = profile ? '公开沉淀的翻译、重写、点评和文章对话。' : '正在读取公开资产…';
   if (rssLink) {
     rssLink.classList.toggle('hidden', !rssUrl);
     rssLink.href = rssUrl || '#';
@@ -2714,29 +2769,36 @@ function renderContributorAssets() {
     list.innerHTML = '<div class="my-comments-empty">正在读取贡献者资产…</div>';
     return;
   }
-  const type = state.contributor.tab === 'chat' ? 'chat' : 'comments';
+  const type = normalizeUserAssetTab(state.contributor.tab);
   const items = contributorAssetItemsForCurrentTab();
   if (!items.length) {
-    list.innerHTML = `<div class="my-comments-empty">还没有公开${type === 'chat' ? '文章对话' : '点评'}</div>`;
+    list.innerHTML = `<div class="my-comments-empty">还没有公开${escapeHtml(userAssetLabel(type))}</div>`;
     return;
   }
   list.innerHTML = items.map(item => {
     const entry = item.entry || {};
-    const isChat = type === 'chat';
-    const display = isChat ? { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' } : commentDisplayParts(item.body || item.bodySnippet || '');
+    const display = userAssetDisplay(type, item);
     const title = entry.titleZh || entry.title || '未命名文章';
-    const meta = isChat ? [
+    const meta = type === 'chat' ? [
       sourceName(entry.sourceId),
       item.author,
       item.model,
       Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
       formatAssetTime(item.createdAt),
-    ].filter(Boolean).join(' · ') : [
+    ].filter(Boolean).join(' · ') : type === 'comments' ? [
       sourceName(entry.sourceId),
       Number(item.updatedAt || 0) > Number(item.createdAt || 0)
         ? `编辑 ${formatAssetTime(item.updatedAt)}`
         : formatAssetTime(item.createdAt),
       Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+    ].filter(Boolean).join(' · ') : [
+      sourceName(entry.sourceId),
+      item.author,
+      item.model,
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+      Number(item.updatedAt || 0) > Number(item.createdAt || 0)
+        ? formatAssetTime(item.updatedAt)
+        : formatAssetTime(item.createdAt),
     ].filter(Boolean).join(' · ');
     return `
       <article class="my-comment-item">
@@ -2759,7 +2821,7 @@ function renderContributorAssets() {
 async function openContributor(contributorId, { push = true } = {}) {
   const id = String(contributorId || '').trim();
   if (!id) return;
-  state.contributor = { id, profile: null, comments: [], messages: [], tab: state.contributor.tab || 'comments', loading: true };
+  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: normalizeUserAssetTab(state.contributor.tab), loading: true };
   $('#contributor-modal').classList.remove('hidden');
   renderContributorAssets();
   try {
@@ -2768,9 +2830,11 @@ async function openContributor(contributorId, { push = true } = {}) {
     state.contributor = {
       id,
       profile: data.contributor || null,
+      translations: data.translations || [],
+      rewrites: data.rewrites || [],
       comments: data.comments || [],
       messages: data.messages || [],
-      tab: state.contributor.tab || 'comments',
+      tab: normalizeUserAssetTab(state.contributor.tab),
       loading: false,
     };
     renderContributorAssets();
@@ -2802,7 +2866,10 @@ async function openContributorAsset(itemId) {
     return;
   }
   closeContributorModal({ clearUrl: false });
-  const ok = state.contributor.tab === 'chat'
+  const type = normalizeUserAssetTab(state.contributor.tab);
+  const ok = type === 'translation' || type === 'rewrite'
+    ? await openEntryById(entryId, { focus: type, updateUrl: true, replaceUrl: false })
+    : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
     : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
   if (!ok) toast('找不到这篇文章');
@@ -2815,7 +2882,7 @@ function copyContributorAssetLink(itemId) {
     toast('找不到这条资产链接');
     return;
   }
-  copyText(url, `${state.contributor.tab === 'chat' ? '对话' : '点评'}链接已复制`);
+  copyText(url, `${userAssetLabel(normalizeUserAssetTab(state.contributor.tab))}链接已复制`);
 }
 
 function autosizeCommentEditInput(input) {
@@ -4340,7 +4407,7 @@ $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
 $$('.my-asset-tab').forEach(btn => {
   btn.onclick = () => {
-    state.myAssetTab = btn.dataset.myAssetTab === 'chat' ? 'chat' : 'comments';
+    state.myAssetTab = normalizeUserAssetTab(btn.dataset.myAssetTab);
     renderMyAssets();
   };
 });
@@ -4364,7 +4431,7 @@ $('#contributor-rss-copy').onclick = () => {
 $('#contributor-modal').onclick = (e) => { if (e.target.id === 'contributor-modal') closeContributorModal(); };
 $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
   btn.onclick = () => {
-    state.contributor.tab = btn.dataset.contributorTab === 'chat' ? 'chat' : 'comments';
+    state.contributor.tab = normalizeUserAssetTab(btn.dataset.contributorTab);
     renderContributorAssets();
   };
 });

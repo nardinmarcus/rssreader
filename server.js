@@ -194,8 +194,8 @@ function contributorDirectoryMeta() {
     contributors,
     title: contributors.length ? `公开贡献者（${contributors.length} 人） · QMReader` : '公开贡献者 · QMReader',
     description: contributors.length
-      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开点评和文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
-      : '浏览在 QMReader 沉淀过公开点评和文章对话的贡献者。',
+      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : '浏览在 QMReader 沉淀过公开翻译、重写、点评和文章对话的贡献者。',
     latestAt,
   };
 }
@@ -208,27 +208,37 @@ function contributorPageMetaForId(id) {
   if (!id) return null;
   const contributor = store.getContributor(id);
   if (!contributor) return null;
+  const translations = store.getUserTranslations(id, { limit: 200 });
+  const rewrites = store.getUserRewrites(id, { limit: 200 });
   const comments = store.getUserComments(id, { limit: 200 });
   const messages = store.getUserChatMessages(id, { limit: 200 });
+  const translationCount = translations.length;
+  const rewriteCount = rewrites.length;
   const commentCount = comments.length;
   const chatCount = messages.length;
-  const assetCount = commentCount + chatCount;
+  const assetCount = translationCount + rewriteCount + commentCount + chatCount;
   if (!assetCount) return null;
   const latestAt = Math.max(
+    translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
+    rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
     comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0),
     messages.reduce((latest, message) => Math.max(latest, Number(message.createdAt) || 0), 0),
   );
   const displayName = clipText(contributor.displayName || '读者', 48);
   return {
     contributor: { ...contributor, displayName },
+    translations,
+    rewrites,
     comments,
     messages,
+    translationCount,
+    rewriteCount,
     commentCount,
     chatCount,
     assetCount,
     latestAt,
     title: `${displayName} 的公开资产（${assetCount} 条） · QMReader`,
-    description: `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${commentCount} 条人工点评和 ${chatCount} 条文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`,
+    description: `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`,
   };
 }
 
@@ -367,6 +377,20 @@ function shareStructuredData(req, { entry, focus, directoryMeta, contributorPage
 }
 
 function contributorAssetStructuredItems(req, contributorPage) {
+  const translationItems = (contributorPage.translations || []).map(item => ({
+    type: 'translation',
+    id: item.id,
+    text: item.contentSnippet || item.summaryZh || '',
+    at: item.updatedAt || item.createdAt,
+    entry: item.entry,
+  }));
+  const rewriteItems = (contributorPage.rewrites || []).map(item => ({
+    type: 'rewrite',
+    id: item.id,
+    text: item.bodySnippet || '',
+    at: item.updatedAt || item.createdAt,
+    entry: item.entry,
+  }));
   const commentItems = (contributorPage.comments || []).map(comment => ({
     type: 'comments',
     id: comment.id,
@@ -381,12 +405,12 @@ function contributorAssetStructuredItems(req, contributorPage) {
     at: message.createdAt,
     entry: message.entry,
   }));
-  return [...commentItems, ...chatItems]
+  return [...translationItems, ...rewriteItems, ...commentItems, ...chatItems]
     .filter(item => item.entry && item.entry.id)
     .sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0))
     .slice(0, 10)
     .map((item, index) => {
-      const label = item.type === 'chat' ? '文章对话' : '人工点评';
+      const label = ASSET_DIRECTORY_META[item.type]?.label || (item.type === 'chat' ? '文章对话' : '人工点评');
       return {
         '@type': 'ListItem',
         position: index + 1,
@@ -856,6 +880,50 @@ function publicAssetFeedItems(req, type = '') {
 }
 
 function contributorFeedItems(req, contributorPage) {
+  const translations = (contributorPage.translations || []).map(item => {
+    const preview = {
+      id: item.id,
+      author: item.contributorName || item.author || contributorPage.contributor.displayName || '读者',
+      model: item.model || '',
+      text: item.contentSnippet || item.summaryZh || '',
+      at: item.updatedAt || item.createdAt,
+      helpfulCount: Number(item.helpfulCount) || 0,
+    };
+    const entry = item.entry || {};
+    const helpfulCount = Number(preview.helpfulCount) || 0;
+    const baseDescription = assetPreviewDescription('translation', preview);
+    return {
+      type: 'translation',
+      title: assetFeedTitle(entry, 'translation', preview),
+      link: entryAssetItemUrl(req, entry, 'translation', preview),
+      description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
+      source: [preview.author, preview.model].filter(Boolean).join(' · '),
+      at: Number(preview.at) || 0,
+      guid: `qmreader:contributor:${contributorPage.contributor.id}:translation:${item.id}`,
+    };
+  });
+  const rewrites = (contributorPage.rewrites || []).map(item => {
+    const preview = {
+      id: item.id,
+      author: item.contributorName || item.author || contributorPage.contributor.displayName || '读者',
+      model: item.model || '',
+      text: item.bodySnippet || '',
+      at: item.updatedAt || item.createdAt,
+      helpfulCount: Number(item.helpfulCount) || 0,
+    };
+    const entry = item.entry || {};
+    const helpfulCount = Number(preview.helpfulCount) || 0;
+    const baseDescription = assetPreviewDescription('rewrite', preview);
+    return {
+      type: 'rewrite',
+      title: assetFeedTitle(entry, 'rewrite', preview),
+      link: entryAssetItemUrl(req, entry, 'rewrite', preview),
+      description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
+      source: [preview.author, preview.model].filter(Boolean).join(' · '),
+      at: Number(preview.at) || 0,
+      guid: `qmreader:contributor:${contributorPage.contributor.id}:rewrite:${item.id}`,
+    };
+  });
   const comments = (contributorPage.comments || []).map(comment => {
     const preview = {
       id: comment.id,
@@ -901,7 +969,7 @@ function contributorFeedItems(req, contributorPage) {
       guid: `qmreader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
     };
   });
-  return [...comments, ...messages]
+  return [...translations, ...rewrites, ...comments, ...messages]
     .filter(item => item.link && item.description)
     .sort((a, b) => b.at - a.at)
     .slice(0, 80);
@@ -956,7 +1024,7 @@ function renderContributorFeed(req, contributorPage) {
   return renderRssChannel({
     title: `${displayName} 的公开资产 · QMReader`,
     link: contributorPageUrl(req, contributorPage.contributor.id),
-    description: `${contributorPage.description} 当前订阅包含该贡献者公开点评和文章对话。`,
+    description: `${contributorPage.description} 当前订阅包含该贡献者公开翻译、重写、点评和文章对话。`,
     selfUrl: contributorFeedUrl(req, contributorPage.contributor.id),
     items,
   });
@@ -1499,6 +1567,16 @@ app.get('/api/me/comments', requireLogin, (req, res) => {
   res.json({ comments: store.getUserComments(req.user.id, { limit }) });
 });
 
+app.get('/api/me/translations', requireLogin, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  res.json({ translations: store.getUserTranslations(req.user.id, { limit }) });
+});
+
+app.get('/api/me/rewrites', requireLogin, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  res.json({ rewrites: store.getUserRewrites(req.user.id, { limit }) });
+});
+
 app.get('/api/me/chat-messages', requireLogin, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ messages: store.getUserChatMessages(req.user.id, { limit }) });
@@ -1513,13 +1591,19 @@ app.get('/api/contributors/:id', (req, res) => {
   const contributor = store.getContributor(req.params.id);
   if (!contributor) return res.status(404).json({ error: 'contributor not found' });
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  const translations = store.getUserTranslations(contributor.id, { limit });
+  const rewrites = store.getUserRewrites(contributor.id, { limit });
   const comments = store.getUserComments(contributor.id, { limit });
   const messages = store.getUserChatMessages(contributor.id, { limit });
   res.json({
     contributor,
+    translations,
+    rewrites,
     comments,
     messages,
     counts: {
+      translation: translations.length,
+      rewrite: rewrites.length,
       comments: comments.length,
       chat: messages.length,
     },
@@ -1615,6 +1699,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
     const result = await deepseek.translateEntry(prepared.entry, {
       ...requestAiConfig(req),
       author: requestAuthor(req),
+      userId: req.user.id,
       force: Boolean(req.body && req.body.force),
     });
     res.json({
@@ -1643,6 +1728,7 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
     const result = await deepseek.rewriteEntry(prepared.entry, {
       ...requestAiConfig(req),
       author: requestAuthor(req),
+      userId: req.user.id,
       force: Boolean(req.body && req.body.force),
     });
     res.json({
