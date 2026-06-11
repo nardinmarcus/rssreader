@@ -330,6 +330,7 @@ const state = {
   filterCategory: null,
   assetFilter: null,
   assetSort: 'latest',
+  contributorSort: 'latest',
   q: '',
   refreshing: false,
   refreshProgress: { done: 0, total: 0 },
@@ -401,6 +402,7 @@ function routeStateFromUrl() {
     view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
+    contributorSort: contributorsPath ? normalizeContributorSort(params.get('sort')) : 'latest',
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
     assetId: queryAssetId,
     commentId,
@@ -410,7 +412,10 @@ function routeStateFromUrl() {
 }
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
-  if (view === 'contributors') return q ? `贡献者 · “${q}” · QMReader` : '贡献者 · QMReader';
+  if (view === 'contributors') {
+    const sortPrefix = state.contributorSort === 'helpful' ? '有用 · ' : state.contributorSort === 'assets' ? '资产 · ' : '';
+    return q ? `${sortPrefix}贡献者 · “${q}” · QMReader` : `${sortPrefix}贡献者 · QMReader`;
+  }
   if (view === 'assets') {
     const sortPrefix = state.assetSort === 'helpful' ? '有用 · ' : '';
     const prefix = `${sortPrefix}${assetFilter ? `${assetDirectoryLabel(assetFilter)}资产` : '公开资产'}`;
@@ -503,6 +508,7 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   } else if (view === 'contributors') {
     url.pathname = '/contributors';
     if (state.q) url.searchParams.set('q', state.q);
+    if (state.contributorSort !== 'latest') url.searchParams.set('sort', state.contributorSort);
   }
   return url;
 }
@@ -874,7 +880,9 @@ async function loadEntries() {
   state.entries = data.entries;
 }
 async function loadContributors() {
-  const data = await api('/api/contributors?limit=200');
+  const p = new URLSearchParams({ limit: '200' });
+  if (state.contributorSort !== 'latest') p.set('sort', state.contributorSort);
+  const data = await api('/api/contributors?' + p.toString());
   state.contributors = data.contributors || [];
 }
 
@@ -1157,6 +1165,16 @@ const ASSET_SORTS = {
   latest: { label: '最新', title: '按最近沉淀时间排序' },
   helpful: { label: '有用', title: '优先显示被读者标记有用的 AI 资产、点评和对话' },
 };
+
+const CONTRIBUTOR_SORTS = {
+  latest: { label: '最新', title: '按最近沉淀公开资产的时间排序' },
+  helpful: { label: '有用', title: '优先显示获得读者有用反馈的贡献者' },
+  assets: { label: '资产', title: '优先显示公开资产数量更多的贡献者' },
+};
+
+function normalizeContributorSort(sort = '') {
+  return CONTRIBUTOR_SORTS[sort] ? sort : 'latest';
+}
 
 function assetTypeCount(entries, type) {
   const def = ASSET_FILTERS[type];
@@ -1518,6 +1536,45 @@ function renderAssetActivityStrip() {
       </div>
       <div class="asset-filter-list" aria-label="资产类型筛选">
         ${chips.join('')}
+      </div>`;
+    return;
+  }
+  if (state.view === 'contributors') {
+    const total = (state.contributors || []).length;
+    const list = visibleContributors();
+    const contributorCount = list.length;
+    const assetCount = list.reduce((sum, contributor) => sum + (Number(contributor.assetCount) || 0), 0);
+    const helpfulCount = list.reduce((sum, contributor) => sum + (Number(contributor.helpfulCount) || 0), 0);
+    const helpfulContributors = list.reduce((sum, contributor) => sum + (Number(contributor.helpfulCount) > 0 ? 1 : 0), 0);
+    const latestAt = list.reduce((latest, contributor) => Math.max(latest, Number(contributor.latestAt) || 0), 0);
+    el.classList.toggle('hidden', !total && !state.q);
+    if (!total && !state.q) {
+      el.innerHTML = '';
+      return;
+    }
+    el.classList.add('asset-filter-strip');
+    const latestText = latestAt ? `最近 ${formatAssetTime(latestAt)}` : '暂无沉淀';
+    const sortText = state.contributorSort === 'helpful'
+      ? (helpfulCount ? `有用 ${helpfulCount} 次` : '暂无有用标记')
+      : state.contributorSort === 'assets'
+      ? '按资产数'
+      : '按最新沉淀';
+    const statusText = state.q
+      ? `匹配 ${contributorCount} 人 · ${assetCount} 条资产 · ${sortText} · ${latestText}`
+      : `${contributorCount} 人 · ${assetCount} 条资产 · ${helpfulContributors} 人获认可 · ${sortText} · ${latestText}`;
+    const sortButtons = Object.entries(CONTRIBUTOR_SORTS).map(([sort, def]) => `
+      <button type="button" class="asset-sort-btn${state.contributorSort === sort ? ' active' : ''}" data-contributor-sort="${escapeHtml(sort)}" aria-pressed="${state.contributorSort === sort ? 'true' : 'false'}" title="${escapeHtml(def.title)}">${escapeHtml(def.label)}</button>
+    `).join('');
+    el.innerHTML = `
+      <div class="asset-filter-head">
+        <span>贡献者</span>
+        <strong>${contributorCount} 人</strong>
+        <em>${escapeHtml(statusText)}</em>
+        <button type="button" class="asset-copy-link" data-contributor-copy-list title="复制当前贡献者页链接" aria-label="复制当前贡献者页链接">⧉</button>
+      </div>
+      <div class="asset-sort-row">
+        <span>排序</span>
+        <div class="asset-sort-toggle" role="group" aria-label="贡献者排序">${sortButtons}</div>
       </div>`;
     return;
   }
@@ -3641,6 +3698,7 @@ async function openEntryFromUrl() {
     state.filterCategory = null;
     state.assetFilter = null;
     state.assetSort = 'latest';
+    state.contributorSort = 'latest';
     state.q = '';
     updateListTitle();
     renderSidebar();
@@ -3656,6 +3714,7 @@ async function openEntryFromUrl() {
       state.filterCategory = null;
       state.assetFilter = null;
       state.assetSort = 'latest';
+      state.contributorSort = route.contributorSort;
       state.q = route.q;
     } else if (route.view === 'assets') {
       state.view = 'assets';
@@ -3663,6 +3722,7 @@ async function openEntryFromUrl() {
       state.filterCategory = null;
       state.assetFilter = route.assetFilter;
       state.assetSort = route.assetSort;
+      state.contributorSort = 'latest';
       state.q = route.q;
     } else {
       state.view = 'all';
@@ -3670,9 +3730,12 @@ async function openEntryFromUrl() {
       state.filterCategory = null;
       state.assetFilter = null;
       state.assetSort = 'latest';
+      state.contributorSort = 'latest';
       state.q = '';
     }
+    await Promise.all([loadEntries(), loadContributors()]);
     updateListTitle();
+    renderList();
     renderSidebar();
     closeReaderFromRoute();
     if (route.view === 'assets' || route.view === 'contributors') document.title = listRouteTitle();
@@ -3722,6 +3785,7 @@ function selectSource(id) {
   state.filterCategory = null;
   state.assetFilter = null;
   state.assetSort = 'latest';
+  state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
   reload();
@@ -3731,6 +3795,7 @@ function selectCategory(cat) {
   state.filterSource = null;
   state.assetFilter = null;
   state.assetSort = 'latest';
+  state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
   reload();
@@ -3743,6 +3808,7 @@ function selectView(v) {
   state.readerFocus = null;
   state.readerAssetId = '';
   if (v !== 'assets') state.assetSort = 'latest';
+  if (v !== 'contributors') state.contributorSort = 'latest';
   if (v === 'assets' || v === 'contributors') {
     syncListUrl();
     reload({ clearUrl: false });
@@ -3756,6 +3822,7 @@ function selectAssetFilter(type = null) {
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
+  state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
   syncListUrl();
@@ -3767,6 +3834,20 @@ function selectAssetSort(sort = 'latest') {
   state.assetSort = sort === 'helpful' ? 'helpful' : 'latest';
   state.filterSource = null;
   state.filterCategory = null;
+  state.contributorSort = 'latest';
+  state.readerFocus = null;
+  state.readerAssetId = '';
+  syncListUrl();
+  reload({ clearUrl: false });
+}
+
+function selectContributorSort(sort = 'latest') {
+  state.view = 'contributors';
+  state.contributorSort = normalizeContributorSort(sort);
+  state.assetSort = 'latest';
+  state.filterSource = null;
+  state.filterCategory = null;
+  state.assetFilter = null;
   state.readerFocus = null;
   state.readerAssetId = '';
   syncListUrl();
@@ -4373,6 +4454,11 @@ $('#asset-activity-strip').onclick = async (e) => {
     copyText(listUrlFor('assets', state.assetFilter).href, '资产页链接已复制');
     return;
   }
+  const contributorCopy = e.target.closest('[data-contributor-copy-list]');
+  if (contributorCopy) {
+    copyText(listUrlFor('contributors').href, '贡献者页链接已复制');
+    return;
+  }
   const filter = e.target.closest('[data-asset-strip-filter]');
   if (filter && !filter.disabled) {
     selectAssetFilter(filter.dataset.assetStripFilter || null);
@@ -4381,6 +4467,11 @@ $('#asset-activity-strip').onclick = async (e) => {
   const sort = e.target.closest('[data-asset-sort]');
   if (sort) {
     selectAssetSort(sort.dataset.assetSort || 'latest');
+    return;
+  }
+  const contributorSort = e.target.closest('[data-contributor-sort]');
+  if (contributorSort) {
+    selectContributorSort(contributorSort.dataset.contributorSort || 'latest');
     return;
   }
   const all = e.target.closest('[data-asset-open-all]');

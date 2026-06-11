@@ -186,17 +186,28 @@ function assetDirectoryMeta(req) {
   };
 }
 
-function contributorDirectoryMeta() {
-  const contributors = store.getContributors({ limit: 200 });
+function normalizeContributorSort(sort = '') {
+  return ['helpful', 'assets'].includes(String(sort || '').trim()) ? String(sort || '').trim() : 'latest';
+}
+
+function contributorDirectoryMeta(req = null) {
+  const sort = normalizeContributorSort(req && req.query && req.query.sort);
+  const contributors = store.getContributors({ limit: 200, sort });
   const totalAssets = contributors.reduce((sum, contributor) => sum + Number(contributor.assetCount || 0), 0);
   const totalHelpful = contributors.reduce((sum, contributor) => sum + Number(contributor.helpfulCount || 0), 0);
   const latestAt = contributors.reduce((latest, contributor) => Math.max(latest, Number(contributor.latestAt) || 0), 0);
   const helpfulSuffix = totalHelpful ? `获得 ${totalHelpful} 次有用反馈。` : '';
+  const sortTitle = sort === 'helpful' ? '有用贡献者' : sort === 'assets' ? '高产贡献者' : '公开贡献者';
+  const sortDescription = sort === 'helpful'
+    ? '当前按读者有用反馈排序。'
+    : sort === 'assets'
+    ? '当前按公开资产数量排序。'
+    : '';
   return {
     contributors,
-    title: contributors.length ? `公开贡献者（${contributors.length} 人） · QMReader` : '公开贡献者 · QMReader',
+    title: contributors.length ? `${sortTitle}（${contributors.length} 人） · QMReader` : `${sortTitle} · QMReader`,
     description: contributors.length
-      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${helpfulSuffix}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
       : '浏览在 QMReader 沉淀过公开翻译、重写、点评和文章对话的贡献者。',
     latestAt,
   };
@@ -322,7 +333,7 @@ function formatShanghaiMinute(timestamp) {
 function socialMetaTags(req, entry) {
   const directoryMeta = entry ? null : assetDirectoryMeta(req);
   const contributorPage = !entry && !directoryMeta ? contributorPageMeta(req) : null;
-  const contributorMeta = !entry && !directoryMeta && !contributorPage && isContributorDirectoryRequest(req) ? contributorDirectoryMeta() : null;
+  const contributorMeta = !entry && !directoryMeta && !contributorPage && isContributorDirectoryRequest(req) ? contributorDirectoryMeta(req) : null;
   const focus = entry ? requestAssetFocus(req) : '';
   const title = entry
     ? entryShareTitle(entry, focus, req)
@@ -1656,7 +1667,8 @@ app.get('/api/me/chat-messages', requireLogin, (req, res) => {
 
 app.get('/api/contributors', (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
-  res.json({ contributors: store.getContributors({ limit }) });
+  const sort = normalizeContributorSort(req.query.sort);
+  res.json({ contributors: store.getContributors({ limit, sort }), sort });
 });
 
 app.get('/api/contributors/:id', (req, res) => {
