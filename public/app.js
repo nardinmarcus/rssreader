@@ -1094,7 +1094,7 @@ const ASSET_FILTERS = {
 
 const ASSET_SORTS = {
   latest: { label: '最新', title: '按最近沉淀时间排序' },
-  helpful: { label: '有用', title: '优先显示被读者标记有用的点评和对话' },
+  helpful: { label: '有用', title: '优先显示被读者标记有用的 AI 资产、点评和对话' },
 };
 
 function assetTypeCount(entries, type) {
@@ -1117,6 +1117,8 @@ function assetLatestAtForType(entry, type = '') {
 
 function assetHelpfulScoreForType(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'translation') return Number(assets.translationHelpfulCount) || 0;
+  if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) || 0;
   if (type === 'comments') return Number(assets.commentHelpfulCount ?? assets.helpfulCount) || 0;
   if (type === 'chat') return Number(assets.chatHelpfulCount) || 0;
   return Number(assets.helpfulCount) || 0;
@@ -1124,9 +1126,11 @@ function assetHelpfulScoreForType(entry, type = '') {
 
 function assetHelpfulItemCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'translation') return Number(assets.translationHelpfulCount) > 0 ? 1 : 0;
+  if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) > 0 ? 1 : 0;
   if (type === 'comments') return Number(assets.helpfulComments) || 0;
   if (type === 'chat') return Number(assets.helpfulChats) || 0;
-  return (Number(assets.helpfulComments) || 0) + (Number(assets.helpfulChats) || 0);
+  return (Number(assets.helpfulAssets) || 0) + (Number(assets.helpfulComments) || 0) + (Number(assets.helpfulChats) || 0);
 }
 
 function compareAssetEntries(a, b) {
@@ -1217,6 +1221,20 @@ function assetPreviewForEntry(entry) {
   }
   if (
     state.assetSort === 'helpful'
+    && state.assetFilter === 'translation'
+    && entry?.assets?.topHelpfulTranslation
+  ) {
+    return entry.assets.topHelpfulTranslation;
+  }
+  if (
+    state.assetSort === 'helpful'
+    && state.assetFilter === 'rewrite'
+    && entry?.assets?.topHelpfulRewrite
+  ) {
+    return entry.assets.topHelpfulRewrite;
+  }
+  if (
+    state.assetSort === 'helpful'
     && state.assetFilter === 'comments'
     && entry?.assets?.topHelpfulComment
   ) {
@@ -1272,7 +1290,7 @@ function assetPreviewDisplay(preview) {
 function assetPreviewHtml(preview) {
   const display = assetPreviewDisplay(preview);
   const { type, label } = display;
-  const helpfulMeta = ['comments', 'chat'].includes(type) && Number(preview.helpfulCount || 0) > 0
+  const helpfulMeta = Number(preview.helpfulCount || 0) > 0
     ? `有用 ${Number(preview.helpfulCount || 0)}`
     : '';
   const meta = [preview.author, preview.model, helpfulMeta, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
@@ -1452,7 +1470,7 @@ function renderAssetActivityStrip() {
         const labelText = previewDisplay && previewDisplay.commentType && labels === ASSET_TYPE_LABELS.comments
           ? previewDisplay.label
           : labels;
-        const helpfulMeta = ['comments', 'chat'].includes(type) && preview && Number(preview.helpfulCount || 0) > 0
+        const helpfulMeta = preview && Number(preview.helpfulCount || 0) > 0
           ? `有用 ${Number(preview.helpfulCount || 0)}`
           : '';
         const meta = [src && src.name, previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
@@ -1480,10 +1498,15 @@ function mergeAssets(entry, patch = {}) {
     helpfulCount: 0,
     commentHelpfulCount: 0,
     chatHelpfulCount: 0,
+    translationHelpfulCount: 0,
+    rewriteHelpfulCount: 0,
     helpfulComments: 0,
     helpfulChats: 0,
+    helpfulAssets: 0,
     topHelpfulComment: null,
     topHelpfulChat: null,
+    topHelpfulTranslation: null,
+    topHelpfulRewrite: null,
     topHelpfulAsset: null,
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
@@ -1523,11 +1546,16 @@ function readerAssetPreview(entry, type, fallback = '') {
 function readerAssetPreviewMeta(entry, type, leading = []) {
   const preview = assetPreviewForType(entry, type);
   if (!preview) return '';
-  const helpfulMeta = ['comments', 'chat'].includes(type) && Number(preview.helpfulCount || 0) > 0
+  const helpfulMeta = Number(preview.helpfulCount || 0) > 0
     ? `有用 ${Number(preview.helpfulCount || 0)}`
     : '';
   const meta = [preview.author, preview.model, helpfulMeta, formatAssetTime(preview.at)].filter(Boolean);
   return meta.length ? assetMetaLine([...leading, ...meta]) : '';
+}
+
+function assetHelpfulMeta(asset) {
+  const count = Number(asset && asset.helpfulCount) || 0;
+  return count > 0 ? `有用 ${count}` : '';
 }
 
 function readerAssetSummaryLabel(entry, type, fallback) {
@@ -1563,7 +1591,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     rows.push({
       type: 'translation',
       label: '中文翻译',
-      value: translation ? assetMetaLine([translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)]) : (readerAssetPreviewMeta(entry, 'translation') || '正在加载详情'),
+      value: translation ? assetMetaLine([translation.createdBy, translation.model, assetHelpfulMeta(translation), formatAssetTime(translation.updatedAt)]) : (readerAssetPreviewMeta(entry, 'translation') || '正在加载详情'),
       preview: readerAssetPreview(entry, 'translation', firstTranslatedParagraph),
     });
   }
@@ -1571,7 +1599,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     rows.push({
       type: 'rewrite',
       label: '乔木重写',
-      value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite') || '正在加载详情'),
+      value: rewrite ? assetMetaLine([rewrite.createdBy, rewrite.model, assetHelpfulMeta(rewrite), formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite') || '正在加载详情'),
       preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
     });
   }
@@ -2032,6 +2060,100 @@ function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {})
   generateTranslation();
 }
 
+function entryAssetHasContent(type, asset) {
+  if (type === 'translation') return Boolean(asset && Array.isArray(asset.content) && asset.content.length);
+  if (type === 'rewrite') return Boolean(asset && asset.body);
+  return false;
+}
+
+function assetPreviewFromCurrent(type, asset) {
+  if (!entryAssetHasContent(type, asset)) return null;
+  const text = type === 'translation'
+    ? asset.content.map(pair => pair && pair.target).find(Boolean)
+    : asset.body;
+  const previewText = assetSummaryText(text || '');
+  if (!previewText) return null;
+  return {
+    type,
+    id: '',
+    role: '',
+    author: asset.createdBy || '',
+    model: asset.model || '',
+    text: previewText,
+    at: Number(asset.updatedAt || asset.createdAt || 0) || Date.now(),
+    helpfulCount: Number(asset.helpfulCount) || 0,
+  };
+}
+
+function topHelpfulAssetPreview(items) {
+  return items
+    .filter(item => item && Number(item.helpfulCount || 0) > 0)
+    .sort((a, b) => (Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0)) || (Number(b.at || 0) - Number(a.at || 0)))[0] || null;
+}
+
+function entryAssetHelpfulPatch(type, asset, entry = state.activeEntry) {
+  const assets = mergeAssets(entry);
+  const nextCount = Number(asset && asset.helpfulCount) || 0;
+  const translationHelpfulCount = type === 'translation' ? nextCount : Number(assets.translationHelpfulCount) || 0;
+  const rewriteHelpfulCount = type === 'rewrite' ? nextCount : Number(assets.rewriteHelpfulCount) || 0;
+  const commentHelpfulCount = Number(assets.commentHelpfulCount) || 0;
+  const chatHelpfulCount = Number(assets.chatHelpfulCount) || 0;
+  const previews = { ...(assets.previews || {}) };
+  const preview = assetPreviewFromCurrent(type, asset) || previews[type] || null;
+  if (preview) previews[type] = { ...preview, helpfulCount: nextCount };
+
+  const topHelpfulTranslation = type === 'translation'
+    ? (nextCount > 0 && previews.translation ? previews.translation : null)
+    : assets.topHelpfulTranslation;
+  const topHelpfulRewrite = type === 'rewrite'
+    ? (nextCount > 0 && previews.rewrite ? previews.rewrite : null)
+    : assets.topHelpfulRewrite;
+  const topHelpfulAsset = topHelpfulAssetPreview([
+    topHelpfulTranslation,
+    topHelpfulRewrite,
+    assets.topHelpfulComment,
+    assets.topHelpfulChat,
+  ]);
+  const primaryPreview = preview && (
+    !assets.preview
+    || assets.preview.type === type
+    || Number(preview.at || 0) >= Number(assets.preview.at || 0)
+  ) ? previews[type] : assets.preview;
+
+  return {
+    [type]: entryAssetHasContent(type, asset) || Boolean(assets[type]),
+    previews,
+    preview: primaryPreview || null,
+    translationHelpfulCount,
+    rewriteHelpfulCount,
+    helpfulAssets: (translationHelpfulCount > 0 ? 1 : 0) + (rewriteHelpfulCount > 0 ? 1 : 0),
+    helpfulCount: translationHelpfulCount + rewriteHelpfulCount + commentHelpfulCount + chatHelpfulCount,
+    topHelpfulTranslation,
+    topHelpfulRewrite,
+    topHelpfulAsset,
+  };
+}
+
+function renderAssetHelpfulButton(type, asset) {
+  const btn = $(`#${type}-helpful`);
+  if (!btn) return;
+  const hasContent = entryAssetHasContent(type, asset);
+  btn.classList.toggle('hidden', !hasContent);
+  btn.disabled = !hasContent;
+  if (!hasContent) {
+    btn.classList.remove('active');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.textContent = '有用';
+    return;
+  }
+  const helpfulCount = Number(asset.helpfulCount) || 0;
+  const active = Boolean(asset.helpfulByMe);
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  btn.textContent = helpfulCount ? `有用 ${helpfulCount}` : '有用';
+  btn.title = active ? '取消有用标记' : '觉得这个资产有用';
+}
+
 function renderTranslation(translation, { loading = false } = {}) {
   const hasContent = Boolean(translation && Array.isArray(translation.content) && translation.content.length);
   state.translation = hasContent ? translation : null;
@@ -2043,12 +2165,14 @@ function renderTranslation(translation, { loading = false } = {}) {
   list.innerHTML = '';
   copy.classList.toggle('hidden', !hasContent);
   copy.disabled = !hasContent;
+  renderAssetHelpfulButton('translation', state.translation);
   if (loading) {
     empty.classList.remove('hidden');
     if (emptyText) emptyText.textContent = '正在检查这篇文章的翻译缓存…';
     action.disabled = true;
     action.textContent = '检查中…';
     $('#translation-meta').textContent = '检查中';
+    renderAssetHelpfulButton('translation', null);
     return;
   }
   if (!hasContent) {
@@ -2057,12 +2181,14 @@ function renderTranslation(translation, { loading = false } = {}) {
     action.disabled = false;
     action.textContent = '生成中文翻译';
     $('#translation-meta').textContent = '暂无';
+    renderAssetHelpfulButton('translation', null);
     return;
   }
   empty.classList.add('hidden');
   action.disabled = false;
   action.textContent = translation.stale ? '更新中文翻译' : '重新生成中文翻译';
   $('#translation-meta').textContent = [translation.stale ? '原文已更新' : '', translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
+  renderAssetHelpfulButton('translation', state.translation);
   list.innerHTML = translation.content.map(pair => `
     <div class="translation-pair">
       <p class="translation-source">${escapeHtml(pair.source)}</p>
@@ -2088,7 +2214,8 @@ async function loadTranslation(entry) {
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
-      updateEntryAssets(entry.id, { translation: true });
+      updateEntryAssets(entry.id, entryAssetHelpfulPatch('translation', data.translation), { rerenderList: false });
+      renderList();
     }
   } catch {
     renderTranslation(null);
@@ -2109,15 +2236,18 @@ function renderRewrite(rewrite) {
   content.innerHTML = '';
   copy.classList.toggle('hidden', !rewrite || !rewrite.body);
   copy.disabled = !rewrite || !rewrite.body;
+  renderAssetHelpfulButton('rewrite', state.rewrite);
   if (!rewrite || !rewrite.body) {
     empty.classList.remove('hidden');
     $('#rewrite-meta').textContent = '暂无';
     $('#reader-rewrite').textContent = '生成乔木风格重写';
+    renderAssetHelpfulButton('rewrite', null);
     return;
   }
   empty.classList.add('hidden');
   $('#reader-rewrite').textContent = rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
   $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
+  renderAssetHelpfulButton('rewrite', state.rewrite);
   content.innerHTML = renderMarkdownLite(rewrite.body);
   renderReaderAssetSummary();
   settlePendingAssetJump('rewrite');
@@ -2133,9 +2263,40 @@ async function loadRewrite(entry) {
     const data = await api(`/api/entry/${entry.id}/rewrite`);
     if (state.activeEntry?.id !== entry.id) return;
     renderRewrite(data.rewrite);
-    if (data.rewrite && data.rewrite.body) updateEntryAssets(entry.id, { rewrite: true });
+    if (data.rewrite && data.rewrite.body) {
+      updateEntryAssets(entry.id, entryAssetHelpfulPatch('rewrite', data.rewrite), { rerenderList: false });
+      renderList();
+    }
   } catch {
     renderRewrite(null);
+  }
+}
+
+async function toggleEntryAssetHelpful(type) {
+  const entry = state.activeEntry;
+  const asset = type === 'translation' ? state.translation : type === 'rewrite' ? state.rewrite : null;
+  if (!entry || !entryAssetHasContent(type, asset)) return;
+  if (!requireAuth('login')) return;
+  const btn = $(`#${type}-helpful`);
+  const nextHelpful = !asset.helpfulByMe;
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api(`/api/entry/${entry.id}/assets/${encodeURIComponent(type)}/helpful`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ helpful: nextHelpful }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    const nextAsset = data[type] || { ...asset, ...(data.reaction || {}) };
+    if (type === 'translation') renderTranslation(nextAsset);
+    if (type === 'rewrite') renderRewrite(nextAsset);
+    updateEntryAssets(entry.id, entryAssetHelpfulPatch(type, nextAsset, state.activeEntry), { rerenderList: false });
+    renderList();
+    toast(nextHelpful ? '已标记有用' : '已取消有用标记');
+  } catch (err) {
+    toast('反馈失败: ' + err.message, 5000);
+  } finally {
+    renderAssetHelpfulButton(type, type === 'translation' ? state.translation : state.rewrite);
   }
 }
 
@@ -2169,7 +2330,8 @@ async function generateTranslation({ force = false } = {}) {
     if (data.entry) applyServerEntryUpdate(data.entry);
     renderTranslation(data.translation);
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
-      updateEntryAssets(entry.id, { translation: true });
+      updateEntryAssets(entry.id, entryAssetHelpfulPatch('translation', data.translation), { rerenderList: false });
+      renderList();
     }
     setReaderTab('translation');
     toast(data.originalFetched ? '已获取原文并保存双语翻译' : data.cached ? '已显示缓存翻译' : '双语翻译已保存');
@@ -2210,7 +2372,10 @@ async function generateRewrite({ force = false } = {}) {
     if (state.activeEntry?.id !== entry.id) return;
     if (data.entry) applyServerEntryUpdate(data.entry);
     renderRewrite(data.rewrite);
-    if (data.rewrite && data.rewrite.body) updateEntryAssets(entry.id, { rewrite: true });
+    if (data.rewrite && data.rewrite.body) {
+      updateEntryAssets(entry.id, entryAssetHelpfulPatch('rewrite', data.rewrite), { rerenderList: false });
+      renderList();
+    }
     setReaderTab('rewrite');
     toast(data.originalFetched ? '已获取原文并保存乔木风格重写' : data.cached ? '已显示缓存重写' : '乔木风格重写已保存');
   } catch (err) {
@@ -4066,6 +4231,8 @@ $('#reader-asset-summary').onclick = (e) => {
 };
 $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(state.translation) });
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
+$('#translation-helpful').onclick = () => toggleEntryAssetHelpful('translation');
+$('#rewrite-helpful').onclick = () => toggleEntryAssetHelpful('rewrite');
 $('#translation-copy').onclick = copyTranslationText;
 $('#rewrite-copy').onclick = copyRewriteText;
 $$('.reader-tab').forEach(btn => {

@@ -826,7 +826,7 @@ function publicAssetFeedItems(req, type = '') {
           const label = ASSET_DIRECTORY_META[itemType].label;
           const at = Number(preview.at) || Number(assets.latestAt) || Number(entry.publishedTs) || Date.now();
           const source = [preview.author, preview.model].filter(Boolean).join(' · ');
-          const helpfulCount = (itemType === 'comments' || itemType === 'chat') ? Number(preview.helpfulCount) || 0 : 0;
+          const helpfulCount = Number(preview.helpfulCount) || 0;
           const baseDescription = preview.text
             ? assetPreviewDescription(itemType, preview)
             : clipText(`${label}：${entry.summaryZh || entry.summary || entry.titleZh || entry.title || ''}`, 220);
@@ -1257,22 +1257,26 @@ async function prepareEntryForAiAsset(entry, reason = 'AI asset') {
   return { entry: fetcher.getEntryById(entry.id) || entry, fetched: false };
 }
 
-function translationResponse(entry) {
+function translationResponse(entry, viewer = null) {
   const translation = store.getTranslation(entry.id);
   if (!translation) return null;
   const contentHash = store.hashText((entry.title || '') + '\n' + (entry.content || entry.summary || ''));
+  const reaction = store.getEntryAssetReaction(entry.id, 'translation', viewer);
   return {
     ...translation,
+    ...reaction,
     stale: Boolean(translation.contentHash && translation.contentHash !== contentHash),
   };
 }
 
-function rewriteResponse(entry) {
+function rewriteResponse(entry, viewer = null) {
   const rewrite = store.getRewrite(entry.id);
   if (!rewrite) return null;
   const contentHash = deepseek.rewriteContentHash(entry);
+  const reaction = store.getEntryAssetReaction(entry.id, 'rewrite', viewer);
   return {
     ...rewrite,
+    ...reaction,
     stale: Boolean(rewrite.contentHash && rewrite.contentHash !== contentHash),
   };
 }
@@ -1600,7 +1604,7 @@ app.post('/api/entry/:id/content', async (req, res) => {
 app.get('/api/entry/:id/translation', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ translation: translationResponse(entry) });
+  res.json({ translation: translationResponse(entry, req.user) });
 });
 
 app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
@@ -1613,7 +1617,13 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
       author: requestAuthor(req),
       force: Boolean(req.body && req.body.force),
     });
-    res.json({ ...result, originalFetched: prepared.fetched, originalFetchError: prepared.error || null, entry: prepared.fetched ? prepared.entry : undefined });
+    res.json({
+      ...result,
+      translation: translationResponse(prepared.entry, req.user) || result.translation,
+      originalFetched: prepared.fetched,
+      originalFetchError: prepared.error || null,
+      entry: prepared.fetched ? prepared.entry : undefined,
+    });
   } catch (e) {
     sendError(res, e, 'translation failed');
   }
@@ -1622,7 +1632,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
 app.get('/api/entry/:id/rewrite', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ rewrite: rewriteResponse(entry) });
+  res.json({ rewrite: rewriteResponse(entry, req.user) });
 });
 
 app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
@@ -1635,9 +1645,41 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
       author: requestAuthor(req),
       force: Boolean(req.body && req.body.force),
     });
-    res.json({ ...result, originalFetched: prepared.fetched, originalFetchError: prepared.error || null, entry: prepared.fetched ? prepared.entry : undefined });
+    res.json({
+      ...result,
+      rewrite: rewriteResponse(prepared.entry, req.user) || result.rewrite,
+      originalFetched: prepared.fetched,
+      originalFetchError: prepared.error || null,
+      entry: prepared.fetched ? prepared.entry : undefined,
+    });
   } catch (e) {
     sendError(res, e, 'rewrite failed');
+  }
+});
+
+app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  const type = normalizeAssetDirectoryType(String(req.params.type || ''));
+  if (!['translation', 'rewrite'].includes(type)) {
+    return res.status(404).json({ error: 'asset not found' });
+  }
+  try {
+    const helpful = req.body && typeof req.body.helpful === 'boolean'
+      ? req.body.helpful
+      : true;
+    const reaction = store.setEntryAssetHelpful(entry.id, type, req.user.id, helpful);
+    if (!reaction) return res.status(404).json({ error: 'asset not found' });
+    res.json({
+      reaction: {
+        helpfulCount: Number(reaction.helpful_count) || 0,
+        helpfulByMe: Boolean(reaction.helpful_by_me),
+      },
+      translation: type === 'translation' ? translationResponse(entry, req.user) : undefined,
+      rewrite: type === 'rewrite' ? rewriteResponse(entry, req.user) : undefined,
+    });
+  } catch (e) {
+    sendError(res, e, 'asset feedback failed');
   }
 });
 
