@@ -349,6 +349,7 @@ const state = {
   myComments: [],
   myChatMessages: [],
   myAssetTab: 'translation',
+  myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
   contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
@@ -1181,8 +1182,16 @@ function normalizeContributorSort(sort = '') {
   return CONTRIBUTOR_SORTS[sort] ? sort : 'latest';
 }
 
-function normalizeContributorAssetSort(sort = '') {
+function normalizeAssetSort(sort = '') {
   return sort === 'helpful' ? 'helpful' : 'latest';
+}
+
+function normalizeContributorAssetSort(sort = '') {
+  return normalizeAssetSort(sort);
+}
+
+function normalizeUserAssetSort(sort = '') {
+  return normalizeAssetSort(sort);
 }
 
 function assetTypeCount(entries, type) {
@@ -2807,10 +2816,15 @@ function renderMyAssetTabs() {
   $('#my-rewrite-count').textContent = counts.rewrite;
   $('#my-comments-count').textContent = counts.comments;
   $('#my-chat-count').textContent = counts.chat;
-  $$('.my-asset-tab').forEach(btn => {
+  $$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
     const active = btn.dataset.myAssetTab === state.myAssetTab;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  $$('#my-comments-modal [data-my-asset-sort]').forEach(btn => {
+    const active = normalizeUserAssetSort(btn.dataset.myAssetSort) === state.myAssetSort;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
 }
 
@@ -2898,10 +2912,14 @@ function closeMyCommentsModal() {
 }
 
 function myAssetItemsForTab(type) {
-  if (type === 'translation') return state.myTranslations || [];
-  if (type === 'rewrite') return state.myRewrites || [];
-  if (type === 'chat') return state.myChatMessages || [];
-  return state.myComments || [];
+  const items = type === 'translation'
+    ? state.myTranslations || []
+    : type === 'rewrite'
+    ? state.myRewrites || []
+    : type === 'chat'
+    ? state.myChatMessages || []
+    : state.myComments || [];
+  return sortAssetItems(items, state.myAssetSort);
 }
 
 function myAssetItemsForCurrentTab() {
@@ -2980,9 +2998,13 @@ function assetItemTime(item) {
 }
 
 function sortContributorAssets(items, sort = 'latest') {
-  const contributorSort = normalizeContributorAssetSort(sort);
+  return sortAssetItems(items, sort);
+}
+
+function sortAssetItems(items, sort = 'latest') {
+  const assetSort = normalizeAssetSort(sort);
   return [...(items || [])].sort((a, b) => {
-    if (contributorSort === 'helpful') {
+    if (assetSort === 'helpful') {
       const helpfulDelta = Number(b && b.helpfulCount || 0) - Number(a && a.helpfulCount || 0);
       if (helpfulDelta) return helpfulDelta;
     }
@@ -4725,9 +4747,16 @@ $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#my-comments-btn').onclick = openMyCommentsModal;
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
-$$('.my-asset-tab').forEach(btn => {
+$$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
   btn.onclick = () => {
     state.myAssetTab = normalizeUserAssetTab(btn.dataset.myAssetTab);
+    renderMyAssets();
+  };
+});
+$$('#my-comments-modal [data-my-asset-sort]').forEach(btn => {
+  btn.onclick = () => {
+    state.myAssetSort = normalizeUserAssetSort(btn.dataset.myAssetSort);
+    storage.setItem('qm_my_asset_sort', state.myAssetSort);
     renderMyAssets();
   };
 });
