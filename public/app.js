@@ -320,6 +320,7 @@ const state = {
   starred: new Set(readJson('fr_starred', '[]')),
   agentMessages: [],
   comments: [],
+  myComments: [],
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
@@ -1575,6 +1576,7 @@ function renderAuthState() {
   const loggedIn = Boolean(state.me);
   $('#auth-open').classList.toggle('hidden', loggedIn);
   $('#account-info').classList.toggle('hidden', !loggedIn);
+  $('#my-comments-btn').classList.toggle('hidden', !loggedIn);
   $('#logout-btn').classList.toggle('hidden', !loggedIn);
   if (loggedIn) {
     $('#account-info').textContent = `${state.me.displayName}${isAdmin() ? ' · 管理员' : ''}`;
@@ -1656,6 +1658,7 @@ async function submitAuth() {
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   state.me = null;
+  state.myComments = [];
   applyGuestEntryStates();
   loadAiProfilesForScope();
   renderAuthState();
@@ -2157,6 +2160,18 @@ function commentDisplayParts(body) {
   return { type: '', label: '', body: raw };
 }
 
+function plainSnippet(value, max = 220) {
+  const text = String(value || '')
+    .replace(/!\[[^\]]*]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[#>*_`~]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trim()}...`;
+}
+
 function copyComment(commentId) {
   const comment = (state.comments || []).find(item => item.id === commentId);
   if (!comment) {
@@ -2168,6 +2183,86 @@ function copyComment(commentId) {
 
 function copyCommentLink(commentId) {
   const url = commentUrl(commentId);
+  if (!url) {
+    toast('找不到这条点评链接');
+    return;
+  }
+  copyText(url, '点评链接已复制');
+}
+
+function myCommentUrl(comment) {
+  if (!comment) return '';
+  return commentUrl(comment.id, comment.entry || { id: comment.entryId });
+}
+
+function renderMyComments(comments = state.myComments) {
+  const list = $('#my-comments-list');
+  if (!list) return;
+  if (!comments.length) {
+    list.innerHTML = '<div class="my-comments-empty">还没有发布过公开点评</div>';
+    return;
+  }
+  list.innerHTML = comments.map(comment => {
+    const entry = comment.entry || {};
+    const display = commentDisplayParts(comment.body || comment.bodySnippet || '');
+    const title = entry.titleZh || entry.title || '未命名文章';
+    const meta = [
+      sourceName(entry.sourceId),
+      Number(comment.updatedAt || 0) > Number(comment.createdAt || 0)
+        ? `编辑 ${formatAssetTime(comment.updatedAt)}`
+        : formatAssetTime(comment.createdAt),
+      Number(comment.helpfulCount || 0) ? `有用 ${Number(comment.helpfulCount)}` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <article class="my-comment-item">
+        <div class="my-comment-head">
+          <div class="my-comment-title">
+            ${display.label ? `<span class="comment-kind">${escapeHtml(display.label)}</span>` : ''}
+            <strong>${escapeHtml(title)}</strong>
+          </div>
+          <span class="my-comment-meta">${escapeHtml(meta)}</span>
+        </div>
+        <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || comment.bodySnippet || comment.body, 260))}</p>
+        <div class="my-comment-actions">
+          <button type="button" class="ghost-btn" data-my-comment-open="${escapeHtml(comment.id)}">打开文章</button>
+          <button type="button" class="ghost-btn" data-my-comment-copy="${escapeHtml(comment.id)}">⧉ 复制链接</button>
+        </div>
+      </article>`;
+  }).join('');
+}
+
+async function openMyCommentsModal() {
+  if (!requireAuth('login')) return;
+  $('#my-comments-modal').classList.remove('hidden');
+  $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的点评…</div>';
+  try {
+    const data = await api('/api/me/comments?limit=100');
+    state.myComments = data.comments || [];
+    renderMyComments();
+  } catch (err) {
+    $('#my-comments-list').innerHTML = `<div class="my-comments-empty">读取失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeMyCommentsModal() {
+  $('#my-comments-modal').classList.add('hidden');
+}
+
+async function openMyComment(commentId) {
+  const comment = (state.myComments || []).find(item => item.id === commentId);
+  const entryId = comment && (comment.entry?.id || comment.entryId);
+  if (!entryId) {
+    toast('找不到这条点评对应的文章');
+    return;
+  }
+  closeMyCommentsModal();
+  const ok = await openEntryById(entryId, { focus: 'comments', commentId, updateUrl: true, replaceUrl: false });
+  if (!ok) toast('找不到这篇文章');
+}
+
+function copyMyCommentLink(commentId) {
+  const comment = (state.myComments || []).find(item => item.id === commentId);
+  const url = myCommentUrl(comment);
   if (!url) {
     toast('找不到这条点评链接');
     return;
@@ -3544,6 +3639,18 @@ $('#agent-open').onclick = () => setAgentCollapsed(false);
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
+$('#my-comments-btn').onclick = openMyCommentsModal;
+$('#my-comments-close').onclick = closeMyCommentsModal;
+$('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
+$('#my-comments-list').onclick = (e) => {
+  const open = e.target.closest('[data-my-comment-open]');
+  if (open) {
+    openMyComment(open.dataset.myCommentOpen);
+    return;
+  }
+  const copy = e.target.closest('[data-my-comment-copy]');
+  if (copy) copyMyCommentLink(copy.dataset.myCommentCopy);
+};
 $('#ai-config-close').onclick = closeAiConfigModal;
 $('#ai-config-modal').onclick = (e) => { if (e.target.id === 'ai-config-modal') closeAiConfigModal(); };
 $('#ai-add-profile').onclick = addAiProfile;
@@ -3617,6 +3724,7 @@ document.addEventListener('keydown', (e) => {
     document.getElementById('app').classList.remove('reading');
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
+    $('#my-comments-modal').classList.add('hidden');
   }
 });
 
