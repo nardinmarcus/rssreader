@@ -1094,7 +1094,7 @@ const ASSET_FILTERS = {
 
 const ASSET_SORTS = {
   latest: { label: '最新', title: '按最近沉淀时间排序' },
-  helpful: { label: '有用', title: '优先显示被读者标记有用的点评' },
+  helpful: { label: '有用', title: '优先显示被读者标记有用的点评和对话' },
 };
 
 function assetTypeCount(entries, type) {
@@ -1116,13 +1116,17 @@ function assetLatestAtForType(entry, type = '') {
 }
 
 function assetHelpfulScoreForType(entry, type = '') {
-  if (type && type !== 'comments') return 0;
-  return Number(entry && entry.assets && entry.assets.helpfulCount) || 0;
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'comments') return Number(assets.commentHelpfulCount ?? assets.helpfulCount) || 0;
+  if (type === 'chat') return Number(assets.chatHelpfulCount) || 0;
+  return Number(assets.helpfulCount) || 0;
 }
 
-function assetHelpfulCommentCount(entry, type = '') {
-  if (type && type !== 'comments') return 0;
-  return Number(entry && entry.assets && entry.assets.helpfulComments) || 0;
+function assetHelpfulItemCount(entry, type = '') {
+  const assets = entry && entry.assets ? entry.assets : {};
+  if (type === 'comments') return Number(assets.helpfulComments) || 0;
+  if (type === 'chat') return Number(assets.helpfulChats) || 0;
+  return (Number(assets.helpfulComments) || 0) + (Number(assets.helpfulChats) || 0);
 }
 
 function compareAssetEntries(a, b) {
@@ -1130,7 +1134,7 @@ function compareAssetEntries(a, b) {
   if (state.assetSort === 'helpful') {
     const helpfulDelta = assetHelpfulScoreForType(b, state.assetFilter) - assetHelpfulScoreForType(a, state.assetFilter);
     if (helpfulDelta) return helpfulDelta;
-    const helpfulCommentDelta = assetHelpfulCommentCount(b, state.assetFilter) - assetHelpfulCommentCount(a, state.assetFilter);
+    const helpfulCommentDelta = assetHelpfulItemCount(b, state.assetFilter) - assetHelpfulItemCount(a, state.assetFilter);
     if (helpfulCommentDelta) return helpfulCommentDelta;
   }
   return latestDelta || (b.publishedTs || 0) - (a.publishedTs || 0);
@@ -1206,10 +1210,24 @@ function assetPreviewForEntry(entry) {
   if (state.view !== 'assets') return null;
   if (
     state.assetSort === 'helpful'
-    && (!state.assetFilter || state.assetFilter === 'comments')
+    && !state.assetFilter
+    && entry?.assets?.topHelpfulAsset
+  ) {
+    return entry.assets.topHelpfulAsset;
+  }
+  if (
+    state.assetSort === 'helpful'
+    && state.assetFilter === 'comments'
     && entry?.assets?.topHelpfulComment
   ) {
     return entry.assets.topHelpfulComment;
+  }
+  if (
+    state.assetSort === 'helpful'
+    && state.assetFilter === 'chat'
+    && entry?.assets?.topHelpfulChat
+  ) {
+    return entry.assets.topHelpfulChat;
   }
   return assetPreviewForType(entry, state.assetFilter);
 }
@@ -1254,7 +1272,7 @@ function assetPreviewDisplay(preview) {
 function assetPreviewHtml(preview) {
   const display = assetPreviewDisplay(preview);
   const { type, label } = display;
-  const helpfulMeta = type === 'comments' && Number(preview.helpfulCount || 0) > 0
+  const helpfulMeta = ['comments', 'chat'].includes(type) && Number(preview.helpfulCount || 0) > 0
     ? `有用 ${Number(preview.helpfulCount || 0)}`
     : '';
   const meta = [preview.author, preview.model, helpfulMeta, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
@@ -1275,9 +1293,10 @@ function assetItemListHtml(entry) {
   if (state.view !== 'assets' || !['comments', 'chat'].includes(state.assetFilter)) return '';
   const assets = entry && entry.assets ? entry.assets : {};
   let items = (assets.items && assets.items[state.assetFilter]) || [];
-  if (state.assetFilter === 'comments' && state.assetSort === 'helpful' && assets.topHelpfulComment) {
+  if (['comments', 'chat'].includes(state.assetFilter) && state.assetSort === 'helpful') {
+    const top = state.assetFilter === 'chat' ? assets.topHelpfulChat : assets.topHelpfulComment;
     const byId = new Map();
-    for (const item of [assets.topHelpfulComment, ...items]) {
+    for (const item of [top, ...items]) {
       const key = item && item.id ? item.id : `${item && item.at}:${item && item.text}`;
       if (item && key && !byId.has(key)) byId.set(key, item);
     }
@@ -1433,7 +1452,7 @@ function renderAssetActivityStrip() {
         const labelText = previewDisplay && previewDisplay.commentType && labels === ASSET_TYPE_LABELS.comments
           ? previewDisplay.label
           : labels;
-        const helpfulMeta = type === 'comments' && preview && Number(preview.helpfulCount || 0) > 0
+        const helpfulMeta = ['comments', 'chat'].includes(type) && preview && Number(preview.helpfulCount || 0) > 0
           ? `有用 ${Number(preview.helpfulCount || 0)}`
           : '';
         const meta = [src && src.name, previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
@@ -1459,8 +1478,13 @@ function mergeAssets(entry, patch = {}) {
     previews: {},
     items: {},
     helpfulCount: 0,
+    commentHelpfulCount: 0,
+    chatHelpfulCount: 0,
     helpfulComments: 0,
+    helpfulChats: 0,
     topHelpfulComment: null,
+    topHelpfulChat: null,
+    topHelpfulAsset: null,
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
   };
@@ -1499,7 +1523,10 @@ function readerAssetPreview(entry, type, fallback = '') {
 function readerAssetPreviewMeta(entry, type, leading = []) {
   const preview = assetPreviewForType(entry, type);
   if (!preview) return '';
-  const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean);
+  const helpfulMeta = ['comments', 'chat'].includes(type) && Number(preview.helpfulCount || 0) > 0
+    ? `有用 ${Number(preview.helpfulCount || 0)}`
+    : '';
+  const meta = [preview.author, preview.model, helpfulMeta, formatAssetTime(preview.at)].filter(Boolean);
   return meta.length ? assetMetaLine([...leading, ...meta]) : '';
 }
 
@@ -1562,10 +1589,11 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   }
   if (assets.chatMessages) {
     const latest = latestAssetItem(messages, true);
+    const helpfulMeta = latest && Number(latest.helpfulCount || 0) > 0 ? `有用 ${Number(latest.helpfulCount || 0)}` : '';
     rows.push({
       type: 'chat',
       label: '文章对话',
-      value: latest ? assetMetaLine([`${assets.chatMessages} 条`, latest.author, formatAssetTime(latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'chat', [`${assets.chatMessages} 条`]) || `${assets.chatMessages} 条 · 正在加载详情`),
+      value: latest ? assetMetaLine([`${assets.chatMessages} 条`, latest.author, helpfulMeta, formatAssetTime(latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'chat', [`${assets.chatMessages} 条`]) || `${assets.chatMessages} 条 · 正在加载详情`),
       preview: readerAssetPreview(entry, 'chat', latest && latest.content),
     });
   }
@@ -2409,6 +2437,7 @@ function renderMyAssets() {
       sourceName(entry.sourceId),
       item.author,
       item.model,
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
       formatAssetTime(item.createdAt),
     ].filter(Boolean).join(' · ') : [
       sourceName(entry.sourceId),
@@ -2535,6 +2564,7 @@ function renderContributorAssets() {
       sourceName(entry.sourceId),
       item.author,
       item.model,
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
       formatAssetTime(item.createdAt),
     ].filter(Boolean).join(' · ') : [
       sourceName(entry.sourceId),
@@ -2802,10 +2832,11 @@ async function submitComment() {
   }
 }
 
-function renderAgentMessages(extraPending = false) {
+function renderAgentMessages(extraPending = false, { preserveScroll = false } = {}) {
   const el = $('#agent-messages');
   const thread = state.agentMessages || [];
   const hadPendingChatMessage = Boolean(state.pendingChatMessageId);
+  const previousScrollTop = el.scrollTop;
   el.innerHTML = '';
   if (!state.activeEntry) {
     el.innerHTML = '<div class="agent-empty">未选择文章</div>';
@@ -2885,11 +2916,27 @@ function renderAgentMessages(extraPending = false) {
     body.innerHTML = renderMarkdownLite(message.content);
     row.appendChild(head);
     row.appendChild(body);
+    if (!message.pending && message.id) {
+      const feedback = document.createElement('div');
+      feedback.className = 'agent-msg-feedback';
+      const helpfulCount = Number(message.helpfulCount || 0);
+      const helpful = document.createElement('button');
+      helpful.type = 'button';
+      helpful.className = `agent-msg-helpful${message.helpfulByMe ? ' active' : ''}`;
+      helpful.setAttribute('aria-pressed', message.helpfulByMe ? 'true' : 'false');
+      helpful.title = message.helpfulByMe ? '取消有用标记' : '标记这条对话有用';
+      helpful.textContent = `有用${helpfulCount ? ` ${helpfulCount}` : ''}`;
+      helpful.onclick = () => toggleAgentHelpful(message.id);
+      feedback.appendChild(helpful);
+      row.appendChild(feedback);
+    }
     frag.appendChild(row);
   }
   el.appendChild(frag);
   if (hadPendingChatMessage) {
     if (highlightAgentMessageFromRoute()) state.pendingAssetJump = null;
+  } else if (preserveScroll) {
+    el.scrollTop = previousScrollTop;
   } else {
     el.scrollTop = el.scrollHeight;
   }
@@ -2939,6 +2986,42 @@ function draftCommentFromAgentMessage(message) {
     scrollReaderTarget('#comment-input', { behavior: 'auto', offset: 120 });
   }, 180);
   toast('已放入点评草稿，可编辑后发布');
+}
+
+function chatHelpfulAssetPatch(messages, entry = state.activeEntry) {
+  const assets = mergeAssets(entry);
+  const chatHelpfulCount = (messages || []).reduce((sum, message) => sum + (Number(message.helpfulCount) || 0), 0);
+  const helpfulChats = (messages || []).filter(message => Number(message.helpfulCount || 0) > 0).length;
+  const commentHelpfulCount = Number(assets.commentHelpfulCount ?? (Number(assets.helpfulCount || 0) - Number(assets.chatHelpfulCount || 0))) || 0;
+  return {
+    chatMessages: (messages || []).filter(message => message && message.id).length,
+    chatHelpfulCount,
+    helpfulChats,
+    helpfulCount: Math.max(0, commentHelpfulCount) + chatHelpfulCount,
+  };
+}
+
+async function toggleAgentHelpful(messageId) {
+  const entry = state.activeEntry;
+  const message = (state.agentMessages || []).find(item => item.id === messageId);
+  if (!entry || !message) return;
+  if (!requireAuth('login')) return;
+  const nextHelpful = !message.helpfulByMe;
+  try {
+    const data = await api(`/api/entry/${entry.id}/chat/${encodeURIComponent(messageId)}/helpful`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ helpful: nextHelpful }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.agentMessages = data.messages || state.agentMessages || [];
+    updateEntryAssets(entry.id, chatHelpfulAssetPatch(state.agentMessages, state.activeEntry), { rerenderList: false });
+    renderAgentMessages(false, { preserveScroll: true });
+    renderList();
+    toast(nextHelpful ? '已标记有用' : '已取消有用标记');
+  } catch (err) {
+    toast('反馈失败: ' + err.message, 5000);
+  }
 }
 
 async function deleteAgentMessage(messageId) {

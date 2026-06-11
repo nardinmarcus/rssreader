@@ -581,6 +581,7 @@ function assetFeedPreviews(entry, type, previews = {}) {
       model: message.model || '',
       text: message.content,
       at: message.createdAt,
+      helpfulCount: Number(message.helpfulCount) || 0,
     }));
   }
   return [previews[type] || {}];
@@ -635,6 +636,7 @@ function exactAssetPreview(entry, focus, req) {
       model: message.model || '',
       text: message.content,
       at: message.createdAt,
+      helpfulCount: Number(message.helpfulCount) || 0,
     };
   }
   return null;
@@ -824,7 +826,7 @@ function publicAssetFeedItems(req, type = '') {
           const label = ASSET_DIRECTORY_META[itemType].label;
           const at = Number(preview.at) || Number(assets.latestAt) || Number(entry.publishedTs) || Date.now();
           const source = [preview.author, preview.model].filter(Boolean).join(' · ');
-          const helpfulCount = itemType === 'comments' ? Number(preview.helpfulCount) || 0 : 0;
+          const helpfulCount = (itemType === 'comments' || itemType === 'chat') ? Number(preview.helpfulCount) || 0 : 0;
           const baseDescription = preview.text
             ? assetPreviewDescription(itemType, preview)
             : clipText(`${label}：${entry.summaryZh || entry.summary || entry.titleZh || entry.title || ''}`, 220);
@@ -884,13 +886,16 @@ function contributorFeedItems(req, contributorPage) {
       model: message.model || '',
       text: message.content || message.contentSnippet || '',
       at: message.createdAt,
+      helpfulCount: Number(message.helpfulCount) || 0,
     };
     const entry = message.entry || {};
+    const helpfulCount = Number(preview.helpfulCount) || 0;
+    const baseDescription = assetPreviewDescription('chat', preview);
     return {
       type: 'chat',
       title: assetFeedTitle(entry, 'chat', preview),
       link: entryAssetItemUrl(req, entry, 'chat', preview),
-      description: assetPreviewDescription('chat', preview),
+      description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
       source: [preview.author, preview.model].filter(Boolean).join(' · '),
       at: Number(preview.at) || 0,
       guid: `qmreader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
@@ -1721,6 +1726,27 @@ app.get('/api/entry/:id/chat', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   res.json({ messages: store.getChatMessages(entry.id, req.user) });
+});
+
+app.post('/api/entry/:id/chat/:messageId/helpful', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const helpful = req.body && typeof req.body.helpful === 'boolean'
+      ? req.body.helpful
+      : true;
+    const reaction = store.setChatMessageHelpful(entry.id, req.params.messageId, req.user.id, helpful);
+    if (!reaction) return res.status(404).json({ error: 'chat message not found' });
+    res.json({
+      reaction: {
+        helpfulCount: Number(reaction.helpful_count) || 0,
+        helpfulByMe: Boolean(reaction.helpful_by_me),
+      },
+      messages: store.getChatMessages(entry.id, req.user),
+    });
+  } catch (e) {
+    sendError(res, e, 'chat feedback failed');
+  }
 });
 
 app.delete('/api/entry/:id/chat/:messageId', requireLogin, (req, res) => {
