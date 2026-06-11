@@ -1374,7 +1374,7 @@ function renderAssetActivityStrip() {
     const statusText = matchedCount === null
       ? `${scopeText} · ${sortText} · ${latestText}`
       : `匹配 ${matchedCount} 篇 · ${scopeText} · ${sortText} · ${latestText}`;
-    const feedHref = state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml';
+    const feedHref = `${state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml'}${state.assetSort === 'helpful' ? '?sort=helpful' : ''}`;
     const sortButtons = Object.entries(ASSET_SORTS).map(([sort, def]) => `
       <button type="button" class="asset-sort-btn${state.assetSort === sort ? ' active' : ''}" data-asset-sort="${escapeHtml(sort)}" aria-pressed="${state.assetSort === sort ? 'true' : 'false'}" title="${escapeHtml(def.title)}">${escapeHtml(def.label)}</button>
     `).join('');

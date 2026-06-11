@@ -466,6 +466,7 @@ function assetFeedPreviews(entry, type, previews = {}) {
       model: comment.model || '',
       text: comment.body,
       at: comment.updatedAt || comment.createdAt,
+      helpfulCount: Number(comment.helpfulCount) || 0,
     }));
   }
   if (type === 'chat') {
@@ -616,21 +617,27 @@ function entryPublicUrl(req, entry, focus = '') {
   return publicUrl(req, `/?${query.toString()}`);
 }
 
-function assetDirectoryUrl(req, type = '') {
+function assetDirectoryUrl(req, type = '', sort = 'latest') {
   const assetType = normalizeAssetDirectoryType(type);
-  return publicUrl(req, assetType ? `/assets/${assetType}` : '/assets');
+  const path = assetType ? `/assets/${assetType}` : '/assets';
+  const query = sort === 'helpful' ? '?sort=helpful' : '';
+  return publicUrl(req, `${path}${query}`);
 }
 
-function assetFeedUrl(req, type = '') {
+function assetFeedUrl(req, type = '', sort = 'latest') {
   const assetType = normalizeAssetDirectoryType(type);
-  return publicUrl(req, assetType ? `/assets/${assetType}.xml` : '/assets.xml');
+  const path = assetType ? `/assets/${assetType}.xml` : '/assets.xml';
+  const query = sort === 'helpful' ? '?sort=helpful' : '';
+  return publicUrl(req, `${path}${query}`);
 }
 
 function rssAlternateTag(req) {
   const type = isAssetDirectoryRequest(req) ? requestAssetDirectoryType(req) : '';
+  const sort = isAssetDirectoryRequest(req) ? requestAssetSort(req) : 'latest';
   const meta = type ? ASSET_DIRECTORY_META[type] : null;
-  const title = meta ? `QMReader ${meta.label}资产 RSS` : 'QMReader 公开资产 RSS';
-  return `<link rel="alternate" type="application/rss+xml" title="${escapeHtml(title)}" href="${escapeHtml(assetFeedUrl(req, type))}" />`;
+  const sortPrefix = sort === 'helpful' ? '有用 · ' : '';
+  const title = meta ? `QMReader ${sortPrefix}${meta.label}资产 RSS` : `QMReader ${sortPrefix}公开资产 RSS`;
+  return `<link rel="alternate" type="application/rss+xml" title="${escapeHtml(title)}" href="${escapeHtml(assetFeedUrl(req, type, sort))}" />`;
 }
 
 function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true } = {}) {
@@ -685,6 +692,7 @@ function rssDate(timestamp) {
 
 function publicAssetFeedItems(req, type = '') {
   const assetType = normalizeAssetDirectoryType(type);
+  const sort = requestAssetSort(req);
   return fetcher.getEntries({ limit: 1000 })
     .filter(entry => entry && entry.id && hasPublicAssets(entry))
     .flatMap(entry => {
@@ -697,9 +705,11 @@ function publicAssetFeedItems(req, type = '') {
           const label = ASSET_DIRECTORY_META[itemType].label;
           const at = Number(preview.at) || Number(assets.latestAt) || Number(entry.publishedTs) || Date.now();
           const source = [preview.author, preview.model].filter(Boolean).join(' · ');
-          const description = preview.text
+          const helpfulCount = itemType === 'comments' ? Number(preview.helpfulCount) || 0 : 0;
+          const baseDescription = preview.text
             ? assetPreviewDescription(itemType, preview)
             : clipText(`${label}：${entry.summaryZh || entry.summary || entry.titleZh || entry.title || ''}`, 220);
+          const description = helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription;
           const title = assetFeedTitle(entry, itemType, preview);
           const link = entryAssetItemUrl(req, entry, itemType, preview);
           return {
@@ -709,23 +719,32 @@ function publicAssetFeedItems(req, type = '') {
             description,
             source,
             at,
+            helpfulCount,
             guid: `qmreader:${entry.id}:${itemType}:${preview.id || at}`,
           };
         }));
     })
-    .sort((a, b) => b.at - a.at)
+    .sort((a, b) => {
+      if (sort === 'helpful') {
+        const helpfulDelta = Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0);
+        if (helpfulDelta) return helpfulDelta;
+      }
+      return b.at - a.at;
+    })
     .slice(0, 80);
 }
 
 function renderAssetFeed(req, type = '') {
   const assetType = normalizeAssetDirectoryType(type);
+  const sort = requestAssetSort(req);
   const meta = assetType ? ASSET_DIRECTORY_META[assetType] : null;
   const items = publicAssetFeedItems(req, assetType);
-  const title = meta ? `${meta.label}资产 · QMReader` : 'QMReader 公开资产';
-  const description = meta ? meta.description : DEFAULT_DESCRIPTION;
-  const selfUrl = assetFeedUrl(req, assetType);
-  const directoryUrl = assetDirectoryUrl(req, assetType);
-  const lastBuildDate = rssDate(items[0]?.at || Date.now());
+  const sortPrefix = sort === 'helpful' ? '有用 · ' : '';
+  const title = meta ? `${sortPrefix}${meta.label}资产 · QMReader` : `${sortPrefix}QMReader 公开资产`;
+  const description = `${meta ? meta.description : DEFAULT_DESCRIPTION}${sort === 'helpful' ? ' 当前订阅按读者“有用”反馈优先排序。' : ''}`;
+  const selfUrl = assetFeedUrl(req, assetType, sort);
+  const directoryUrl = assetDirectoryUrl(req, assetType, sort);
+  const lastBuildDate = rssDate(items.reduce((latest, item) => Math.max(latest, Number(item.at) || 0), 0) || Date.now());
   const itemXml = items.map(item => [
     '    <item>',
     `      <title>${escapeHtml(item.title)}</title>`,

@@ -13,7 +13,7 @@
 - 账号级“我的资产”列表可找回自己发布过的公开点评和文章对话，并跳回对应文章位置
 - 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开点评和文章对话，不暴露邮箱
 - 公开资产视图可按最新沉淀或读者“有用”反馈排序，可通过 `/assets`、`/assets?sort=helpful`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会预览最新翻译、重写，以及每篇文章最近几条点评或高有用点评，单条预览深链可复制，点评/对话预览和单条链接可直达具体条目
-- 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；点评和对话按单条资产进入订阅流
+- 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；追加 `?sort=helpful` 可订阅有用排序版本，点评和对话按单条资产进入订阅流
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
 - 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
 - 管理员登录后管理信息源和手动刷新；每天北京时间 08:00 自动刷新
@@ -150,8 +150,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/assets` | 公开资产网页目录；支持 `?q=` 搜索和 `?sort=helpful` 有用排序 |
 | GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索、`?sort=helpful` 有用排序；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | GET | `/contributors` | 公开贡献者网页目录；支持 `?q=` 搜索 |
-| GET | `/assets.xml` | 公开资产 RSS 订阅流 |
-| GET | `/assets/:type.xml` | 按类型订阅公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
+| GET | `/assets.xml` | 公开资产 RSS 订阅流；支持 `?sort=helpful` |
+| GET | `/assets/:type.xml` | 按类型订阅公开资产；支持 `?sort=helpful`，`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | POST | `/api/translate-titles` | 管理员手动触发英文标题补翻译 |
 | POST | `/api/refresh` | 管理员刷新；body `{}` 刷新全部，`{"sourceId":"xx"}` 刷新单个 |
 | POST | `/api/sources/:id/toggle` | 管理员启用/禁用某个源（持久化到 data/state.json） |
