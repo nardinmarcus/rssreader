@@ -676,12 +676,13 @@ function exactAssetPreview(entry, focus, req) {
       type: focus,
       id: asset.id,
       author: asset.contributorName || asset.author || asset.createdBy || '',
+      title: focus === 'translation' ? asset.titleZh || '' : asset.title || '',
       model: asset.model || '',
       text: focus === 'translation'
         ? clipText((asset.content || []).map(pair => pair && pair.target).find(Boolean) || asset.summaryZh || '', 220)
         : asset.body,
       at: asset.updatedAt || asset.createdAt,
-      helpfulCount: Number(asset.helpfulCount) || 0,
+      helpfulCount: Number(store.getEntryAssetReaction(entry.id, focus, null, asset.id).helpfulCount) || 0,
     };
   }
   if (focus === 'comments') {
@@ -1394,7 +1395,7 @@ function translationResponse(entry, viewer = null, assetId = '') {
   if (translation && exactAssetId && translation.entryId !== entry.id) return null;
   if (!translation) return null;
   const contentHash = store.hashText((entry.title || '') + '\n' + (entry.content || entry.summary || ''));
-  const reaction = store.getEntryAssetReaction(entry.id, 'translation', viewer);
+  const reaction = store.getEntryAssetReaction(entry.id, 'translation', viewer, exactAssetId);
   return {
     ...translation,
     ...reaction,
@@ -1410,7 +1411,7 @@ function rewriteResponse(entry, viewer = null, assetId = '') {
   if (rewrite && exactAssetId && rewrite.entryId !== entry.id) return null;
   if (!rewrite) return null;
   const contentHash = deepseek.rewriteContentHash(entry);
-  const reaction = store.getEntryAssetReaction(entry.id, 'rewrite', viewer);
+  const reaction = store.getEntryAssetReaction(entry.id, 'rewrite', viewer, exactAssetId);
   return {
     ...rewrite,
     ...reaction,
@@ -1823,15 +1824,16 @@ app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
     const helpful = req.body && typeof req.body.helpful === 'boolean'
       ? req.body.helpful
       : true;
-    const reaction = store.setEntryAssetHelpful(entry.id, type, req.user.id, helpful);
+    const assetId = String((req.body && req.body.assetId) || req.query.assetId || '').trim();
+    const reaction = store.setEntryAssetHelpful(entry.id, type, req.user.id, helpful, assetId);
     if (!reaction) return res.status(404).json({ error: 'asset not found' });
     res.json({
       reaction: {
         helpfulCount: Number(reaction.helpful_count) || 0,
         helpfulByMe: Boolean(reaction.helpful_by_me),
       },
-      translation: type === 'translation' ? translationResponse(entry, req.user) : undefined,
-      rewrite: type === 'rewrite' ? rewriteResponse(entry, req.user) : undefined,
+      translation: type === 'translation' ? translationResponse(entry, req.user, assetId) : undefined,
+      rewrite: type === 'rewrite' ? rewriteResponse(entry, req.user, assetId) : undefined,
     });
   } catch (e) {
     sendError(res, e, 'asset feedback failed');

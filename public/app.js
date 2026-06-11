@@ -1145,11 +1145,14 @@ function assetHelpfulScoreForType(entry, type = '') {
 
 function assetHelpfulItemCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
-  if (type === 'translation') return Number(assets.translationHelpfulCount) > 0 ? assetCountForType(entry, 'translation') : 0;
-  if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) > 0 ? assetCountForType(entry, 'rewrite') : 0;
+  if (type === 'translation') return helpfulAiAssetItemCount(assets, 'translation');
+  if (type === 'rewrite') return helpfulAiAssetItemCount(assets, 'rewrite');
   if (type === 'comments') return Number(assets.helpfulComments) || 0;
   if (type === 'chat') return Number(assets.helpfulChats) || 0;
-  return (Number(assets.helpfulAssets) || 0) + (Number(assets.helpfulComments) || 0) + (Number(assets.helpfulChats) || 0);
+  return helpfulAiAssetItemCount(assets, 'translation')
+    + helpfulAiAssetItemCount(assets, 'rewrite')
+    + (Number(assets.helpfulComments) || 0)
+    + (Number(assets.helpfulChats) || 0);
 }
 
 function compareAssetEntries(a, b) {
@@ -2108,9 +2111,10 @@ function assetPreviewFromCurrent(type, asset) {
   if (!previewText) return null;
   return {
     type,
-    id: '',
+    id: asset.id || state.readerAssetId || '',
     role: '',
     author: asset.createdBy || '',
+    title: type === 'translation' ? asset.titleZh || '' : asset.title || '',
     model: asset.model || '',
     text: previewText,
     at: Number(asset.updatedAt || asset.createdAt || 0) || Date.now(),
@@ -2124,22 +2128,54 @@ function topHelpfulAssetPreview(items) {
     .sort((a, b) => (Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0)) || (Number(b.at || 0) - Number(a.at || 0)))[0] || null;
 }
 
+function helpfulAiAssetItemCount(assets, type) {
+  const items = assets && assets.items && Array.isArray(assets.items[type]) ? assets.items[type] : [];
+  if (items.length) {
+    return items.reduce((sum, item) => sum + (Number(item && item.helpfulCount) > 0 ? 1 : 0), 0);
+  }
+  const count = type === 'translation' ? assets && assets.translationHelpfulCount : assets && assets.rewriteHelpfulCount;
+  return Number(count) > 0 ? 1 : 0;
+}
+
 function entryAssetHelpfulPatch(type, asset, entry = state.activeEntry) {
   const assets = mergeAssets(entry);
   const nextCount = Number(asset && asset.helpfulCount) || 0;
-  const translationHelpfulCount = type === 'translation' ? nextCount : Number(assets.translationHelpfulCount) || 0;
-  const rewriteHelpfulCount = type === 'rewrite' ? nextCount : Number(assets.rewriteHelpfulCount) || 0;
   const commentHelpfulCount = Number(assets.commentHelpfulCount) || 0;
   const chatHelpfulCount = Number(assets.chatHelpfulCount) || 0;
   const previews = { ...(assets.previews || {}) };
   const preview = assetPreviewFromCurrent(type, asset) || previews[type] || null;
-  if (preview) previews[type] = { ...preview, helpfulCount: nextCount };
+  const assetId = String((asset && asset.id) || state.readerAssetId || '').trim();
+  const items = { ...(assets.items || {}) };
+  let typeItems = Array.isArray(items[type]) ? items[type].map(item => ({ ...item })) : [];
+  if (preview && assetId) {
+    let found = false;
+    typeItems = typeItems.map(item => {
+      if (item.id !== assetId) return item;
+      found = true;
+      return { ...item, ...preview, id: assetId, helpfulCount: nextCount };
+    });
+    if (!found) typeItems.unshift({ ...preview, id: assetId, helpfulCount: nextCount });
+    items[type] = typeItems;
+  }
+  if (preview) {
+    const currentPreview = previews[type];
+    const shouldUpdatePreview = !assetId
+      || !currentPreview
+      || currentPreview.id === assetId
+      || Number(preview.at || 0) >= Number(currentPreview.at || 0);
+    if (shouldUpdatePreview) previews[type] = { ...preview, helpfulCount: nextCount };
+  }
+  const typeHelpfulCount = typeItems.length
+    ? typeItems.reduce((sum, item) => sum + (Number(item.helpfulCount) || 0), 0)
+    : nextCount;
+  const translationHelpfulCount = type === 'translation' ? typeHelpfulCount : Number(assets.translationHelpfulCount) || 0;
+  const rewriteHelpfulCount = type === 'rewrite' ? typeHelpfulCount : Number(assets.rewriteHelpfulCount) || 0;
 
   const topHelpfulTranslation = type === 'translation'
-    ? (nextCount > 0 && previews.translation ? previews.translation : null)
+    ? topHelpfulAssetPreview(typeItems.length ? typeItems : [previews.translation])
     : assets.topHelpfulTranslation;
   const topHelpfulRewrite = type === 'rewrite'
-    ? (nextCount > 0 && previews.rewrite ? previews.rewrite : null)
+    ? topHelpfulAssetPreview(typeItems.length ? typeItems : [previews.rewrite])
     : assets.topHelpfulRewrite;
   const topHelpfulAsset = topHelpfulAssetPreview([
     topHelpfulTranslation,
@@ -2155,11 +2191,13 @@ function entryAssetHelpfulPatch(type, asset, entry = state.activeEntry) {
 
   return {
     [type]: entryAssetHasContent(type, asset) || Boolean(assets[type]),
+    items,
     previews,
     preview: primaryPreview || null,
     translationHelpfulCount,
     rewriteHelpfulCount,
-    helpfulAssets: (translationHelpfulCount > 0 ? 1 : 0) + (rewriteHelpfulCount > 0 ? 1 : 0),
+    helpfulAssets: helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount }, 'translation')
+      + helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount }, 'rewrite'),
     helpfulCount: translationHelpfulCount + rewriteHelpfulCount + commentHelpfulCount + chatHelpfulCount,
     topHelpfulTranslation,
     topHelpfulRewrite,
@@ -2316,12 +2354,13 @@ async function toggleEntryAssetHelpful(type) {
   if (!requireAuth('login')) return;
   const btn = $(`#${type}-helpful`);
   const nextHelpful = !asset.helpfulByMe;
+  const assetId = String(asset.id || state.readerAssetId || '').trim();
   if (btn) btn.disabled = true;
   try {
     const data = await api(`/api/entry/${entry.id}/assets/${encodeURIComponent(type)}/helpful`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ helpful: nextHelpful }),
+      body: JSON.stringify({ helpful: nextHelpful, assetId }),
     });
     if (state.activeEntry?.id !== entry.id) return;
     const nextAsset = state.readerAssetId && (type === 'translation' || type === 'rewrite')
