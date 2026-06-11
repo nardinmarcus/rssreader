@@ -309,6 +309,9 @@ const state = {
   filterCategory: null,
   assetFilter: null,
   q: '',
+  refreshing: false,
+  refreshProgress: { done: 0, total: 0 },
+  autoRewrite: { running: false, last: null },
   activeEntry: null,
   guestRead: new Set(readJson('fr_read', '[]')),
   guestStarred: new Set(readJson('fr_starred', '[]')),
@@ -793,6 +796,10 @@ async function api(path, opts) {
 async function loadSources() {
   const data = await api('/api/sources');
   state.sources = data.sources;
+  state.refreshing = Boolean(data.refreshing);
+  state.refreshProgress = data.progress || { done: 0, total: 0 };
+  state.autoRewrite = data.autoRewrite || { running: false, last: null };
+  if (!$('#manage-modal')?.classList.contains('hidden')) renderManageStatus();
   return data;
 }
 async function loadEntries() {
@@ -2597,6 +2604,7 @@ async function refreshAll() {
       if (!data.refreshing) break;
     }
     await reload({ keepReader: true });
+    if (!$('#manage-modal')?.classList.contains('hidden')) renderManage();
     toast('刷新完成');
   } catch (e) {
     toast('刷新失败: ' + e.message);
@@ -2607,7 +2615,95 @@ async function refreshAll() {
 }
 
 /* ---------- Manage modal ---------- */
+function sourceName(id) {
+  const source = state.sources.find(item => item.id === id);
+  return source ? source.name : id;
+}
+
+function manageStatusLine() {
+  const total = state.sources.length;
+  const enabled = state.sources.filter(source => source.enabled).length;
+  const ok = state.sources.filter(source => source.enabled && source.status === 'ok').length;
+  const errors = state.sources.filter(source => source.enabled && source.status === 'error').length;
+  return { total, enabled, ok, errors };
+}
+
+function opsStatusText(value) {
+  const text = String(value || '').trim();
+  if (text === 'AI not configured') return '站点 API Key 未配置';
+  if (text === 'already running') return '已有任务运行中';
+  if (text === 'no sources configured') return '未配置重点源';
+  return text;
+}
+
+function autoRewriteStatusParts() {
+  const auto = state.autoRewrite || {};
+  const last = auto.last || {};
+  const running = Boolean(auto.running || last.running);
+  const failed = [
+    ...(last.error ? [{ title: '自动重写任务', error: last.error }] : []),
+    ...(Array.isArray(last.failed) ? last.failed : []),
+  ];
+  if (running) {
+    return {
+      label: '自动重写中',
+      value: '后台运行',
+      meta: (last.sourceIds || []).map(sourceName).join('、') || '重点源',
+      failed,
+    };
+  }
+  if (!last.startedAt) {
+    return { label: '自动重写', value: '待命', meta: '刷新后处理重点源', failed };
+  }
+  const value = last.error
+    ? opsStatusText(last.error)
+    : last.skipped
+    ? opsStatusText(last.skipped)
+    : `${Number(last.rewritten) || 0} 新 · ${Number(last.cached) || 0} 缓存 · ${failed.length} 失败`;
+  return {
+    label: '自动重写完成',
+    value,
+    meta: [formatAssetTime(last.finishedAt || last.startedAt), (last.sourceIds || []).map(sourceName).join('、')].filter(Boolean).join(' · '),
+    failed,
+  };
+}
+
+function renderManageStatus() {
+  const el = $('#manage-status');
+  if (!el) return;
+  const counts = manageStatusLine();
+  const progress = state.refreshProgress || { done: 0, total: 0 };
+  const refreshValue = state.refreshing
+    ? `${progress.done || 0}/${progress.total || counts.enabled}`
+    : progress.total ? `完成 ${progress.done || 0}/${progress.total}` : '待刷新';
+  const refreshMeta = state.refreshing ? '刷新中' : '最近刷新状态';
+  const rewrite = autoRewriteStatusParts();
+  const failures = rewrite.failed.slice(0, 3);
+  el.innerHTML = `
+    <div class="manage-status-grid">
+      <div class="manage-status-item">
+        <span>订阅源</span>
+        <strong>${counts.enabled}/${counts.total}</strong>
+        <em>${counts.ok} 正常${counts.errors ? ` · ${counts.errors} 失败` : ''}</em>
+      </div>
+      <div class="manage-status-item ${state.refreshing ? 'active' : ''}">
+        <span>抓取刷新</span>
+        <strong>${escapeHtml(refreshValue)}</strong>
+        <em>${escapeHtml(refreshMeta)}</em>
+      </div>
+      <div class="manage-status-item ${state.autoRewrite?.running ? 'active' : failures.length ? 'error' : ''}">
+        <span>${escapeHtml(rewrite.label)}</span>
+        <strong>${escapeHtml(rewrite.value)}</strong>
+        <em title="${escapeHtml(rewrite.meta)}">${escapeHtml(rewrite.meta || '无运行记录')}</em>
+      </div>
+    </div>
+    ${failures.length ? `<div class="manage-status-failures">${failures.map(item => `
+      <div><strong>${escapeHtml(item.title || item.entryId || '未命名文章')}</strong><span>${escapeHtml(opsStatusText(item.error) || '未知错误')}</span></div>
+    `).join('')}</div>` : ''}`;
+}
+
 function renderManage() {
+  renderManageStatus();
   const el = $('#manage-list');
   el.innerHTML = '';
   const sorted = [...state.sources].sort((a, b) => (b.enabled - a.enabled) || a.category.localeCompare(b.category));
@@ -2631,7 +2727,7 @@ function renderManage() {
       s.enabled = r.enabled;
       toast(`${s.name} ${r.enabled ? '已启用（抓取中…）' : '已禁用'}`);
       renderManage();
-      setTimeout(async () => { await loadSources(); reload({ keepReader: true }); }, r.enabled ? 4000 : 0);
+      setTimeout(async () => { await loadSources(); renderManage(); reload({ keepReader: true }); }, r.enabled ? 4000 : 0);
     };
     el.appendChild(row);
   }
