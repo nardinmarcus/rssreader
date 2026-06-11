@@ -1582,9 +1582,18 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   el.classList.toggle('hidden', !rows.length);
 }
 
-function scrollReaderTarget(selector) {
+function scrollReaderTarget(selector, { behavior = 'smooth', offset = 12 } = {}) {
   const target = $(selector);
-  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!target) return;
+  const pane = $('#reader-pane');
+  if (pane && pane.contains(target)) {
+    const paneRect = pane.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const top = pane.scrollTop + targetRect.top - paneRect.top - offset;
+    pane.scrollTo({ top: Math.max(0, top), behavior });
+    return;
+  }
+  target.scrollIntoView({ behavior, block: 'start' });
 }
 
 function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = {}) {
@@ -2852,6 +2861,14 @@ function renderAgentMessages(extraPending = false) {
       copy.textContent = '⧉';
       copy.onclick = () => copyText(message.content, '消息已复制');
       actions.appendChild(copy);
+      const draft = document.createElement('button');
+      draft.type = 'button';
+      draft.className = 'agent-msg-action agent-msg-draft';
+      draft.title = '放入人工点评';
+      draft.setAttribute('aria-label', '放入人工点评');
+      draft.textContent = '评';
+      draft.onclick = () => draftCommentFromAgentMessage(message);
+      actions.appendChild(draft);
       if (message.canDelete && message.id) {
         const del = document.createElement('button');
         del.type = 'button';
@@ -2896,6 +2913,32 @@ function copyAgentMessageLink(messageId) {
     return;
   }
   copyText(url, '对话链接已复制');
+}
+
+function draftCommentFromAgentMessage(message) {
+  if (!state.activeEntry || !message || !String(message.content || '').trim()) return;
+  if (!state.me) {
+    openAuth('login');
+    toast('登录后可放入点评草稿');
+    return;
+  }
+  const input = $('#comment-input');
+  if (!input) return;
+  const content = String(message.content || '').trim();
+  const prefix = message.role === 'user' ? '疑问：' : '观点：';
+  const draft = `${prefix}${content.length > 1600 ? `${content.slice(0, 1599).trim()}…` : content}`;
+  const current = input.value.trim();
+  input.value = current ? `${current}\n\n${draft}` : draft;
+  if (input.value.length > 5000) input.value = input.value.slice(0, 4999).trimEnd();
+  state.readerFocus = 'comments';
+  scrollReaderTarget('#comment-input', { behavior: 'auto', offset: 120 });
+  setTimeout(() => {
+    input.focus({ preventScroll: true });
+    input.selectionStart = input.selectionEnd = input.value.length;
+    autosizeCommentInput();
+    scrollReaderTarget('#comment-input', { behavior: 'auto', offset: 120 });
+  }, 180);
+  toast('已放入点评草稿，可编辑后发布');
 }
 
 async function deleteAgentMessage(messageId) {
