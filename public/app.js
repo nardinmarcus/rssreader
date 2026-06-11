@@ -305,7 +305,8 @@ function normalizeProfile(raw, index = 0) {
 const state = {
   sources: [],
   entries: [],
-  view: 'all',            // all | unread | starred | assets
+  contributors: [],
+  view: 'all',            // all | unread | starred | assets | contributors
   filterSource: null,
   filterCategory: null,
   assetFilter: null,
@@ -356,6 +357,7 @@ const state = {
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
+  const contributorsPath = /^\/contributors\/?$/.test(window.location.pathname);
   const contributorMatch = window.location.pathname.match(/^\/contributors\/([^/?#]+)\/?$/);
   const pathAssetFilter = pathMatch ? (ASSET_FILTER_TYPES.includes(pathMatch[1]) ? pathMatch[1] : null) : null;
   const isAssetPath = Boolean(pathMatch);
@@ -370,7 +372,7 @@ function routeStateFromUrl() {
     entryId: String(params.get('entry') || '').trim(),
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     tab: normalizeReaderTab(params.get('tab')),
-    view: isAssetPath || params.get('view') === 'assets' ? 'assets' : '',
+    view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
     commentId,
@@ -380,6 +382,7 @@ function routeStateFromUrl() {
 }
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
+  if (view === 'contributors') return q ? `贡献者 · “${q}” · QMReader` : '贡献者 · QMReader';
   if (view === 'assets') {
     const prefix = assetFilter ? `${assetDirectoryLabel(assetFilter)}资产` : '公开资产';
     return q ? `${prefix} · “${q}” · QMReader` : `${prefix} · QMReader`;
@@ -464,6 +467,9 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
     url.pathname = assetFilter && ASSET_FILTER_TYPES.includes(assetFilter)
       ? `/assets/${assetFilter}`
       : '/assets';
+    if (state.q) url.searchParams.set('q', state.q);
+  } else if (view === 'contributors') {
+    url.pathname = '/contributors';
     if (state.q) url.searchParams.set('q', state.q);
   }
   return url;
@@ -823,9 +829,13 @@ async function loadEntries() {
   const p = new URLSearchParams();
   if (state.filterSource) p.set('source', state.filterSource);
   if (state.filterCategory) p.set('category', state.filterCategory);
-  if (state.q && state.view !== 'assets') p.set('q', state.q);
+  if (state.q && state.view !== 'assets' && state.view !== 'contributors') p.set('q', state.q);
   const data = await api('/api/entries?' + p.toString());
   state.entries = data.entries;
+}
+async function loadContributors() {
+  const data = await api('/api/contributors?limit=200');
+  state.contributors = data.contributors || [];
 }
 
 function applyGuestEntryStates() {
@@ -920,6 +930,7 @@ function renderSidebar() {
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-assets').textContent = assetTotalCount(state.entries.filter(hasEntryAssets)) || '';
+  $('#count-contributors').textContent = state.contributors.length || '';
   renderAssetDashboard();
 
   $$('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
@@ -991,6 +1002,21 @@ function entryMatchesSearch(entry, { includeAssets = false } = {}) {
   const needle = normalizeSearchText(state.q);
   if (!needle) return true;
   return normalizeSearchText(entrySearchText(entry, { includeAssets })).includes(needle);
+}
+
+function contributorSearchText(contributor) {
+  return [
+    contributor.displayName,
+    `${contributor.assetCount || 0} 条`,
+    `${contributor.commentCount || 0} 点评`,
+    `${contributor.chatCount || 0} 对话`,
+  ].filter(Boolean).join(' ');
+}
+
+function visibleContributors() {
+  const needle = normalizeSearchText(state.q);
+  return (state.contributors || [])
+    .filter(contributor => !needle || normalizeSearchText(contributorSearchText(contributor)).includes(needle));
 }
 
 function visibleEntries() {
@@ -1683,7 +1709,54 @@ async function logout() {
   toast('已退出登录');
 }
 
+function renderContributorDirectory() {
+  const list = visibleContributors();
+  const el = $('#entry-list');
+  el.innerHTML = '';
+  renderAssetActivityStrip();
+  if (!list.length) {
+    const text = state.q
+      ? `没有匹配“${escapeHtml(state.q)}”的贡献者<br/>换个关键词试试`
+      : '还没有公开贡献者<br/>先发布点评或文章对话';
+    el.innerHTML = `<div class="list-empty">${text}</div>`;
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  for (const contributor of list) {
+    const card = document.createElement('div');
+    card.className = 'contributor-card';
+    card.dataset.contributorId = contributor.id;
+    const initials = String(contributor.displayName || '读者').trim().slice(0, 2) || '读';
+    card.innerHTML = `
+      <div class="contributor-avatar">${escapeHtml(initials)}</div>
+      <div class="contributor-main">
+        <div class="contributor-name">${escapeHtml(contributor.displayName || '读者')}</div>
+        <div class="contributor-meta">${Number(contributor.assetCount || 0)} 条公开资产 · 最近 ${formatAssetTime(contributor.latestAt)}</div>
+        <div class="contributor-stats">
+          <span>点评 ${Number(contributor.commentCount || 0)}</span>
+          <span>对话 ${Number(contributor.chatCount || 0)}</span>
+        </div>
+      </div>
+      <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献者链接" aria-label="复制贡献者链接">⧉</button>
+    `;
+    card.onclick = (event) => {
+      const copy = event.target.closest('[data-contributor-copy]');
+      if (copy) {
+        copyText(contributorUrlFor(copy.dataset.contributorCopy).href, '贡献者链接已复制');
+        return;
+      }
+      openContributor(contributor.id);
+    };
+    frag.appendChild(card);
+  }
+  el.appendChild(frag);
+}
+
 function renderList() {
+  if (state.view === 'contributors') {
+    renderContributorDirectory();
+    return;
+  }
   const list = visibleEntries();
   const el = $('#entry-list');
   el.innerHTML = '';
@@ -1773,6 +1846,7 @@ function updateListTitle() {
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
   else if (state.view === 'assets') title = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
+  else if (state.view === 'contributors') title = '贡献者';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
   updateSearchPlaceholder();
@@ -1781,7 +1855,7 @@ function updateListTitle() {
 function updateSearchPlaceholder() {
   const search = $('#search');
   if (!search) return;
-  search.placeholder = state.view === 'assets' ? '搜索资产…' : '搜索文章…';
+  search.placeholder = state.view === 'contributors' ? '搜索贡献者…' : state.view === 'assets' ? '搜索资产…' : '搜索文章…';
   if (search.value !== state.q) search.value = state.q;
 }
 
@@ -2046,7 +2120,6 @@ async function fetchOriginalContent() {
     toast('这篇文章没有可抓取的原文链接');
     return;
   }
-  if (!requireAuth('login')) return;
   state.fetchingOriginal = true;
   updateFetchOriginalButton(entry);
   setReaderTab('original');
@@ -2988,7 +3061,13 @@ async function openEntryFromUrl() {
   }
   $('#contributor-modal').classList.add('hidden');
   if (!route.entryId) {
-    if (route.view === 'assets') {
+    if (route.view === 'contributors') {
+      state.view = 'contributors';
+      state.filterSource = null;
+      state.filterCategory = null;
+      state.assetFilter = null;
+      state.q = route.q;
+    } else if (route.view === 'assets') {
       state.view = 'assets';
       state.filterSource = null;
       state.filterCategory = null;
@@ -3004,7 +3083,7 @@ async function openEntryFromUrl() {
     updateListTitle();
     renderSidebar();
     closeReaderFromRoute();
-    if (route.view === 'assets') document.title = listRouteTitle();
+    if (route.view === 'assets' || route.view === 'contributors') document.title = listRouteTitle();
     return false;
   }
   try {
@@ -3019,7 +3098,7 @@ async function openEntryFromUrl() {
 
 /* ---------- Navigation ---------- */
 async function reload({ keepReader = false, clearUrl = true } = {}) {
-  await loadEntries();
+  await Promise.all([loadEntries(), loadContributors()]);
   updateListTitle();
   renderList();
   renderSidebar();
@@ -3065,7 +3144,7 @@ function selectView(v) {
   state.filterCategory = null;
   state.assetFilter = null;
   state.readerFocus = null;
-  if (v === 'assets') {
+  if (v === 'assets' || v === 'contributors') {
     syncListUrl();
     reload({ clearUrl: false });
     return;
@@ -3933,7 +4012,7 @@ $('#search').oninput = (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.q = e.target.value.trim();
-    if (state.view === 'assets') {
+    if (state.view === 'assets' || state.view === 'contributors') {
       syncListUrl({ replace: true });
       reload({ clearUrl: false });
       return;
@@ -3999,7 +4078,7 @@ window.addEventListener('resize', () => {
       for (let i = 0; i < 40; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const d = await loadSources();
-        await loadEntries();
+        await Promise.all([loadEntries(), loadContributors()]);
         renderList(); renderSidebar(); updateListTitle();
         if (!d.refreshing && state.entries.length) break;
       }

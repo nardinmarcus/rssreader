@@ -118,6 +118,10 @@ function isAssetDirectoryRequest(req) {
   return /^\/assets(?:\/[^/.]+)?\/?$/.test(String(req.path || ''));
 }
 
+function isContributorDirectoryRequest(req) {
+  return /^\/contributors\/?$/.test(String(req.path || ''));
+}
+
 function requestAssetFocus(req) {
   if (String(req.query.comment || '').trim()) return 'comments';
   if (String(req.query.chat || '').trim()) return 'chat';
@@ -162,6 +166,20 @@ function assetDirectoryMeta(req) {
     description: stats.assetCount
       ? `QMReader 已沉淀 ${stats.assetCount} 条${meta.label}资产，覆盖 ${stats.entryCount} 篇文章，可通过网页或 RSS 浏览。${latestSuffix}`
       : meta.description,
+  };
+}
+
+function contributorDirectoryMeta() {
+  const contributors = store.getContributors({ limit: 200 });
+  const totalAssets = contributors.reduce((sum, contributor) => sum + Number(contributor.assetCount || 0), 0);
+  const latestAt = contributors.reduce((latest, contributor) => Math.max(latest, Number(contributor.latestAt) || 0), 0);
+  return {
+    contributors,
+    title: contributors.length ? `公开贡献者（${contributors.length} 人） · QMReader` : '公开贡献者 · QMReader',
+    description: contributors.length
+      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开点评和文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : '浏览在 QMReader 沉淀过公开点评和文章对话的贡献者。',
+    latestAt,
   };
 }
 
@@ -234,13 +252,14 @@ function formatShanghaiMinute(timestamp) {
 
 function socialMetaTags(req, entry) {
   const directoryMeta = entry ? null : assetDirectoryMeta(req);
+  const contributorMeta = !entry && !directoryMeta && isContributorDirectoryRequest(req) ? contributorDirectoryMeta() : null;
   const focus = entry ? requestAssetFocus(req) : '';
   const title = entry
     ? entryShareTitle(entry, focus, req)
-    : (directoryMeta?.title || DEFAULT_TITLE);
+    : (directoryMeta?.title || contributorMeta?.title || DEFAULT_TITLE);
   const description = entry
     ? entryShareDescription(entry, focus, req)
-    : clipText(directoryMeta?.description || DEFAULT_DESCRIPTION);
+    : clipText(directoryMeta?.description || contributorMeta?.description || DEFAULT_DESCRIPTION);
   const modifiedTime = entry ? entryShareModifiedTime(entry, focus, req) : '';
   const url = publicUrl(req);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
@@ -775,6 +794,29 @@ function renderSitemap(req) {
     }
   }
 
+  const contributors = store.getContributors({ limit: 100 });
+  if (contributors.length) {
+    const latestContributorAt = contributors.reduce((latest, contributor) => Math.max(latest, Number(contributor.latestAt) || 0), 0);
+    urls.push([
+      `  <url>`,
+      `    <loc>${escapeHtml(publicUrl(req, '/contributors'))}</loc>`,
+      latestContributorAt ? `    <lastmod>${escapeHtml(new Date(latestContributorAt).toISOString())}</lastmod>` : '',
+      `    <changefreq>daily</changefreq>`,
+      `    <priority>0.7</priority>`,
+      `  </url>`,
+    ].filter(Boolean).join('\n'));
+    for (const contributor of contributors) {
+      urls.push([
+        `  <url>`,
+        `    <loc>${escapeHtml(publicUrl(req, `/contributors/${encodeURIComponent(contributor.id)}`))}</loc>`,
+        contributor.latestAt ? `    <lastmod>${escapeHtml(new Date(contributor.latestAt).toISOString())}</lastmod>` : '',
+        `    <changefreq>weekly</changefreq>`,
+        `    <priority>0.65</priority>`,
+        `  </url>`,
+      ].filter(Boolean).join('\n'));
+    }
+  }
+
   for (const entry of entries) {
     const lastmod = entryLastModified(entry);
     const priority = hasPublicAssets(entry) ? '0.8' : '0.5';
@@ -865,6 +907,11 @@ app.get('/assets', (req, res) => {
 app.get('/assets/:type', (req, res) => {
   const type = normalizeAssetDirectoryType(String(req.params.type || ''));
   if (!type) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req));
+});
+
+app.get('/contributors', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req));
 });
@@ -1231,6 +1278,11 @@ app.get('/api/me/chat-messages', requireLogin, (req, res) => {
   res.json({ messages: store.getUserChatMessages(req.user.id, { limit }) });
 });
 
+app.get('/api/contributors', (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  res.json({ contributors: store.getContributors({ limit }) });
+});
+
 app.get('/api/contributors/:id', (req, res) => {
   const contributor = store.getContributor(req.params.id);
   if (!contributor) return res.status(404).json({ error: 'contributor not found' });
@@ -1312,7 +1364,7 @@ app.get('/api/entry/:id', (req, res) => {
   res.json({ entry });
 });
 
-app.post('/api/entry/:id/content', requireLogin, async (req, res) => {
+app.post('/api/entry/:id/content', async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {

@@ -121,6 +121,7 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/api/me` | 当前登录用户 |
 | GET | `/api/me/comments` | 登录用户读取自己发布过的公开点评 |
 | GET | `/api/me/chat-messages` | 登录用户读取自己发布过的公开文章对话 |
+| GET | `/api/contributors` | 公开贡献者列表，按公开资产活跃度排序，不含邮箱 |
 | GET | `/api/contributors/:id` | 公开读取某个用户的公开点评和文章对话，不含邮箱 |
 | GET | `/api/me/entry-states` | 登录用户读取自己的已读/收藏状态 |
 | POST | `/api/me/entry-state` | 登录用户更新单篇已读/收藏状态 |
@@ -133,6 +134,7 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/api/sources` | 全部源及抓取状态、刷新进度 |
 | GET | `/api/entries?source=&category=&q=&limit=` | 文章列表（不含正文） |
 | GET | `/api/entry/:id` | 单篇全文 |
+| POST | `/api/entry/:id/content` | 从原文链接补全并保存正文；公共接口，只能抓取已存在文章的公开链接 |
 | GET | `/api/entry/:id/translation` | 读取单篇双语翻译缓存 |
 | POST | `/api/entry/:id/translation` | 登录用户生成并保存单篇双语翻译 |
 | GET | `/api/entry/:id/rewrite` | 读取公开乔木风格重写 |
@@ -147,6 +149,7 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | DELETE | `/api/entry/:id/chat/:messageId` | 本人或管理员撤回单条公开对话 |
 | GET | `/assets` | 公开资产网页目录；支持 `?q=` 分享资产搜索 |
 | GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
+| GET | `/contributors` | 公开贡献者网页目录；支持 `?q=` 搜索 |
 | GET | `/assets.xml` | 公开资产 RSS 订阅流 |
 | GET | `/assets/:type.xml` | 按类型订阅公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | POST | `/api/translate-titles` | 管理员手动触发英文标题补翻译 |
