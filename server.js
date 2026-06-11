@@ -189,12 +189,14 @@ function assetDirectoryMeta(req) {
 function contributorDirectoryMeta() {
   const contributors = store.getContributors({ limit: 200 });
   const totalAssets = contributors.reduce((sum, contributor) => sum + Number(contributor.assetCount || 0), 0);
+  const totalHelpful = contributors.reduce((sum, contributor) => sum + Number(contributor.helpfulCount || 0), 0);
   const latestAt = contributors.reduce((latest, contributor) => Math.max(latest, Number(contributor.latestAt) || 0), 0);
+  const helpfulSuffix = totalHelpful ? `获得 ${totalHelpful} 次有用反馈。` : '';
   return {
     contributors,
     title: contributors.length ? `公开贡献者（${contributors.length} 人） · QMReader` : '公开贡献者 · QMReader',
     description: contributors.length
-      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${helpfulSuffix}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
       : '浏览在 QMReader 沉淀过公开翻译、重写、点评和文章对话的贡献者。',
     latestAt,
   };
@@ -238,7 +240,7 @@ function contributorPageMetaForId(id) {
     assetCount,
     latestAt,
     title: `${displayName} 的公开资产（${assetCount} 条） · QMReader`,
-    description: `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`,
+    description: `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${Number(contributor.helpfulCount || 0) ? `获得 ${Number(contributor.helpfulCount || 0)} 次有用反馈。` : ''}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`,
   };
 }
 
@@ -1676,6 +1678,8 @@ app.get('/api/contributors/:id', (req, res) => {
       rewrite: rewrites.length,
       comments: comments.length,
       chat: messages.length,
+      helpful: Number(contributor.helpfulCount) || 0,
+      helpfulAssets: Number(contributor.helpfulAssets) || 0,
     },
   });
 });

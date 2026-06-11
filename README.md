@@ -13,7 +13,7 @@
 - 人工点评公开保存，支持结构化点评模板、类型标签、单条点评链接、读者“有用”反馈、有用/最新排序，以及本人/管理员编辑和撤回，便于后来访问者浏览和复用
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用；本人和管理员可撤回单条对话
 - 账号级“我的资产”列表可找回自己沉淀过的公开翻译、乔木风格重写、点评和文章对话，并跳回对应文章位置
-- 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开翻译、乔木风格重写、点评和文章对话，不暴露邮箱，并提供个人公开资产 RSS：`/contributors/:id.xml`
+- 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开翻译、乔木风格重写、点评和文章对话，不暴露邮箱，并显示该贡献者获得的“有用”反馈汇总，提供个人公开资产 RSS：`/contributors/:id.xml`
 - 公开资产视图可按最新沉淀或读者“有用”反馈排序，可通过 `/assets`、`/assets?sort=helpful`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会按条数统计登录用户留下的翻译/重写快照，并预览最近几条中译、重写、点评和对话或高有用条目，单条预览深链可复制，点击可直达具体资产
 - 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；追加 `?sort=helpful` 可订阅有用排序版本，翻译/重写按用户 AI 快照逐条进入订阅流，并带作者、模型和有用次数，点评和对话同样按单条资产进入订阅流
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条翻译 / 重写 / 点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
@@ -125,8 +125,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/api/me/rewrites` | 登录用户读取自己生成过的公开乔木风格重写 |
 | GET | `/api/me/comments` | 登录用户读取自己发布过的公开点评 |
 | GET | `/api/me/chat-messages` | 登录用户读取自己发布过的公开文章对话 |
-| GET | `/api/contributors` | 公开贡献者列表，按公开资产活跃度排序，不含邮箱 |
-| GET | `/api/contributors/:id` | 公开读取某个用户的公开翻译、重写、点评和文章对话，不含邮箱 |
+| GET | `/api/contributors` | 公开贡献者列表，按公开资产活跃度排序，包含有用反馈汇总，不含邮箱 |
+| GET | `/api/contributors/:id` | 公开读取某个用户的公开翻译、重写、点评和文章对话，包含有用反馈汇总，不含邮箱 |
 | GET | `/api/me/entry-states` | 登录用户读取自己的已读、收藏和浏览记录状态 |
 | POST | `/api/me/entry-state` | 登录用户更新单篇已读、收藏和浏览记录状态；body 可传 `{"entryId":"","read":true,"starred":true,"viewed":true}` |
 | POST | `/api/me/entry-states/read` | 登录用户批量标记已读 |

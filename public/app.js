@@ -1069,6 +1069,8 @@ function contributorSearchText(contributor) {
   return [
     contributor.displayName,
     `${contributor.assetCount || 0} 条`,
+    `${contributor.helpfulCount || 0} 有用`,
+    `${contributor.helpfulAssets || 0} 受认可`,
     `${contributor.translationCount || 0} 中译`,
     `${contributor.rewriteCount || 0} 重写`,
     `${contributor.commentCount || 0} 点评`,
@@ -1936,16 +1938,23 @@ function renderContributorDirectory() {
     card.className = 'contributor-card';
     card.dataset.contributorId = contributor.id;
     const initials = String(contributor.displayName || '读者').trim().slice(0, 2) || '读';
+    const assetCount = Number(contributor.assetCount || 0);
+    const helpfulCount = Number(contributor.helpfulCount || 0);
+    const helpfulAssets = Number(contributor.helpfulAssets || 0);
+    const metaParts = [`${assetCount} 条公开资产`];
+    if (helpfulCount > 0) metaParts.push(`有用 ${helpfulCount} 次`);
+    metaParts.push(`最近 ${formatAssetTime(contributor.latestAt)}`);
     card.innerHTML = `
       <div class="contributor-avatar">${escapeHtml(initials)}</div>
       <div class="contributor-main">
         <div class="contributor-name">${escapeHtml(contributor.displayName || '读者')}</div>
-        <div class="contributor-meta">${Number(contributor.assetCount || 0)} 条公开资产 · 最近 ${formatAssetTime(contributor.latestAt)}</div>
+        <div class="contributor-meta">${escapeHtml(metaParts.join(' · '))}</div>
         <div class="contributor-stats">
           <span>中译 ${Number(contributor.translationCount || 0)}</span>
           <span>重写 ${Number(contributor.rewriteCount || 0)}</span>
           <span>点评 ${Number(contributor.commentCount || 0)}</span>
           <span>对话 ${Number(contributor.chatCount || 0)}</span>
+          ${helpfulCount > 0 ? `<span class="contributor-stat-helpful">认可 ${helpfulAssets || 1}</span>` : ''}
         </div>
       </div>
       <div class="contributor-actions">
@@ -2883,8 +2892,12 @@ function renderContributorAssets() {
   const rssLink = $('#contributor-rss-link');
   const rssCopy = $('#contributor-rss-copy');
   const rssUrl = profile ? contributorFeedUrlFor(profile.id).href : '';
+  const helpfulCount = Number(profile && profile.helpfulCount) || 0;
+  const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的公开资产` : '贡献者资产';
-  $('#contributor-subtitle').textContent = profile ? '公开沉淀的翻译、重写、点评和文章对话。' : '正在读取公开资产…';
+  $('#contributor-subtitle').textContent = profile
+    ? `公开沉淀的翻译、重写、点评和文章对话。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
+    : '正在读取公开资产…';
   if (rssLink) {
     rssLink.classList.toggle('hidden', !rssUrl);
     rssLink.href = rssUrl || '#';
