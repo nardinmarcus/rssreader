@@ -338,6 +338,7 @@ const state = {
   rewriteGenerating: false,
   readerTab: 'original',
   readerFocus: null,
+  readerAssetId: '',
   pendingAssetJump: null,
   pendingCommentId: '',
   pendingChatMessageId: '',
@@ -368,6 +369,7 @@ function routeStateFromUrl() {
   const hash = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
   const queryCommentId = String(params.get('comment') || '').trim();
   const queryChatMessageId = String(params.get('chat') || '').trim();
+  const queryAssetId = String(params.get('assetId') || '').trim();
   const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : queryCommentId;
   const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : queryChatMessageId;
   const focus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
@@ -379,6 +381,7 @@ function routeStateFromUrl() {
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
+    assetId: queryAssetId,
     commentId,
     chatMessageId,
     q: String(params.get('q') || '').trim(),
@@ -401,7 +404,7 @@ function readerRouteTitle(entry = state.activeEntry, focus = state.readerFocus) 
   return `${prefix}${title} · QMReader`;
 }
 
-function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = state.readerFocus) {
+function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = state.readerFocus, assetId = state.readerAssetId) {
   const url = new URL(window.location.href);
   url.pathname = '/';
   url.search = '';
@@ -411,14 +414,15 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
     const nextTab = normalizeReaderTab(tab);
     if (nextTab !== 'original') url.searchParams.set('tab', nextTab);
     if (focus && ASSET_FILTER_TYPES.includes(focus)) url.searchParams.set('focus', focus);
+    if ((focus === 'translation' || focus === 'rewrite') && assetId) url.searchParams.set('assetId', assetId);
   }
   return url;
 }
 
-function readerAssetUrl(type, entry = state.activeEntry) {
+function readerAssetUrl(type, entry = state.activeEntry, assetId = '') {
   if (!entry || !ASSET_FILTER_TYPES.includes(type)) return '';
   const tab = type === 'translation' ? 'translation' : type === 'rewrite' ? 'rewrite' : 'original';
-  return readerUrlFor(entry, tab, type).href;
+  return readerUrlFor(entry, tab, type, assetId).href;
 }
 
 function commentUrl(commentId, entry = state.activeEntry) {
@@ -438,6 +442,7 @@ function chatMessageUrl(messageId, entry = state.activeEntry) {
 }
 
 function assetItemUrl(type, entry, itemId = '') {
+  if ((type === 'translation' || type === 'rewrite') && itemId) return readerAssetUrl(type, entry, itemId);
   if (type === 'comments' && itemId) return commentUrl(itemId, entry);
   if (type === 'chat' && itemId) return chatMessageUrl(itemId, entry);
   return readerAssetUrl(type, entry);
@@ -1700,6 +1705,7 @@ function settlePendingAssetJump(type, { clear = true } = {}) {
 }
 
 function jumpToArticleAsset(type) {
+  if (type === 'translation' || type === 'rewrite') state.readerAssetId = '';
   state.pendingAssetJump = type;
   performArticleAssetJump(type);
 }
@@ -2056,7 +2062,10 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
 }
 
 function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {}) {
-  if (!preserveFocus) state.readerFocus = null;
+  if (!preserveFocus) {
+    state.readerFocus = null;
+    state.readerAssetId = '';
+  }
   setReaderTab(tab, { replaceUrl });
   if (tab !== 'translation' || state.translation) return;
   if (state.translationLoading) {
@@ -2216,7 +2225,9 @@ async function loadTranslation(entry) {
   state.translationLoading = true;
   renderTranslation(null, { loading: true });
   try {
-    const data = await api(`/api/entry/${entry.id}/translation`);
+    const assetId = state.readerFocus === 'translation' ? state.readerAssetId : '';
+    const query = assetId ? `?assetId=${encodeURIComponent(assetId)}` : '';
+    const data = await api(`/api/entry/${entry.id}/translation${query}`);
     if (state.activeEntry?.id !== entry.id) return;
     renderTranslation(data.translation);
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
@@ -2266,7 +2277,9 @@ function copyRewriteText() {
 async function loadRewrite(entry) {
   renderRewrite(null);
   try {
-    const data = await api(`/api/entry/${entry.id}/rewrite`);
+    const assetId = state.readerFocus === 'rewrite' ? state.readerAssetId : '';
+    const query = assetId ? `?assetId=${encodeURIComponent(assetId)}` : '';
+    const data = await api(`/api/entry/${entry.id}/rewrite${query}`);
     if (state.activeEntry?.id !== entry.id) return;
     renderRewrite(data.rewrite);
     if (data.rewrite && data.rewrite.body) {
@@ -2293,7 +2306,9 @@ async function toggleEntryAssetHelpful(type) {
       body: JSON.stringify({ helpful: nextHelpful }),
     });
     if (state.activeEntry?.id !== entry.id) return;
-    const nextAsset = data[type] || { ...asset, ...(data.reaction || {}) };
+    const nextAsset = state.readerAssetId && (type === 'translation' || type === 'rewrite')
+      ? { ...asset, ...(data.reaction || {}) }
+      : data[type] || { ...asset, ...(data.reaction || {}) };
     if (type === 'translation') renderTranslation(nextAsset);
     if (type === 'rewrite') renderRewrite(nextAsset);
     updateEntryAssets(entry.id, entryAssetHelpfulPatch(type, nextAsset, state.activeEntry), { rerenderList: false });
@@ -2321,6 +2336,7 @@ async function generateTranslation({ force = false } = {}) {
   }
   if (state.translationGenerating) return;
   if (!requireAuth('login')) return;
+  state.readerAssetId = '';
   setReaderTab('translation');
   state.translationGenerating = true;
   btn.disabled = true;
@@ -2364,6 +2380,7 @@ async function generateRewrite({ force = false } = {}) {
   }
   if (state.rewriteGenerating) return;
   if (!requireAuth('login')) return;
+  state.readerAssetId = '';
   setReaderTab('rewrite');
   state.rewriteGenerating = true;
   btn.disabled = true;
@@ -2567,7 +2584,7 @@ function copyCommentLink(commentId) {
 function myAssetUrl(type, item) {
   if (!item) return '';
   const entry = item.entry || { id: item.entryId };
-  if (type === 'translation' || type === 'rewrite') return readerAssetUrl(type, entry);
+  if (type === 'translation' || type === 'rewrite') return readerAssetUrl(type, entry, item.id);
   if (type === 'chat') return chatMessageUrl(item.id, entry);
   return commentUrl(item.id, entry);
 }
@@ -2615,7 +2632,11 @@ function renderMyAssets() {
   list.innerHTML = items.map(item => {
     const entry = item.entry || {};
     const display = userAssetDisplay(type, item);
-    const title = entry.titleZh || entry.title || '未命名文章';
+    const title = type === 'translation'
+      ? (item.titleZh || entry.titleZh || entry.title || '未命名文章')
+      : type === 'rewrite'
+        ? (item.title || entry.titleZh || entry.title || '未命名文章')
+        : (entry.titleZh || entry.title || '未命名文章');
     const meta = type === 'chat' ? [
       sourceName(entry.sourceId),
       item.author,
@@ -2709,7 +2730,7 @@ async function openMyAsset(itemId) {
   closeMyCommentsModal();
   const type = normalizeUserAssetTab(state.myAssetTab);
   const ok = type === 'translation' || type === 'rewrite'
-    ? await openEntryById(entryId, { focus: type, updateUrl: true, replaceUrl: false })
+    ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
     : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
     : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
@@ -2778,7 +2799,11 @@ function renderContributorAssets() {
   list.innerHTML = items.map(item => {
     const entry = item.entry || {};
     const display = userAssetDisplay(type, item);
-    const title = entry.titleZh || entry.title || '未命名文章';
+    const title = type === 'translation'
+      ? (item.titleZh || entry.titleZh || entry.title || '未命名文章')
+      : type === 'rewrite'
+        ? (item.title || entry.titleZh || entry.title || '未命名文章')
+        : (entry.titleZh || entry.title || '未命名文章');
     const meta = type === 'chat' ? [
       sourceName(entry.sourceId),
       item.author,
@@ -2868,7 +2893,7 @@ async function openContributorAsset(itemId) {
   closeContributorModal({ clearUrl: false });
   const type = normalizeUserAssetTab(state.contributor.tab);
   const ok = type === 'translation' || type === 'rewrite'
-    ? await openEntryById(entryId, { focus: type, updateUrl: true, replaceUrl: false })
+    ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
     : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
     : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
@@ -3380,9 +3405,10 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e, { tab = 'original', focus = null, commentId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
+async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', commentId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
   state.activeEntry = e;
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
+  const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite') ? String(aiAssetId || '').trim() : '';
   const requestedTab = requestedFocus === 'translation'
     ? 'translation'
     : requestedFocus === 'rewrite'
@@ -3414,6 +3440,7 @@ async function openEntry(e, { tab = 'original', focus = null, commentId = '', ch
   state.rewrite = null;
   state.rewriteGenerating = false;
   state.readerFocus = requestedFocus;
+  state.readerAssetId = requestedAssetId;
   state.pendingAssetJump = requestedFocus;
   state.pendingCommentId = commentId || '';
   state.pendingChatMessageId = chatMessageId || '';
@@ -3461,6 +3488,7 @@ function closeReaderFromRoute() {
   state.rewrite = null;
   state.rewriteGenerating = false;
   state.readerFocus = null;
+  state.readerAssetId = '';
   state.pendingAssetJump = null;
   state.pendingCommentId = '';
   state.pendingChatMessageId = '';
@@ -3474,7 +3502,7 @@ function closeReaderFromRoute() {
   renderAgent();
 }
 
-async function openEntryById(entryId, { tab = 'original', focus = null, commentId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
+async function openEntryById(entryId, { tab = 'original', focus = null, aiAssetId = '', commentId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
   let entry = state.entries.find(item => item.id === id);
@@ -3483,7 +3511,7 @@ async function openEntryById(entryId, { tab = 'original', focus = null, commentI
     entry = data.entry;
   }
   if (!entry) return false;
-  await openEntry(entry, { tab, focus, commentId, chatMessageId, updateUrl, replaceUrl });
+  await openEntry(entry, { tab, focus, aiAssetId, commentId, chatMessageId, updateUrl, replaceUrl });
   return true;
 }
 
@@ -3533,7 +3561,7 @@ async function openEntryFromUrl() {
     return false;
   }
   try {
-    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, commentId: route.commentId, chatMessageId: route.chatMessageId, updateUrl: false });
+    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, aiAssetId: route.assetId, commentId: route.commentId, chatMessageId: route.chatMessageId, updateUrl: false });
   } catch (err) {
     toast('找不到这篇文章: ' + err.message, 4000);
     closeReaderFromRoute();
@@ -3559,6 +3587,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.rewrite = null;
     state.rewriteGenerating = false;
     state.readerFocus = null;
+    state.readerAssetId = '';
     state.pendingAssetJump = null;
     state.fetchingOriginal = false;
     state.readerTab = 'original';
@@ -3576,6 +3605,7 @@ function selectSource(id) {
   state.assetFilter = null;
   state.assetSort = 'latest';
   state.readerFocus = null;
+  state.readerAssetId = '';
   reload();
 }
 function selectCategory(cat) {
@@ -3584,6 +3614,7 @@ function selectCategory(cat) {
   state.assetFilter = null;
   state.assetSort = 'latest';
   state.readerFocus = null;
+  state.readerAssetId = '';
   reload();
 }
 function selectView(v) {
@@ -3592,6 +3623,7 @@ function selectView(v) {
   state.filterCategory = null;
   state.assetFilter = null;
   state.readerFocus = null;
+  state.readerAssetId = '';
   if (v !== 'assets') state.assetSort = 'latest';
   if (v === 'assets' || v === 'contributors') {
     syncListUrl();
@@ -3607,6 +3639,7 @@ function selectAssetFilter(type = null) {
   state.filterCategory = null;
   state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
   state.readerFocus = null;
+  state.readerAssetId = '';
   syncListUrl();
   reload({ clearUrl: false });
 }
@@ -3617,6 +3650,7 @@ function selectAssetSort(sort = 'latest') {
   state.filterSource = null;
   state.filterCategory = null;
   state.readerFocus = null;
+  state.readerAssetId = '';
   syncListUrl();
   reload({ clearUrl: false });
 }

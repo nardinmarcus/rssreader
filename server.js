@@ -569,6 +569,8 @@ function assetShareTitle(entry, focus = '', preview = null) {
 function assetShareIdentity(focus = '', preview = null) {
   if (!preview) return '';
   const author = clipText(preview.author || preview.model || '', 24);
+  if (focus === 'translation') return author ? `${author}的中文翻译` : '中文翻译';
+  if (focus === 'rewrite') return author ? `${author}的乔木重写` : '乔木风格重写';
   if (focus === 'comments') return author ? `${author}的点评` : '人工点评';
   if (focus === 'chat') {
     const roleLabel = preview.role === 'user' ? '提问' : '回答';
@@ -637,6 +639,21 @@ function assetPreviewDescription(focus, preview) {
 
 function exactAssetPreview(entry, focus, req) {
   if (!entry || !req) return null;
+  if (focus === 'translation' || focus === 'rewrite') {
+    const asset = store.getAiAssetContribution(String(req.query.assetId || '').trim(), focus);
+    if (!asset || asset.entryId !== entry.id) return null;
+    return {
+      type: focus,
+      id: asset.id,
+      author: asset.contributorName || asset.author || asset.createdBy || '',
+      model: asset.model || '',
+      text: focus === 'translation'
+        ? clipText((asset.content || []).map(pair => pair && pair.target).find(Boolean) || asset.summaryZh || '', 220)
+        : asset.body,
+      at: asset.updatedAt || asset.createdAt,
+      helpfulCount: Number(asset.helpfulCount) || 0,
+    };
+  }
   if (focus === 'comments') {
     const comment = store.getComment(entry.id, String(req.query.comment || '').trim());
     if (!comment) return null;
@@ -789,6 +806,9 @@ function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true 
   const query = new URLSearchParams({ entry: entry.id, focus: type });
   const itemId = String(preview.id || '').trim();
   let hash = '';
+  if ((type === 'translation' || type === 'rewrite') && itemId) {
+    query.set('assetId', itemId);
+  }
   if (type === 'comments' && itemId) {
     query.set('comment', itemId);
     if (includeHash) hash = `#comment-${encodeURIComponent(itemId)}`;
@@ -1325,8 +1345,12 @@ async function prepareEntryForAiAsset(entry, reason = 'AI asset') {
   return { entry: fetcher.getEntryById(entry.id) || entry, fetched: false };
 }
 
-function translationResponse(entry, viewer = null) {
-  const translation = store.getTranslation(entry.id);
+function translationResponse(entry, viewer = null, assetId = '') {
+  const exactAssetId = String(assetId || '').trim();
+  const translation = exactAssetId
+    ? store.getAiAssetContribution(exactAssetId, 'translation')
+    : store.getTranslation(entry.id);
+  if (translation && exactAssetId && translation.entryId !== entry.id) return null;
   if (!translation) return null;
   const contentHash = store.hashText((entry.title || '') + '\n' + (entry.content || entry.summary || ''));
   const reaction = store.getEntryAssetReaction(entry.id, 'translation', viewer);
@@ -1337,8 +1361,12 @@ function translationResponse(entry, viewer = null) {
   };
 }
 
-function rewriteResponse(entry, viewer = null) {
-  const rewrite = store.getRewrite(entry.id);
+function rewriteResponse(entry, viewer = null, assetId = '') {
+  const exactAssetId = String(assetId || '').trim();
+  const rewrite = exactAssetId
+    ? store.getAiAssetContribution(exactAssetId, 'rewrite')
+    : store.getRewrite(entry.id);
+  if (rewrite && exactAssetId && rewrite.entryId !== entry.id) return null;
   if (!rewrite) return null;
   const contentHash = deepseek.rewriteContentHash(entry);
   const reaction = store.getEntryAssetReaction(entry.id, 'rewrite', viewer);
@@ -1688,7 +1716,7 @@ app.post('/api/entry/:id/content', async (req, res) => {
 app.get('/api/entry/:id/translation', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ translation: translationResponse(entry, req.user) });
+  res.json({ translation: translationResponse(entry, req.user, req.query.assetId) });
 });
 
 app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
@@ -1717,7 +1745,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
 app.get('/api/entry/:id/rewrite', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ rewrite: rewriteResponse(entry, req.user) });
+  res.json({ rewrite: rewriteResponse(entry, req.user, req.query.assetId) });
 });
 
 app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
