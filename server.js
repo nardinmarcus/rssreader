@@ -1368,6 +1368,27 @@ app.patch('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
   }
 });
 
+app.post('/api/entry/:id/comments/:commentId/helpful', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const helpful = req.body && typeof req.body.helpful === 'boolean'
+      ? req.body.helpful
+      : true;
+    const reaction = store.setCommentHelpful(entry.id, req.params.commentId, req.user.id, helpful);
+    if (!reaction) return res.status(404).json({ error: 'comment not found' });
+    res.json({
+      reaction: {
+        helpfulCount: Number(reaction.helpful_count) || 0,
+        helpfulByMe: Boolean(reaction.helpful_by_me),
+      },
+      comments: store.getComments(entry.id, req.user),
+    });
+  } catch (e) {
+    sendError(res, e, 'comment feedback failed');
+  }
+});
+
 app.delete('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });

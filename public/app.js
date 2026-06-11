@@ -1167,7 +1167,10 @@ function assetPreviewDisplay(preview) {
 function assetPreviewHtml(preview) {
   const display = assetPreviewDisplay(preview);
   const { type, label } = display;
-  const meta = [preview.author, preview.model, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
+  const helpfulMeta = type === 'comments' && Number(preview.helpfulCount || 0) > 0
+    ? `有用 ${Number(preview.helpfulCount || 0)}`
+    : '';
+  const meta = [preview.author, preview.model, helpfulMeta, formatAssetTime(preview.at)].filter(Boolean).join(' · ');
   const itemId = preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
   const copyItemId = preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
   return `
@@ -1322,7 +1325,10 @@ function renderAssetActivityStrip() {
         const labelText = previewDisplay && previewDisplay.commentType && labels === ASSET_TYPE_LABELS.comments
           ? previewDisplay.label
           : labels;
-        const meta = [src && src.name, previewMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
+        const helpfulMeta = type === 'comments' && preview && Number(preview.helpfulCount || 0) > 0
+          ? `有用 ${Number(preview.helpfulCount || 0)}`
+          : '';
+        const meta = [src && src.name, previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
         return `<button type="button" class="asset-activity-item asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}"${itemId}>
           <span class="asset-activity-type">${escapeHtml(labelText)}</span>
           <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
@@ -1432,11 +1438,14 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     });
   }
   if (assets.comments) {
-    const latest = latestAssetItem(comments);
+    const latest = [...comments].sort((a, b) =>
+      Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
+    )[0] || null;
+    const helpfulMeta = latest && Number(latest.helpfulCount || 0) > 0 ? `有用 ${Number(latest.helpfulCount || 0)}` : '';
     rows.push({
       type: 'comments',
       label: readerAssetSummaryLabel(entry, 'comments', '人工点评'),
-      value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, formatAssetTime(latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'comments', [`${assets.comments} 条`]) || `${assets.comments} 条 · 正在加载详情`),
+      value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, helpfulMeta, formatAssetTime(latest.updatedAt || latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'comments', [`${assets.comments} 条`]) || `${assets.comments} 条 · 正在加载详情`),
       preview: readerAssetPreview(entry, 'comments', latest && latest.body),
     });
   }
@@ -2069,6 +2078,8 @@ function renderComments() {
     const editedAt = Number(comment.updatedAt || 0) > Number(comment.createdAt || 0)
       ? ` · 已编辑 ${formatAssetTime(comment.updatedAt)}`
       : '';
+    const helpfulCount = Number(comment.helpfulCount || 0);
+    const helpfulActive = Boolean(comment.helpfulByMe);
     return `
       <div id="comment-${escapeHtml(comment.id)}" class="comment-item${display.type ? ` comment-type-${display.type}` : ''}">
         <div class="comment-head">
@@ -2092,6 +2103,9 @@ function renderComments() {
             </div>
           </div>
         ` : `<div class="comment-body">${renderMarkdownLite(display.body)}</div>`}
+        <div class="comment-feedback">
+          <button type="button" class="comment-helpful${helpfulActive ? ' active' : ''}" data-comment-helpful="${escapeHtml(comment.id)}" aria-pressed="${helpfulActive ? 'true' : 'false'}" title="${helpfulActive ? '取消有用标记' : '标记这条点评有用'}">有用${helpfulCount ? ` ${helpfulCount}` : ''}</button>
+        </div>
       </div>`;
   }).join('');
   renderReaderAssetSummary();
@@ -2188,6 +2202,32 @@ async function saveCommentEdit(commentId) {
   } catch (err) {
     toast('更新点评失败: ' + err.message, 5000);
     if (btn) btn.disabled = false;
+  }
+}
+
+async function toggleCommentHelpful(commentId) {
+  const entry = state.activeEntry;
+  const comment = (state.comments || []).find(item => item.id === commentId);
+  if (!entry || !commentId || !comment) return;
+  if (!state.me) {
+    openAuth('login');
+    toast('登录后可以标记有用');
+    return;
+  }
+  const nextHelpful = !comment.helpfulByMe;
+  try {
+    const data = await api(`/api/entry/${entry.id}/comments/${encodeURIComponent(commentId)}/helpful`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ helpful: nextHelpful }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.comments = data.comments || [];
+    renderComments();
+    renderReaderAssetSummary();
+    toast(nextHelpful ? '已标记有用' : '已取消有用标记');
+  } catch (err) {
+    toast('反馈失败: ' + err.message, 5000);
   }
 }
 
@@ -3400,6 +3440,11 @@ $('#comment-input').onkeydown = (e) => {
   }
 };
 $('#comments-list').onclick = (e) => {
+  const helpful = e.target.closest('[data-comment-helpful]');
+  if (helpful) {
+    toggleCommentHelpful(helpful.dataset.commentHelpful);
+    return;
+  }
   const link = e.target.closest('[data-comment-link]');
   if (link) {
     copyCommentLink(link.dataset.commentLink);

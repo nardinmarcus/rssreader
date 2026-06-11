@@ -1177,6 +1177,33 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-color: var(--text-2);
   color: var(--text-0);
 }
+.comment-feedback {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.comment-helpful {
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1;
+}
+.comment-helpful:hover,
+.comment-helpful:focus-visible {
+  border-color: color-mix(in srgb, #2f855a 42%, var(--border));
+  color: #276749;
+  outline: none;
+}
+.comment-helpful.active {
+  border-color: color-mix(in srgb, #2f855a 52%, var(--border));
+  background: color-mix(in srgb, #2f855a 12%, var(--bg-1));
+  color: #276749;
+}
 .comment-type-question .comment-kind {
   border-color: color-mix(in srgb, #4a789f 36%, var(--border));
   background: color-mix(in srgb, #4a789f 12%, var(--bg-1));
