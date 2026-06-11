@@ -14,7 +14,7 @@ const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_I
   .split(',')
   .map(id => id.trim())
   .filter(Boolean));
-const AUTO_REWRITE_LIMIT_PER_SOURCE = parseInt(process.env.AUTO_REWRITE_LIMIT_PER_SOURCE || '10', 10);
+const AUTO_REWRITE_LIMIT_PER_SOURCE = parseInt(process.env.AUTO_REWRITE_LIMIT_PER_SOURCE || '3', 10);
 const SESSION_COOKIE = 'qm_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
@@ -50,6 +50,8 @@ app.use((req, res, next) => {
 
 let refreshing = false;
 let refreshProgress = { done: 0, total: 0 };
+let autoRewriteRunning = false;
+let autoRewriteLast = null;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => HTML_ESCAPES[char]);
@@ -1023,6 +1025,38 @@ async function autoRewriteSources(sourceIds = AUTO_REWRITE_SOURCE_IDS) {
   return { rewritten, cached, failed };
 }
 
+function queueAutoRewriteSources(sourceIds = AUTO_REWRITE_SOURCE_IDS) {
+  const ids = Array.from(sourceIds instanceof Set ? sourceIds : new Set(sourceIds)).filter(Boolean);
+  if (!ids.length) return { started: false, running: autoRewriteRunning, skipped: 'no sources configured' };
+  if (autoRewriteRunning) return { started: false, running: true, skipped: 'already running' };
+
+  autoRewriteRunning = true;
+  const startedAt = Date.now();
+  autoRewriteLast = { sourceIds: ids, startedAt, finishedAt: 0, running: true };
+  autoRewriteSources(ids)
+    .then(result => {
+      autoRewriteLast = { ...result, sourceIds: ids, startedAt, finishedAt: Date.now(), running: false };
+      console.log(`Auto rewrite: sources=${ids.join(',')}, rewritten=${result.rewritten}, cached=${result.cached}, failed=${result.failed.length}${result.skipped ? `, skipped=${result.skipped}` : ''}`);
+    })
+    .catch(error => {
+      autoRewriteLast = {
+        sourceIds: ids,
+        startedAt,
+        finishedAt: Date.now(),
+        running: false,
+        rewritten: 0,
+        cached: 0,
+        failed: [],
+        error: String(error.message || error).slice(0, 200),
+      };
+      console.warn('Auto rewrite skipped:', error.message || error);
+    })
+    .finally(() => {
+      autoRewriteRunning = false;
+    });
+  return { started: true, running: true, sourceIds: ids, startedAt };
+}
+
 function seedAdminFromEnv() {
   const email = String(process.env.ADMIN_EMAIL || '').trim();
   const password = String(process.env.ADMIN_PASSWORD || '').trim();
@@ -1050,12 +1084,7 @@ async function doRefreshAll() {
     } catch (e) {
       console.warn('Title translation skipped:', e.message || e);
     }
-    try {
-      const result = await autoRewriteSources();
-      console.log(`Auto rewrite: rewritten=${result.rewritten}, cached=${result.cached}, failed=${result.failed.length}${result.skipped ? `, skipped=${result.skipped}` : ''}`);
-    } catch (e) {
-      console.warn('Auto rewrite skipped:', e.message || e);
-    }
+    queueAutoRewriteSources();
   } catch (e) {
     console.error('Refresh failed:', e.message || e);
   } finally {
@@ -1094,7 +1123,12 @@ function scheduleDailyRefresh() {
 }
 
 app.get('/api/sources', (req, res) => {
-  res.json({ sources: fetcher.getSourcesMeta(), refreshing, progress: refreshProgress });
+  res.json({
+    sources: fetcher.getSourcesMeta(),
+    refreshing,
+    progress: refreshProgress,
+    autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
+  });
 });
 
 app.get('/api/me', (req, res) => {
@@ -1312,11 +1346,7 @@ app.post('/api/refresh', requireAdmin, async (req, res) => {
     await translateMissingTitles(20);
     let autoRewrite = null;
     if (AUTO_REWRITE_SOURCE_IDS.has(src.id)) {
-      try {
-        autoRewrite = await autoRewriteSources([src.id]);
-      } catch (e) {
-        autoRewrite = { rewritten: 0, cached: 0, failed: [], error: String(e.message || e).slice(0, 200) };
-      }
+      autoRewrite = queueAutoRewriteSources([src.id]);
     }
     return res.json({ status: result.status, error: result.error, entryCount: result.entries ? result.entries.length : 0, autoRewrite });
   }
