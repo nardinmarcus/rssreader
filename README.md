@@ -1,6 +1,6 @@
 # QMReader
 
-仿 Folo 的在线 RSS 阅读器，整合 RSSHub 与直接 RSS 源，并沉淀公开的双语翻译、人工点评和当前文章上下文 AI 对话资产。
+中性、克制的在线 RSS 阅读器，整合 RSSHub 与直接 RSS 源，并沉淀公开的双语翻译、人工点评和当前文章上下文 AI 对话资产。
 
 ## 功能
 
@@ -80,7 +80,7 @@ server.js            # Express 入口：API 路由、静态托管、定时刷新
 lib/sources.js       # 信息源注册表（54 个源、分类、候选 feed 地址）
 lib/fetcher.js       # 抓取层：RSS 解析、多候选回退、sitemap 解析、磁盘缓存
 public/index.html    # 四栏布局骨架：源 / 列表 / 阅读器 / Article Agent
-public/styles.css    # Folo 风格主题（深/浅色）
+public/styles.css    # 中性产品主题（深/浅色）
 public/app.js        # 前端逻辑：侧栏/列表/阅读面板、已读/收藏、搜索、文章对话
 public/purify.min.js # DOMPurify（本地化，正文 HTML 消毒）
 data/                # 运行时生成：cache.json、state.json、qmreader.sqlite
