@@ -310,6 +310,7 @@ const state = {
   filterSource: null,
   filterCategory: null,
   assetFilter: null,
+  assetSort: 'latest',
   q: '',
   refreshing: false,
   refreshProgress: { done: 0, total: 0 },
@@ -374,6 +375,7 @@ function routeStateFromUrl() {
     tab: normalizeReaderTab(params.get('tab')),
     view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
+    assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
     commentId,
     chatMessageId,
@@ -384,7 +386,8 @@ function routeStateFromUrl() {
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
   if (view === 'contributors') return q ? `贡献者 · “${q}” · QMReader` : '贡献者 · QMReader';
   if (view === 'assets') {
-    const prefix = assetFilter ? `${assetDirectoryLabel(assetFilter)}资产` : '公开资产';
+    const sortPrefix = state.assetSort === 'helpful' ? '有用 · ' : '';
+    const prefix = `${sortPrefix}${assetFilter ? `${assetDirectoryLabel(assetFilter)}资产` : '公开资产'}`;
     return q ? `${prefix} · “${q}” · QMReader` : `${prefix} · QMReader`;
   }
   return 'QMReader · RSS 阅读器';
@@ -468,6 +471,7 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
       ? `/assets/${assetFilter}`
       : '/assets';
     if (state.q) url.searchParams.set('q', state.q);
+    if (state.assetSort === 'helpful') url.searchParams.set('sort', 'helpful');
   } else if (view === 'contributors') {
     url.pathname = '/contributors';
     if (state.q) url.searchParams.set('q', state.q);
@@ -1029,10 +1033,7 @@ function visibleEntries() {
       .filter(entry => !state.assetFilter || entryHasAssetType(entry, state.assetFilter))
       .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
       .slice()
-      .sort((a, b) => {
-        const assetDelta = assetLatestAtForType(b, state.assetFilter) - assetLatestAtForType(a, state.assetFilter);
-        return assetDelta || (b.publishedTs || 0) - (a.publishedTs || 0);
-      });
+      .sort(compareAssetEntries);
   }
   return list;
 }
@@ -1085,6 +1086,11 @@ const ASSET_FILTERS = {
   chat: { label: '对话', count: entry => Number(entry.assets?.chatMessages || 0), title: '查看有文章对话的文章' },
 };
 
+const ASSET_SORTS = {
+  latest: { label: '最新', title: '按最近沉淀时间排序' },
+  helpful: { label: '有用', title: '优先显示被读者标记有用的点评' },
+};
+
 function assetTypeCount(entries, type) {
   const def = ASSET_FILTERS[type];
   if (!def) return 0;
@@ -1101,6 +1107,27 @@ function assetLatestAtForType(entry, type = '') {
   const itemAt = Number((assets.items && assets.items[type] && assets.items[type][0] && assets.items[type][0].at) || 0);
   const previewAt = Number((assets.previews && assets.previews[type] && assets.previews[type].at) || 0);
   return Math.max(itemAt, previewAt);
+}
+
+function assetHelpfulScoreForType(entry, type = '') {
+  if (type && type !== 'comments') return 0;
+  return Number(entry && entry.assets && entry.assets.helpfulCount) || 0;
+}
+
+function assetHelpfulCommentCount(entry, type = '') {
+  if (type && type !== 'comments') return 0;
+  return Number(entry && entry.assets && entry.assets.helpfulComments) || 0;
+}
+
+function compareAssetEntries(a, b) {
+  const latestDelta = assetLatestAtForType(b, state.assetFilter) - assetLatestAtForType(a, state.assetFilter);
+  if (state.assetSort === 'helpful') {
+    const helpfulDelta = assetHelpfulScoreForType(b, state.assetFilter) - assetHelpfulScoreForType(a, state.assetFilter);
+    if (helpfulDelta) return helpfulDelta;
+    const helpfulCommentDelta = assetHelpfulCommentCount(b, state.assetFilter) - assetHelpfulCommentCount(a, state.assetFilter);
+    if (helpfulCommentDelta) return helpfulCommentDelta;
+  }
+  return latestDelta || (b.publishedTs || 0) - (a.publishedTs || 0);
 }
 
 function assetDashboardStats() {
@@ -1151,6 +1178,11 @@ function renderAssetDashboard() {
 function assetActivityLabel(entry) {
   if (state.view !== 'assets') return '';
   const assets = entry && entry.assets ? entry.assets : {};
+  if (state.assetSort === 'helpful' && assetHelpfulScoreForType(entry, state.assetFilter) > 0) {
+    const helpful = assetHelpfulScoreForType(entry, state.assetFilter);
+    const latest = assetLatestAtForType(entry, state.assetFilter);
+    return `有用 ${helpful} 次${latest ? ` · 最近沉淀 ${formatAssetTime(latest)}` : ''}`;
+  }
   if (state.assetFilter) {
     const filteredAt = assetLatestAtForType(entry, state.assetFilter);
     if (!filteredAt) return '';
@@ -1166,6 +1198,13 @@ function assetActivityLabel(entry) {
 
 function assetPreviewForEntry(entry) {
   if (state.view !== 'assets') return null;
+  if (
+    state.assetSort === 'helpful'
+    && (!state.assetFilter || state.assetFilter === 'comments')
+    && entry?.assets?.topHelpfulComment
+  ) {
+    return entry.assets.topHelpfulComment;
+  }
   return assetPreviewForType(entry, state.assetFilter);
 }
 
@@ -1229,7 +1268,17 @@ function assetPreviewHtml(preview) {
 function assetItemListHtml(entry) {
   if (state.view !== 'assets' || !['comments', 'chat'].includes(state.assetFilter)) return '';
   const assets = entry && entry.assets ? entry.assets : {};
-  const items = (assets.items && assets.items[state.assetFilter]) || [];
+  let items = (assets.items && assets.items[state.assetFilter]) || [];
+  if (state.assetFilter === 'comments' && state.assetSort === 'helpful' && assets.topHelpfulComment) {
+    const byId = new Map();
+    for (const item of [assets.topHelpfulComment, ...items]) {
+      const key = item && item.id ? item.id : `${item && item.at}:${item && item.text}`;
+      if (item && key && !byId.has(key)) byId.set(key, item);
+    }
+    items = [...byId.values()]
+      .sort((a, b) => (Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0)) || (Number(b.at || 0) - Number(a.at || 0)))
+      .slice(0, 3);
+  }
   if (!items.length) return '';
   const total = state.assetFilter === 'comments' ? Number(assets.comments || 0) : Number(assets.chatMessages || 0);
   const label = ASSET_TYPE_LABELS[state.assetFilter] || '资产';
@@ -1311,6 +1360,10 @@ function renderAssetActivityStrip() {
     const latestText = activeLatestAt
       ? `${latestLabel} · ${formatAssetTime(activeLatestAt)}`
       : '暂无沉淀';
+    const activeHelpfulCount = activeEntries.reduce((sum, entry) => sum + assetHelpfulScoreForType(entry, state.assetFilter), 0);
+    const sortText = state.assetSort === 'helpful'
+      ? (activeHelpfulCount ? `有用 ${activeHelpfulCount} 次` : '暂无有用标记')
+      : '按最新沉淀';
     const matchedCount = state.q
       ? entries
         .filter(entry => !state.assetFilter || entryHasAssetType(entry, state.assetFilter))
@@ -1319,9 +1372,12 @@ function renderAssetActivityStrip() {
       : null;
     const scopeText = `${activeAssetCount} 条 · ${activeEntryCount} 篇文章`;
     const statusText = matchedCount === null
-      ? `${scopeText} · ${latestText}`
-      : `匹配 ${matchedCount} 篇 · ${scopeText} · ${latestText}`;
+      ? `${scopeText} · ${sortText} · ${latestText}`
+      : `匹配 ${matchedCount} 篇 · ${scopeText} · ${sortText} · ${latestText}`;
     const feedHref = state.assetFilter ? `/assets/${state.assetFilter}.xml` : '/assets.xml';
+    const sortButtons = Object.entries(ASSET_SORTS).map(([sort, def]) => `
+      <button type="button" class="asset-sort-btn${state.assetSort === sort ? ' active' : ''}" data-asset-sort="${escapeHtml(sort)}" aria-pressed="${state.assetSort === sort ? 'true' : 'false'}" title="${escapeHtml(def.title)}">${escapeHtml(def.label)}</button>
+    `).join('');
     const chips = [
       `<button type="button" class="asset-filter-chip${!state.assetFilter ? ' active' : ''}" data-asset-strip-filter="" title="查看全部公开资产">
         <span>全部</span><strong>${totalAssets}</strong>
@@ -1340,6 +1396,10 @@ function renderAssetActivityStrip() {
         <em>${escapeHtml(statusText)}</em>
         <button type="button" class="asset-copy-link" data-asset-copy-list title="复制当前资产页链接" aria-label="复制当前资产页链接">⧉</button>
         <a class="asset-feed-link" href="${escapeHtml(feedHref)}" target="_blank" rel="noopener" title="订阅公开资产 RSS">RSS</a>
+      </div>
+      <div class="asset-sort-row">
+        <span>排序</span>
+        <div class="asset-sort-toggle" role="group" aria-label="公开资产排序">${sortButtons}</div>
       </div>
       <div class="asset-filter-list" aria-label="资产类型筛选">
         ${chips.join('')}
@@ -1392,6 +1452,9 @@ function mergeAssets(entry, patch = {}) {
     preview: null,
     previews: {},
     items: {},
+    helpfulCount: 0,
+    helpfulComments: 0,
+    topHelpfulComment: null,
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
   };
@@ -1845,7 +1908,10 @@ function updateListTitle() {
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
-  else if (state.view === 'assets') title = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
+  else if (state.view === 'assets') {
+    const prefix = state.assetSort === 'helpful' ? '有用 · ' : '';
+    title = `${prefix}${state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产'}`;
+  }
   else if (state.view === 'contributors') title = '贡献者';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
@@ -3052,6 +3118,7 @@ async function openEntryFromUrl() {
     state.filterSource = null;
     state.filterCategory = null;
     state.assetFilter = null;
+    state.assetSort = 'latest';
     state.q = '';
     updateListTitle();
     renderSidebar();
@@ -3066,18 +3133,21 @@ async function openEntryFromUrl() {
       state.filterSource = null;
       state.filterCategory = null;
       state.assetFilter = null;
+      state.assetSort = 'latest';
       state.q = route.q;
     } else if (route.view === 'assets') {
       state.view = 'assets';
       state.filterSource = null;
       state.filterCategory = null;
       state.assetFilter = route.assetFilter;
+      state.assetSort = route.assetSort;
       state.q = route.q;
     } else {
       state.view = 'all';
       state.filterSource = null;
       state.filterCategory = null;
       state.assetFilter = null;
+      state.assetSort = 'latest';
       state.q = '';
     }
     updateListTitle();
@@ -3128,6 +3198,7 @@ function selectSource(id) {
   state.filterSource = state.filterSource === id ? null : id;
   state.filterCategory = null;
   state.assetFilter = null;
+  state.assetSort = 'latest';
   state.readerFocus = null;
   reload();
 }
@@ -3135,6 +3206,7 @@ function selectCategory(cat) {
   state.filterCategory = state.filterCategory === cat ? null : cat;
   state.filterSource = null;
   state.assetFilter = null;
+  state.assetSort = 'latest';
   state.readerFocus = null;
   reload();
 }
@@ -3144,6 +3216,7 @@ function selectView(v) {
   state.filterCategory = null;
   state.assetFilter = null;
   state.readerFocus = null;
+  if (v !== 'assets') state.assetSort = 'latest';
   if (v === 'assets' || v === 'contributors') {
     syncListUrl();
     reload({ clearUrl: false });
@@ -3157,6 +3230,16 @@ function selectAssetFilter(type = null) {
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
+  state.readerFocus = null;
+  syncListUrl();
+  reload({ clearUrl: false });
+}
+
+function selectAssetSort(sort = 'latest') {
+  state.view = 'assets';
+  state.assetSort = sort === 'helpful' ? 'helpful' : 'latest';
+  state.filterSource = null;
+  state.filterCategory = null;
   state.readerFocus = null;
   syncListUrl();
   reload({ clearUrl: false });
@@ -3765,6 +3848,11 @@ $('#asset-activity-strip').onclick = async (e) => {
   const filter = e.target.closest('[data-asset-strip-filter]');
   if (filter && !filter.disabled) {
     selectAssetFilter(filter.dataset.assetStripFilter || null);
+    return;
+  }
+  const sort = e.target.closest('[data-asset-sort]');
+  if (sort) {
+    selectAssetSort(sort.dataset.assetSort || 'latest');
     return;
   }
   const all = e.target.closest('[data-asset-open-all]');

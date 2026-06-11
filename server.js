@@ -113,6 +113,10 @@ function requestAssetDirectoryType(req) {
   return normalizeAssetDirectoryType(match ? match[1] : '');
 }
 
+function requestAssetSort(req) {
+  return String(req.query.sort || '') === 'helpful' ? 'helpful' : 'latest';
+}
+
 function isAssetDirectoryRequest(req) {
   if (String(req.query.view || '') === 'assets') return true;
   return /^\/assets(?:\/[^/.]+)?\/?$/.test(String(req.path || ''));
@@ -136,6 +140,9 @@ function requestAssetFocus(req) {
 function assetDirectoryMeta(req) {
   if (!isAssetDirectoryRequest(req)) return null;
   const type = requestAssetDirectoryType(req);
+  const sort = requestAssetSort(req);
+  const sortPrefix = sort === 'helpful' ? '有用 · ' : '';
+  const sortDescription = sort === 'helpful' ? '按读者“有用”反馈优先浏览。' : '';
   const q = clipText(String(req.query.q || '').trim(), 48);
   const stats = assetDirectoryStats(type, q);
   const searchSuffix = stats.summary || '';
@@ -143,28 +150,28 @@ function assetDirectoryMeta(req) {
   if (!type) {
     if (q) {
       return {
-        title: `公开资产搜索：${q} · QMReader`,
-        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、人工点评和文章对话。${searchSuffix}`,
+        title: `${sortPrefix}公开资产搜索：${q} · QMReader`,
+        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、人工点评和文章对话。${sortDescription}${searchSuffix}`,
       };
     }
     return {
-      title: stats.assetCount ? `公开资产（${stats.assetCount} 条） · QMReader` : '公开资产 · QMReader',
+      title: stats.assetCount ? `${sortPrefix}公开资产（${stats.assetCount} 条） · QMReader` : `${sortPrefix}公开资产 · QMReader`,
       description: stats.assetCount
-        ? `QMReader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、乔木风格重写、人工点评和文章对话。${latestSuffix}`
+        ? `QMReader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、乔木风格重写、人工点评和文章对话。${sortDescription}${latestSuffix}`
         : DEFAULT_DESCRIPTION,
     };
   }
   const meta = ASSET_DIRECTORY_META[type];
   if (q) {
     return {
-      title: `${meta.label}资产搜索：${q} · QMReader`,
-      description: `搜索“${q}”相关的${meta.label}资产。${searchSuffix}`,
+      title: `${sortPrefix}${meta.label}资产搜索：${q} · QMReader`,
+      description: `搜索“${q}”相关的${meta.label}资产。${sortDescription}${searchSuffix}`,
     };
   }
   return {
-    title: stats.assetCount ? `${meta.label}资产（${stats.assetCount} 条） · QMReader` : `${meta.label}资产 · QMReader`,
+    title: stats.assetCount ? `${sortPrefix}${meta.label}资产（${stats.assetCount} 条） · QMReader` : `${sortPrefix}${meta.label}资产 · QMReader`,
     description: stats.assetCount
-      ? `QMReader 已沉淀 ${stats.assetCount} 条${meta.label}资产，覆盖 ${stats.entryCount} 篇文章，可通过网页或 RSS 浏览。${latestSuffix}`
+      ? `QMReader 已沉淀 ${stats.assetCount} 条${meta.label}资产，覆盖 ${stats.entryCount} 篇文章，可通过网页或 RSS 浏览。${sortDescription}${latestSuffix}`
       : meta.description,
   };
 }

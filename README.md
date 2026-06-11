@@ -12,7 +12,7 @@
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用；本人和管理员可撤回单条对话
 - 账号级“我的资产”列表可找回自己发布过的公开点评和文章对话，并跳回对应文章位置
 - 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开点评和文章对话，不暴露邮箱
-- 公开资产视图按最新沉淀排序，可通过 `/assets`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会预览最新翻译、重写，以及每篇文章最近几条点评或对话，单条预览深链可复制，点评/对话预览和单条链接可直达具体条目
+- 公开资产视图可按最新沉淀或读者“有用”反馈排序，可通过 `/assets`、`/assets?sort=helpful`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会预览最新翻译、重写，以及每篇文章最近几条点评或高有用点评，单条预览深链可复制，点评/对话预览和单条链接可直达具体条目
 - 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；点评和对话按单条资产进入订阅流
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
 - 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
@@ -147,8 +147,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/api/entry/:id/chat` | 读取公开文章对话 |
 | POST | `/api/entry/:id/chat` | 登录用户以当前文章为上下文对话；body `{"messages":[{"role":"user","content":"..."}]}` |
 | DELETE | `/api/entry/:id/chat/:messageId` | 本人或管理员撤回单条公开对话 |
-| GET | `/assets` | 公开资产网页目录；支持 `?q=` 分享资产搜索 |
-| GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
+| GET | `/assets` | 公开资产网页目录；支持 `?q=` 搜索和 `?sort=helpful` 有用排序 |
+| GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索、`?sort=helpful` 有用排序；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | GET | `/contributors` | 公开贡献者网页目录；支持 `?q=` 搜索 |
 | GET | `/assets.xml` | 公开资产 RSS 订阅流 |
 | GET | `/assets/:type.xml` | 按类型订阅公开资产；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
