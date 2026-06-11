@@ -807,7 +807,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .entry-asset-preview-row {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px;
+  grid-template-columns: minmax(0, 1fr) 44px 44px;
   align-items: stretch;
   gap: 6px;
 }

@@ -1423,6 +1423,7 @@ function assetPreviewHtml(preview) {
         <span class="entry-asset-preview-text">${escapeHtml(display.text)}</span>
         ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
       </button>
+      <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy-content="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}内容" aria-label="复制${escapeHtml(label)}内容">文</button>
       <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">⧉</button>
     </div>`;
 }
@@ -2117,6 +2118,15 @@ function renderList() {
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
     card.onclick = (event) => {
+      const previewCopyContent = event.target.closest('[data-asset-preview-copy-content]');
+      if (previewCopyContent) {
+        event.preventDefault();
+        event.stopPropagation();
+        const type = previewCopyContent.dataset.assetPreviewCopyContent;
+        const item = entryAssetPreviewForCopy(e, type, previewCopyContent.dataset.assetItemId || '');
+        copyAssetContent(type, item);
+        return;
+      }
       const previewCopy = event.target.closest('[data-asset-preview-copy]');
       if (previewCopy) {
         event.preventDefault();
@@ -2983,10 +2993,10 @@ function assetContentText(type, item, fullAsset = null) {
   if (assetType === 'rewrite') return String((fullAsset && fullAsset.body) || item.body || item.bodySnippet || '').trim();
   if (assetType === 'chat') {
     const label = item.role === 'assistant' ? '回答' : '提问';
-    const content = String(item.content || item.contentSnippet || '').trim();
+    const content = String(item.content || item.contentSnippet || item.text || '').trim();
     return content ? `${label}：\n${content}` : '';
   }
-  return String(item.body || item.bodySnippet || '').trim();
+  return String(item.body || item.bodySnippet || item.text || '').trim();
 }
 
 async function fullAiAssetForCopy(type, item) {
@@ -3288,6 +3298,24 @@ function copyContributorAssetLink(itemId) {
 function copyContributorAssetContent(itemId) {
   const item = contributorAssetItemsForCurrentTab().find(asset => asset.id === itemId);
   copyAssetContent(state.contributor.tab, item);
+}
+
+function entryAssetPreviewForCopy(entry, type, itemId = '') {
+  const assetType = normalizeUserAssetTab(type);
+  const assets = entry && entry.assets ? entry.assets : {};
+  const id = String(itemId || '').trim();
+  const items = assets.items && Array.isArray(assets.items[assetType]) ? assets.items[assetType] : [];
+  const preview = (id && items.find(item => item && item.id === id))
+    || (id && assets.previews && assets.previews[assetType] && assets.previews[assetType].id === id ? assets.previews[assetType] : null)
+    || (assets.previews && assets.previews[assetType])
+    || (assets.preview && assets.preview.type === assetType ? assets.preview : null);
+  if (!preview) return null;
+  return {
+    ...preview,
+    id: preview.id || id,
+    entryId: entry && entry.id,
+    entry,
+  };
 }
 
 function autosizeCommentEditInput(input) {
