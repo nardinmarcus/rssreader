@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=99" />
+  <link rel="stylesheet" href="/styles.css?v=101" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -80,6 +80,10 @@
           <button id="mark-read-btn" class="icon-btn" title="全部标为已读">✓</button>
         </div>
       </header>
+      <div id="entry-pane-tabs" class="entry-pane-tabs hidden" role="tablist" aria-label="全部视图">
+        <button class="entry-pane-tab active" type="button" data-home-tab="entries">文章列表 <span id="home-entry-count">0</span></button>
+        <button class="entry-pane-tab" type="button" data-home-tab="assets">公开资产动态 <span id="home-asset-count">0</span></button>
+      </div>
       <div id="asset-activity-strip" class="asset-activity-strip hidden"></div>
       <div id="entry-list" class="entry-list"></div>
     </section>
@@ -105,6 +109,7 @@
             <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
             <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
             <button id="reader-star" class="ghost-btn">★ 收藏</button>
+            <button id="reader-assets-toggle" class="ghost-btn hidden" type="button" aria-expanded="false">资产导航</button>
           </div>
         </header>
         <div id="reader-audio"></div>
@@ -113,6 +118,10 @@
           <button class="reader-tab" type="button" data-tab="translation">中文翻译</button>
           <button class="reader-tab" type="button" data-tab="rewrite">乔木风格重写</button>
         </div>
+        <details id="reader-toc" class="reader-toc hidden">
+          <summary>目录</summary>
+          <nav id="reader-toc-list" aria-label="文章目录"></nav>
+        </details>
         <section id="reader-original-panel" class="reader-tab-panel">
           <div id="reader-content" class="reader-content"></div>
         </section>
@@ -122,6 +131,7 @@
             <div class="reader-section-actions">
               <span id="translation-meta"></span>
               <button id="translation-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
+              <button id="translation-view-toggle" class="ghost-btn hidden" type="button" aria-pressed="false">对照</button>
               <button id="translation-copy" class="ghost-btn hidden" type="button">⧉ 复制译文</button>
               <button id="reader-bilingual" class="ghost-btn primary" type="button">生成中文翻译</button>
             </div>
@@ -389,6 +399,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=99"></script>
+  <script src="/app.js?v=101"></script>
 </body>
 </html>

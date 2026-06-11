@@ -331,6 +331,7 @@ const state = {
   assetFilter: null,
   assetSort: 'latest',
   contributorSort: 'latest',
+  homeTab: storage.getItem('qm_home_tab') === 'assets' ? 'assets' : 'entries',
   q: '',
   refreshing: false,
   refreshProgress: { done: 0, total: 0 },
@@ -356,10 +357,13 @@ const state = {
   translation: null,
   translationLoading: false,
   translationGenerating: false,
+  translationCompare: false,
   pendingTranslationGenerate: false,
   rewrite: null,
   rewriteGenerating: false,
   readerTab: 'original',
+  readerAssetsExpanded: false,
+  readerTocAvailable: false,
   readerFocus: null,
   readerAssetId: '',
   pendingAssetJump: null,
@@ -1029,6 +1033,10 @@ function normalizeSearchText(value) {
   return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function isCompactViewport() {
+  return window.matchMedia && window.matchMedia('(max-width: 860px)').matches;
+}
+
 function sourceNameForEntry(entry) {
   return sourceById(entry && entry.sourceId)?.name || (entry && entry.sourceId) || '';
 }
@@ -1498,6 +1506,87 @@ function latestAssetActivity(limit = 4) {
     });
 }
 
+function isHomeScope() {
+  return state.view === 'all' && !state.filterSource && !state.filterCategory && !state.q;
+}
+
+function homeAssetActivityItems(limit = 24) {
+  return latestAssetActivity(limit).filter(item => item.type);
+}
+
+function renderEntryPaneTabs() {
+  const tabs = $('#entry-pane-tabs');
+  if (!tabs) return;
+  const show = isHomeScope() && state.entries.length > 0;
+  tabs.classList.toggle('hidden', !show);
+  if (!show) return;
+  const assetCount = homeAssetActivityItems(1000).length;
+  const entryCount = state.entries.length;
+  $('#home-entry-count').textContent = entryCount;
+  $('#home-asset-count').textContent = assetCount;
+  $$('#entry-pane-tabs [data-home-tab]').forEach(btn => {
+    const active = btn.dataset.homeTab === state.homeTab;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
+function assetActivityItemHtml({ entry, type, labels, preview, previewMeta }, { large = false } = {}) {
+  const src = sourceById(entry.sourceId);
+  const itemId = preview && preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
+  const previewDisplay = preview ? assetPreviewDisplay(preview) : null;
+  const previewText = previewDisplay && previewDisplay.text ? previewDisplay.text : '';
+  const labelText = previewDisplay && previewDisplay.commentType && labels === ASSET_TYPE_LABELS.comments
+    ? previewDisplay.label
+    : labels;
+  const helpfulMeta = preview && Number(preview.helpfulCount || 0) > 0
+    ? `有用 ${Number(preview.helpfulCount || 0)}`
+    : '';
+  const meta = [src && src.name, previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
+  return `<button type="button" class="asset-activity-item${large ? ' asset-activity-item-large' : ''} asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}"${itemId}>
+    <span class="asset-activity-type">${escapeHtml(labelText)}</span>
+    <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
+    ${previewText ? `<span class="asset-activity-preview">${escapeHtml(previewText)}</span>` : ''}
+    <span class="asset-activity-meta">${escapeHtml(meta)}</span>
+  </button>`;
+}
+
+function renderHomeAssetActivityList(el) {
+  const items = homeAssetActivityItems(30);
+  el.classList.add('home-asset-activity-list');
+  if (!items.length) {
+    el.innerHTML = '<div class="list-empty">还没有公开资产动态<br/>翻译、重写、点评或对话后会出现在这里</div>';
+    return;
+  }
+  const { totalAssets, entries, helpfulTotal } = assetDashboardStats();
+  el.innerHTML = `
+    <div class="home-asset-hero">
+      <div>
+        <span>公开资产动态</span>
+        <strong>${totalAssets} 条资产 · ${entries.length} 篇文章</strong>
+        <em>${helpfulTotal ? `读者标记有用 ${helpfulTotal} 次` : '按最新沉淀排序'}</em>
+      </div>
+      <button type="button" class="ghost-btn" data-asset-open-all>全部资产</button>
+    </div>
+    <div class="home-asset-activity-grid">
+      ${items.map(item => assetActivityItemHtml(item, { large: true })).join('')}
+    </div>`;
+}
+
+async function openAssetActivityButton(btn) {
+  if (!btn) return;
+  const entry = state.entries.find(item => item.id === btn.dataset.assetEntry);
+  if (!entry) return;
+  const focus = btn.dataset.assetFocus;
+  const itemId = btn.dataset.assetItemId || '';
+  await openEntry(entry, {
+    focus,
+    aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
+    commentId: focus === 'comments' ? itemId : '',
+    chatMessageId: focus === 'chat' ? itemId : '',
+  });
+}
+
 function renderAssetActivityStrip() {
   const el = $('#asset-activity-strip');
   if (!el) return;
@@ -1612,39 +1701,8 @@ function renderAssetActivityStrip() {
       </div>`;
     return;
   }
-  const shouldShow = state.view === 'all' && !state.filterSource && !state.filterCategory && !state.q;
-  const items = shouldShow ? latestAssetActivity(4).filter(item => item.type) : [];
-  el.classList.toggle('hidden', !items.length);
-  if (!items.length) {
-    el.innerHTML = '';
-    return;
-  }
-  el.innerHTML = `
-    <div class="asset-activity-head">
-      <span>公开资产动态</span>
-      <button type="button" data-asset-open-all>全部资产</button>
-    </div>
-    <div class="asset-activity-list">
-      ${items.map(({ entry, type, labels, preview, previewMeta }) => {
-        const src = sourceById(entry.sourceId);
-        const itemId = preview && preview.id ? ` data-asset-item-id="${escapeHtml(preview.id)}"` : '';
-        const previewDisplay = preview ? assetPreviewDisplay(preview) : null;
-        const previewText = previewDisplay && previewDisplay.text ? previewDisplay.text : '';
-        const labelText = previewDisplay && previewDisplay.commentType && labels === ASSET_TYPE_LABELS.comments
-          ? previewDisplay.label
-          : labels;
-        const helpfulMeta = preview && Number(preview.helpfulCount || 0) > 0
-          ? `有用 ${Number(preview.helpfulCount || 0)}`
-          : '';
-        const meta = [src && src.name, previewMeta, helpfulMeta, formatAssetTime(entry.assets.latestAt)].filter(Boolean).join(' · ');
-        return `<button type="button" class="asset-activity-item asset-activity-${type}" data-asset-entry="${escapeHtml(entry.id)}" data-asset-focus="${escapeHtml(type)}"${itemId}>
-          <span class="asset-activity-type">${escapeHtml(labelText)}</span>
-          <strong>${escapeHtml(entry.titleZh || entry.title || '无标题')}</strong>
-          ${previewText ? `<span class="asset-activity-preview">${escapeHtml(previewText)}</span>` : ''}
-          <span class="asset-activity-meta">${escapeHtml(meta)}</span>
-        </button>`;
-      }).join('')}
-    </div>`;
+  el.classList.add('hidden');
+  el.innerHTML = '';
 }
 
 function mergeAssets(entry, patch = {}) {
@@ -1682,7 +1740,21 @@ function renderReaderAssets(entry = state.activeEntry) {
   const el = $('#reader-assets');
   const html = assetBadgesHtml(entry, { interactive: true });
   el.innerHTML = html;
-  el.classList.toggle('hidden', !html);
+  el.classList.toggle('hidden', true);
+}
+
+function setReaderAssetsExpanded(expanded) {
+  state.readerAssetsExpanded = Boolean(expanded);
+  renderReaderAssetSummary();
+}
+
+function updateReaderAssetsToggle(count = 0) {
+  const btn = $('#reader-assets-toggle');
+  if (!btn) return;
+  btn.classList.toggle('hidden', !count);
+  btn.disabled = !count;
+  btn.setAttribute('aria-expanded', state.readerAssetsExpanded ? 'true' : 'false');
+  btn.textContent = state.readerAssetsExpanded ? '收起资产' : `资产导航 ${count}`;
 }
 
 function assetMetaLine(parts) {
@@ -1740,6 +1812,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   if (!entry) {
     el.classList.add('hidden');
     el.innerHTML = '';
+    updateReaderAssetsToggle(0);
     return;
   }
   const assets = mergeAssets(entry);
@@ -1793,6 +1866,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     });
   }
 
+  updateReaderAssetsToggle(rows.length);
   el.innerHTML = rows.map(row => `
     <div class="asset-summary-row asset-summary-${row.type}">
       <button type="button" class="asset-summary-item" data-asset-summary="${row.type}">
@@ -1802,7 +1876,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       </button>
       <button type="button" class="asset-summary-copy" data-asset-copy="${row.type}" title="复制${escapeHtml(row.label)}链接" aria-label="复制${escapeHtml(row.label)}链接">⧉</button>
     </div>`).join('');
-  el.classList.toggle('hidden', !rows.length);
+  el.classList.toggle('hidden', !rows.length || !state.readerAssetsExpanded);
 }
 
 function scrollReaderTarget(selector, { behavior = 'smooth', offset = 12 } = {}) {
@@ -2068,6 +2142,11 @@ function renderContributorDirectory() {
 }
 
 function renderList() {
+  $('#app').classList.toggle('view-assets', state.view === 'assets');
+  $('#app').classList.toggle('view-contributors', state.view === 'contributors');
+  $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
+  renderEntryPaneTabs();
+  $('#mark-read-btn').classList.toggle('hidden', state.view === 'contributors' || (isHomeScope() && state.homeTab === 'assets'));
   if (state.view === 'contributors') {
     renderContributorDirectory();
     return;
@@ -2075,7 +2154,12 @@ function renderList() {
   const list = visibleEntries();
   const el = $('#entry-list');
   el.innerHTML = '';
+  el.classList.remove('home-asset-activity-list');
   renderAssetActivityStrip();
+  if (isHomeScope() && state.homeTab === 'assets') {
+    renderHomeAssetActivityList(el);
+    return;
+  }
   if (!list.length) {
     const assetScope = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
     const text = state.view === 'assets' && state.q
@@ -2222,10 +2306,44 @@ function updateFetchOriginalButton(entry = state.activeEntry) {
   btn.textContent = state.fetchingOriginal ? '获取中…' : '获取原文';
 }
 
+function updateReaderTocVisibility(tab = state.readerTab) {
+  const toc = $('#reader-toc');
+  if (!toc) return;
+  toc.classList.toggle('hidden', tab !== 'original' || !state.readerTocAvailable);
+}
+
+function renderReaderToc(root = $('#reader-content')) {
+  const toc = $('#reader-toc');
+  const list = $('#reader-toc-list');
+  if (!toc || !list || !root) return;
+  const headings = [...root.querySelectorAll('h2,h3,h4')]
+    .map((el, index) => {
+      const text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      el.id = `reader-section-${index + 1}`;
+      return { id: el.id, text, level: el.tagName.toLowerCase() };
+    })
+    .filter(Boolean)
+    .slice(0, 24);
+  state.readerTocAvailable = headings.length >= 2;
+  if (!state.readerTocAvailable) {
+    toc.open = false;
+    list.innerHTML = '';
+    updateReaderTocVisibility();
+    return;
+  }
+  toc.open = false;
+  list.innerHTML = headings.map(item => `
+    <a class="reader-toc-link reader-toc-${item.level}" href="#${escapeHtml(item.id)}">${escapeHtml(item.text)}</a>
+  `).join('');
+  updateReaderTocVisibility();
+}
+
 function renderOriginalContent(entry, content) {
   const fallback = entry && entry.summary ? `<p>${escapeHtml(entry.summary)}</p>` : '<p>（无内容，请打开原文）</p>';
   $('#reader-content').innerHTML = sanitize(content || fallback);
   $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  renderReaderToc($('#reader-content'));
   if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
 }
 
@@ -2236,6 +2354,7 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   $('#reader-original-panel').classList.toggle('hidden', next !== 'original');
   $('#reader-translation').classList.toggle('hidden', next !== 'translation');
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
+  updateReaderTocVisibility(next);
   if (syncUrl) syncReaderUrl({ replace: replaceUrl });
 }
 
@@ -2389,8 +2508,17 @@ function renderTranslation(translation, { loading = false } = {}) {
   const empty = $('#translation-empty');
   const emptyText = empty.querySelector('p');
   const action = $('#reader-bilingual');
+  const mode = $('#translation-view-toggle');
   const copy = $('#translation-copy');
   list.innerHTML = '';
+  list.classList.toggle('translation-compare', state.translationCompare);
+  list.classList.toggle('translation-zh', !state.translationCompare);
+  mode.classList.toggle('hidden', !hasContent);
+  mode.disabled = !hasContent;
+  mode.classList.toggle('active', Boolean(state.translationCompare));
+  mode.setAttribute('aria-pressed', state.translationCompare ? 'true' : 'false');
+  mode.textContent = state.translationCompare ? '纯中文' : '对照';
+  mode.title = state.translationCompare ? '切回纯中文译文' : '显示双语对照';
   copy.classList.toggle('hidden', !hasContent);
   copy.disabled = !hasContent;
   renderAssetHelpfulButton('translation', state.translation);
@@ -2417,11 +2545,14 @@ function renderTranslation(translation, { loading = false } = {}) {
   action.textContent = translation.stale ? '更新中文翻译' : '重新生成中文翻译';
   $('#translation-meta').textContent = [translation.stale ? '原文已更新' : '', translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
   renderAssetHelpfulButton('translation', state.translation);
-  list.innerHTML = translation.content.map(pair => `
-    <div class="translation-pair">
-      <p class="translation-source">${escapeHtml(pair.source)}</p>
-      <p class="translation-target">${escapeHtml(pair.target)}</p>
-    </div>`).join('');
+  list.innerHTML = translation.content.map(pair => state.translationCompare
+    ? `<div class="translation-pair">
+        <p class="translation-source">${escapeHtml(pair.source)}</p>
+        <p class="translation-target">${escapeHtml(pair.target)}</p>
+      </div>`
+    : `<div class="translation-block">
+        <p class="translation-target">${escapeHtml(pair.target)}</p>
+      </div>`).join('');
   renderReaderAssetSummary();
   settlePendingAssetJump('translation');
 }
@@ -3844,15 +3975,19 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
+  state.translationCompare = false;
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
   state.rewriteGenerating = false;
   state.readerFocus = requestedFocus;
   state.readerAssetId = requestedAssetId;
+  state.readerAssetsExpanded = false;
+  state.readerTocAvailable = false;
   state.pendingAssetJump = requestedFocus;
   state.pendingCommentId = commentId || '';
   state.pendingChatMessageId = chatMessageId || '';
   if (requestedFocus === 'chat') setAgentCollapsed(false);
+  else if (isCompactViewport()) setAgentCollapsed(true);
   state.fetchingOriginal = false;
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
@@ -3892,11 +4027,14 @@ function closeReaderFromRoute() {
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
+  state.translationCompare = false;
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
   state.rewriteGenerating = false;
   state.readerFocus = null;
   state.readerAssetId = '';
+  state.readerAssetsExpanded = false;
+  state.readerTocAvailable = false;
   state.pendingAssetJump = null;
   state.pendingCommentId = '';
   state.pendingChatMessageId = '';
@@ -3997,11 +4135,14 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.translation = null;
     state.translationLoading = false;
     state.translationGenerating = false;
+    state.translationCompare = false;
     state.pendingTranslationGenerate = false;
     state.rewrite = null;
     state.rewriteGenerating = false;
     state.readerFocus = null;
     state.readerAssetId = '';
+    state.readerAssetsExpanded = false;
+    state.readerTocAvailable = false;
     state.pendingAssetJump = null;
     state.fetchingOriginal = false;
     state.readerTab = 'original';
@@ -4720,17 +4861,24 @@ $('#asset-activity-strip').onclick = async (e) => {
     return;
   }
   const btn = e.target.closest('[data-asset-entry]');
+  await openAssetActivityButton(btn);
+};
+$('#entry-pane-tabs').onclick = (e) => {
+  const btn = e.target.closest('[data-home-tab]');
   if (!btn) return;
-  const entry = state.entries.find(item => item.id === btn.dataset.assetEntry);
-  if (!entry) return;
-  const focus = btn.dataset.assetFocus;
-  const itemId = btn.dataset.assetItemId || '';
-  await openEntry(entry, {
-    focus,
-    aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
-    commentId: focus === 'comments' ? itemId : '',
-    chatMessageId: focus === 'chat' ? itemId : '',
-  });
+  state.homeTab = btn.dataset.homeTab === 'assets' ? 'assets' : 'entries';
+  storage.setItem('qm_home_tab', state.homeTab);
+  renderList();
+};
+$('#entry-list').onclick = async (e) => {
+  const all = e.target.closest('[data-asset-open-all]');
+  if (all) {
+    selectAssetFilter(null);
+    return;
+  }
+  const btn = e.target.closest('.home-asset-activity-list [data-asset-entry]');
+  if (!btn) return;
+  await openAssetActivityButton(btn);
 };
 $('#refresh-btn').onclick = refreshAll;
 $('#mark-read-btn').onclick = async () => {
@@ -4765,6 +4913,13 @@ $('#reader-fetch-original').onclick = fetchOriginalContent;
 $('#reader-copy-link').onclick = () => {
   copyReaderLink();
 };
+$('#reader-assets-toggle').onclick = () => setReaderAssetsExpanded(!state.readerAssetsExpanded);
+$('#reader-toc').onclick = (e) => {
+  const link = e.target.closest('a[href^="#reader-section-"]');
+  if (!link) return;
+  e.preventDefault();
+  scrollReaderTarget(link.getAttribute('href'), { offset: 58 });
+};
 $('#reader-assets').onclick = (e) => {
   const btn = e.target.closest('[data-asset]');
   if (!btn) return;
@@ -4784,6 +4939,10 @@ $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(stat
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
 $('#translation-helpful').onclick = () => toggleEntryAssetHelpful('translation');
 $('#rewrite-helpful').onclick = () => toggleEntryAssetHelpful('rewrite');
+$('#translation-view-toggle').onclick = () => {
+  state.translationCompare = !state.translationCompare;
+  renderTranslation(state.translation);
+};
 $('#translation-copy').onclick = copyTranslationText;
 $('#rewrite-copy').onclick = copyRewriteText;
 $$('.reader-tab').forEach(btn => {
