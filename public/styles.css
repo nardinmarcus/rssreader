@@ -1648,6 +1648,36 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .my-comments-box {
   width: min(680px, 94vw);
 }
+.my-asset-tabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+.my-asset-tab {
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+.my-asset-tab span {
+  margin-left: 4px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.my-asset-tab.active {
+  background: var(--bg-1);
+  color: var(--text-0);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  box-shadow: 0 1px 5px rgba(20, 24, 33, 0.08);
+}
+.my-asset-tab.active span {
+  color: var(--accent);
+}
 .my-comments-list {
   min-height: 160px;
   overflow-y: auto;
@@ -2164,7 +2194,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .account-info { display: none; }
   #auth-open::before { content: '⎋'; font-size: 15px; }
-  #my-comments-btn::before { content: '评'; font-size: 15px; }
+  #my-comments-btn::before { content: '资'; font-size: 15px; }
   #sidebar-ai-settings::before { content: '⚿'; font-size: 15px; }
   #refresh-btn::before { content: '↻'; font-size: 15px; }
   #manage-btn::before { content: '⚙'; font-size: 15px; }
@@ -2271,7 +2301,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .account-info { display: none; }
   #auth-open::before { content: '⎋'; font-size: 15px; }
-  #my-comments-btn::before { content: '评'; font-size: 15px; }
+  #my-comments-btn::before { content: '资'; font-size: 15px; }
   #sidebar-ai-settings::before { content: '⚿'; font-size: 15px; }
   #refresh-btn::before { content: '↻'; font-size: 15px; }
   #manage-btn::before { content: '⚙'; font-size: 15px; }

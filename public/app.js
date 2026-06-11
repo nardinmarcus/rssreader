@@ -321,6 +321,8 @@ const state = {
   agentMessages: [],
   comments: [],
   myComments: [],
+  myChatMessages: [],
+  myAssetTab: 'comments',
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
@@ -1659,6 +1661,7 @@ async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   state.me = null;
   state.myComments = [];
+  state.myChatMessages = [];
   applyGuestEntryStates();
   loadAiProfilesForScope();
   renderAuthState();
@@ -2190,28 +2193,57 @@ function copyCommentLink(commentId) {
   copyText(url, '点评链接已复制');
 }
 
-function myCommentUrl(comment) {
-  if (!comment) return '';
-  return commentUrl(comment.id, comment.entry || { id: comment.entryId });
+function myAssetUrl(type, item) {
+  if (!item) return '';
+  const entry = item.entry || { id: item.entryId };
+  if (type === 'chat') return chatMessageUrl(item.id, entry);
+  return commentUrl(item.id, entry);
 }
 
-function renderMyComments(comments = state.myComments) {
+function myAssetCounts() {
+  return {
+    comments: (state.myComments || []).length,
+    chat: (state.myChatMessages || []).length,
+  };
+}
+
+function renderMyAssetTabs() {
+  const counts = myAssetCounts();
+  $('#my-comments-count').textContent = counts.comments;
+  $('#my-chat-count').textContent = counts.chat;
+  $$('.my-asset-tab').forEach(btn => {
+    const active = btn.dataset.myAssetTab === state.myAssetTab;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
+function renderMyAssets() {
   const list = $('#my-comments-list');
   if (!list) return;
-  if (!comments.length) {
-    list.innerHTML = '<div class="my-comments-empty">还没有发布过公开点评</div>';
+  renderMyAssetTabs();
+  const type = state.myAssetTab === 'chat' ? 'chat' : 'comments';
+  const items = type === 'chat' ? (state.myChatMessages || []) : (state.myComments || []);
+  if (!items.length) {
+    list.innerHTML = `<div class="my-comments-empty">还没有发布过公开${type === 'chat' ? '文章对话' : '点评'}</div>`;
     return;
   }
-  list.innerHTML = comments.map(comment => {
-    const entry = comment.entry || {};
-    const display = commentDisplayParts(comment.body || comment.bodySnippet || '');
+  list.innerHTML = items.map(item => {
+    const entry = item.entry || {};
+    const isChat = type === 'chat';
+    const display = isChat ? { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' } : commentDisplayParts(item.body || item.bodySnippet || '');
     const title = entry.titleZh || entry.title || '未命名文章';
-    const meta = [
+    const meta = isChat ? [
       sourceName(entry.sourceId),
-      Number(comment.updatedAt || 0) > Number(comment.createdAt || 0)
-        ? `编辑 ${formatAssetTime(comment.updatedAt)}`
-        : formatAssetTime(comment.createdAt),
-      Number(comment.helpfulCount || 0) ? `有用 ${Number(comment.helpfulCount)}` : '',
+      item.author,
+      item.model,
+      formatAssetTime(item.createdAt),
+    ].filter(Boolean).join(' · ') : [
+      sourceName(entry.sourceId),
+      Number(item.updatedAt || 0) > Number(item.createdAt || 0)
+        ? `编辑 ${formatAssetTime(item.updatedAt)}`
+        : formatAssetTime(item.createdAt),
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
     ].filter(Boolean).join(' · ');
     return `
       <article class="my-comment-item">
@@ -2222,10 +2254,10 @@ function renderMyComments(comments = state.myComments) {
           </div>
           <span class="my-comment-meta">${escapeHtml(meta)}</span>
         </div>
-        <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || comment.bodySnippet || comment.body, 260))}</p>
+        <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
         <div class="my-comment-actions">
-          <button type="button" class="ghost-btn" data-my-comment-open="${escapeHtml(comment.id)}">打开文章</button>
-          <button type="button" class="ghost-btn" data-my-comment-copy="${escapeHtml(comment.id)}">⧉ 复制链接</button>
+          <button type="button" class="ghost-btn" data-my-asset-open="${escapeHtml(item.id)}">打开文章</button>
+          <button type="button" class="ghost-btn" data-my-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
         </div>
       </article>`;
   }).join('');
@@ -2234,11 +2266,16 @@ function renderMyComments(comments = state.myComments) {
 async function openMyCommentsModal() {
   if (!requireAuth('login')) return;
   $('#my-comments-modal').classList.remove('hidden');
-  $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的点评…</div>';
+  renderMyAssetTabs();
+  $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的资产…</div>';
   try {
-    const data = await api('/api/me/comments?limit=100');
-    state.myComments = data.comments || [];
-    renderMyComments();
+    const [commentData, chatData] = await Promise.all([
+      api('/api/me/comments?limit=100'),
+      api('/api/me/chat-messages?limit=100'),
+    ]);
+    state.myComments = commentData.comments || [];
+    state.myChatMessages = chatData.messages || [];
+    renderMyAssets();
   } catch (err) {
     $('#my-comments-list').innerHTML = `<div class="my-comments-empty">读取失败：${escapeHtml(err.message)}</div>`;
   }
@@ -2248,26 +2285,32 @@ function closeMyCommentsModal() {
   $('#my-comments-modal').classList.add('hidden');
 }
 
-async function openMyComment(commentId) {
-  const comment = (state.myComments || []).find(item => item.id === commentId);
-  const entryId = comment && (comment.entry?.id || comment.entryId);
+function myAssetItemsForCurrentTab() {
+  return state.myAssetTab === 'chat' ? (state.myChatMessages || []) : (state.myComments || []);
+}
+
+async function openMyAsset(itemId) {
+  const item = myAssetItemsForCurrentTab().find(asset => asset.id === itemId);
+  const entryId = item && (item.entry?.id || item.entryId);
   if (!entryId) {
-    toast('找不到这条点评对应的文章');
+    toast('找不到这条资产对应的文章');
     return;
   }
   closeMyCommentsModal();
-  const ok = await openEntryById(entryId, { focus: 'comments', commentId, updateUrl: true, replaceUrl: false });
+  const ok = state.myAssetTab === 'chat'
+    ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
+    : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
   if (!ok) toast('找不到这篇文章');
 }
 
-function copyMyCommentLink(commentId) {
-  const comment = (state.myComments || []).find(item => item.id === commentId);
-  const url = myCommentUrl(comment);
+function copyMyAssetLink(itemId) {
+  const item = myAssetItemsForCurrentTab().find(asset => asset.id === itemId);
+  const url = myAssetUrl(state.myAssetTab, item);
   if (!url) {
-    toast('找不到这条点评链接');
+    toast('找不到这条资产链接');
     return;
   }
-  copyText(url, '点评链接已复制');
+  copyText(url, `${state.myAssetTab === 'chat' ? '对话' : '点评'}链接已复制`);
 }
 
 function autosizeCommentEditInput(input) {
@@ -3642,14 +3685,20 @@ $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#my-comments-btn').onclick = openMyCommentsModal;
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
+$$('.my-asset-tab').forEach(btn => {
+  btn.onclick = () => {
+    state.myAssetTab = btn.dataset.myAssetTab === 'chat' ? 'chat' : 'comments';
+    renderMyAssets();
+  };
+});
 $('#my-comments-list').onclick = (e) => {
-  const open = e.target.closest('[data-my-comment-open]');
+  const open = e.target.closest('[data-my-asset-open]');
   if (open) {
-    openMyComment(open.dataset.myCommentOpen);
+    openMyAsset(open.dataset.myAssetOpen);
     return;
   }
-  const copy = e.target.closest('[data-my-comment-copy]');
-  if (copy) copyMyCommentLink(copy.dataset.myCommentCopy);
+  const copy = e.target.closest('[data-my-asset-copy]');
+  if (copy) copyMyAssetLink(copy.dataset.myAssetCopy);
 };
 $('#ai-config-close').onclick = closeAiConfigModal;
 $('#ai-config-modal').onclick = (e) => { if (e.target.id === 'ai-config-modal') closeAiConfigModal(); };

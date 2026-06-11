@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=71" />
+  <link rel="stylesheet" href="/styles.css?v=72" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -54,7 +54,7 @@
       <div class="account-strip">
         <button id="auth-open" class="ghost-btn">登录 / 注册</button>
         <div id="account-info" class="account-info hidden"></div>
-        <button id="my-comments-btn" class="ghost-btn account-my-comments hidden" type="button" title="我的点评">点评</button>
+        <button id="my-comments-btn" class="ghost-btn account-my-comments hidden" type="button" title="我的资产">资产</button>
         <button id="sidebar-ai-settings" class="ghost-btn account-ai-settings" type="button" title="AI 模型配置">⚿ AI 设置</button>
         <button id="logout-btn" class="icon-btn hidden" title="退出登录">⎋</button>
       </div>
@@ -231,11 +231,15 @@
     <div class="modal-box my-comments-box">
       <header>
         <div>
-          <h2>我的点评</h2>
-          <p>你发布过的公开点评，打开后会定位到对应文章。</p>
+          <h2>我的资产</h2>
+          <p>你发布过的公开点评和文章对话，打开后会定位到对应文章。</p>
         </div>
         <button class="icon-btn" id="my-comments-close">✕</button>
       </header>
+      <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
+        <button class="my-asset-tab active" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
+        <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
+      </div>
       <div id="my-comments-list" class="my-comments-list"></div>
     </div>
   </div>
@@ -335,6 +339,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=71"></script>
+  <script src="/app.js?v=72"></script>
 </body>
 </html>

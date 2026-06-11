@@ -1221,6 +1221,11 @@ app.get('/api/me/comments', requireLogin, (req, res) => {
   res.json({ comments: store.getUserComments(req.user.id, { limit }) });
 });
 
+app.get('/api/me/chat-messages', requireLogin, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  res.json({ messages: store.getUserChatMessages(req.user.id, { limit }) });
+});
+
 app.post('/api/me/entry-state', requireLogin, (req, res) => {
   const { entryId, read, starred } = req.body || {};
   const entry = fetcher.getEntryById(entryId);
