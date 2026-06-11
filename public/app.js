@@ -421,7 +421,7 @@ function routeStateFromUrl() {
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
   if (view === 'contributors') {
     const sortPrefix = state.contributorSort === 'helpful' ? '有用 · ' : state.contributorSort === 'assets' ? '资产 · ' : '';
-    return q ? `${sortPrefix}贡献者 · “${q}” · QMReader` : `${sortPrefix}贡献者 · QMReader`;
+    return q ? `${sortPrefix}贡献榜 · “${q}” · QMReader` : `${sortPrefix}贡献榜 · QMReader`;
   }
   if (view === 'assets') {
     const sortPrefix = state.assetSort === 'helpful' ? '有用 · ' : '';
@@ -913,29 +913,109 @@ async function loadUserEntryStates() {
   state.history = normalizeHistory((data.states && data.states.history) || []);
 }
 
+function defaultEntryStats(entryId = '') {
+  return {
+    entryId,
+    viewCount: 0,
+    favoriteCount: 0,
+    likeCount: 0,
+    dislikeCount: 0,
+    reactionByMe: '',
+    lastViewedAt: null,
+    updatedAt: null,
+  };
+}
+
+function entryStats(entry = state.activeEntry) {
+  if (!entry) return defaultEntryStats();
+  return { ...defaultEntryStats(entry.id), ...(entry.stats || {}) };
+}
+
+function formatCompactCount(value) {
+  const n = Number(value) || 0;
+  if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1)}万`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return n ? String(n) : '';
+}
+
+function entryStatsLabel(entry) {
+  const stats = entryStats(entry);
+  return [
+    stats.viewCount ? `阅 ${formatCompactCount(stats.viewCount)}` : '',
+    stats.favoriteCount ? `藏 ${formatCompactCount(stats.favoriteCount)}` : '',
+    stats.likeCount ? `赞 ${formatCompactCount(stats.likeCount)}` : '',
+    stats.dislikeCount ? `踩 ${formatCompactCount(stats.dislikeCount)}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function mergeEntryStats(entryId, stats = {}, { rerenderList = true } = {}) {
+  const id = String(entryId || stats.entryId || '').trim();
+  if (!id) return;
+  const normalized = { ...defaultEntryStats(id), ...(stats || {}), entryId: id };
+  const idx = state.entries.findIndex(entry => entry.id === id);
+  if (idx >= 0) state.entries[idx] = { ...state.entries[idx], stats: normalized };
+  if (state.activeEntry?.id === id) {
+    state.activeEntry = { ...state.activeEntry, stats: normalized };
+    renderReaderStatsUi();
+  }
+  if (rerenderList) renderList();
+}
+
+function renderReaderStatsUi() {
+  const entry = state.activeEntry;
+  const stats = entryStats(entry);
+  const starred = Boolean(entry && state.starred.has(entry.id));
+  const favoriteText = formatCompactCount(stats.favoriteCount);
+  const starBtn = $('#reader-star');
+  if (starBtn) {
+    starBtn.classList.toggle('starred', starred);
+    starBtn.textContent = `${starred ? '★ 已收藏' : '★ 收藏'}${favoriteText ? ` ${favoriteText}` : ''}`;
+  }
+  const likeBtn = $('#reader-like');
+  const dislikeBtn = $('#reader-dislike');
+  if (likeBtn) {
+    likeBtn.classList.toggle('active', stats.reactionByMe === 'like');
+    likeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
+    likeBtn.textContent = `赞${stats.likeCount ? ` ${formatCompactCount(stats.likeCount)}` : ''}`;
+    likeBtn.title = state.me ? '认可这篇文章' : '登录后可以点赞';
+  }
+  if (dislikeBtn) {
+    dislikeBtn.classList.toggle('active', stats.reactionByMe === 'dislike');
+    dislikeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'dislike' ? 'true' : 'false');
+    dislikeBtn.textContent = `踩${stats.dislikeCount ? ` ${formatCompactCount(stats.dislikeCount)}` : ''}`;
+    dislikeBtn.title = state.me ? '减少类似内容推荐权重' : '登录后可以点踩';
+  }
+  const statLine = $('#reader-stats');
+  if (statLine) {
+    statLine.textContent = [
+      `访问 ${formatCompactCount(stats.viewCount) || 0}`,
+      `收藏 ${formatCompactCount(stats.favoriteCount) || 0}`,
+    ].join(' · ');
+  }
+}
+
 function renderEntryStateUi() {
   renderList();
   renderSidebar();
-  if (state.activeEntry) {
-    const starBtn = $('#reader-star');
-    starBtn.classList.toggle('starred', state.starred.has(state.activeEntry.id));
-    starBtn.textContent = state.starred.has(state.activeEntry.id) ? '★ 已收藏' : '★ 收藏';
-  }
+  if (state.activeEntry) renderReaderStatsUi();
 }
 
 async function syncEntryState(entryId, patch) {
   if (!state.me) {
     persist();
-    return;
+    return null;
   }
   try {
-    await api('/api/me/entry-state', {
+    const data = await api('/api/me/entry-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entryId, ...patch }),
     });
+    if (data.stats) mergeEntryStats(entryId, data.stats);
+    return data;
   } catch (err) {
     toast('同步阅读状态失败: ' + err.message, 4000);
+    return null;
   }
 }
 
@@ -945,6 +1025,11 @@ function recordEntryView(entryId) {
   state.history.delete(id);
   state.history.set(id, Date.now());
   state.history = new Map(historyEntriesForStorage(state.history).map(item => [item.entryId, item.viewedAt]));
+  api(`/api/entry/${encodeURIComponent(id)}/view`, { method: 'POST' })
+    .then(data => {
+      if (data && data.stats) mergeEntryStats(id, data.stats);
+    })
+    .catch(() => {});
 }
 
 async function loadMe() {
@@ -1182,8 +1267,8 @@ const ASSET_SORTS = {
 
 const CONTRIBUTOR_SORTS = {
   latest: { label: '最新', title: '按最近沉淀公开资产的时间排序' },
-  helpful: { label: '有用', title: '优先显示获得读者有用反馈的贡献者' },
-  assets: { label: '资产', title: '优先显示公开资产数量更多的贡献者' },
+  helpful: { label: '有用', title: '优先显示获得读者有用反馈的贡献主页' },
+  assets: { label: '资产', title: '优先显示公开资产数量更多的贡献主页' },
 };
 
 function normalizeContributorSort(sort = '') {
@@ -1690,14 +1775,14 @@ function renderAssetActivityStrip() {
     `).join('');
     el.innerHTML = `
       <div class="asset-filter-head">
-        <span>贡献者</span>
+        <span>贡献榜</span>
         <strong>${contributorCount} 人</strong>
         <em>${escapeHtml(statusText)}</em>
-        <button type="button" class="asset-copy-link" data-contributor-copy-list title="复制当前贡献者页链接" aria-label="复制当前贡献者页链接">⧉</button>
+        <button type="button" class="asset-copy-link" data-contributor-copy-list title="复制当前贡献榜链接" aria-label="复制当前贡献榜链接">⧉</button>
       </div>
       <div class="asset-sort-row">
         <span>排序</span>
-        <div class="asset-sort-toggle" role="group" aria-label="贡献者排序">${sortButtons}</div>
+        <div class="asset-sort-toggle" role="group" aria-label="贡献榜排序">${sortButtons}</div>
       </div>`;
     return;
   }
@@ -1825,7 +1910,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   if (assets.translation) {
     const total = assetCountForType(entry, 'translation');
     const firstTranslatedParagraph = translation && Array.isArray(translation.content)
-      ? translation.content.map(pair => pair && pair.target).find(Boolean)
+      ? translation.content.map(translationPairText).find(Boolean)
       : '';
     rows.push({
       type: 'translation',
@@ -1994,7 +2079,13 @@ function renderAuthState() {
   $('#my-comments-btn').classList.toggle('hidden', !loggedIn);
   $('#logout-btn').classList.toggle('hidden', !loggedIn);
   if (loggedIn) {
-    $('#account-info').textContent = `${state.me.displayName}${isAdmin() ? ' · 管理员' : ''}`;
+    const initials = String(state.me.displayName || state.me.email || '读者').trim().slice(0, 2) || '读';
+    $('#account-info').innerHTML = `
+      <span class="account-avatar">${escapeHtml(initials)}</span>
+      <span class="account-name">${escapeHtml(state.me.displayName || '读者')}</span>
+      ${isAdmin() ? '<span class="account-role">管理员</span>' : ''}
+    `;
+    $('#account-info').title = '打开我的公开贡献';
   }
   $('#refresh-btn').classList.toggle('hidden', !isAdmin());
   $('#manage-btn').classList.toggle('hidden', !isAdmin());
@@ -2092,8 +2183,8 @@ function renderContributorDirectory() {
   renderAssetActivityStrip();
   if (!list.length) {
     const text = state.q
-      ? `没有匹配“${escapeHtml(state.q)}”的贡献者<br/>换个关键词试试`
-      : '还没有公开贡献者<br/>先发布点评或文章对话';
+      ? `没有匹配“${escapeHtml(state.q)}”的贡献主页<br/>换个关键词试试`
+      : '还没有公开贡献榜<br/>先发布点评或文章对话';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
     return;
   }
@@ -2123,15 +2214,15 @@ function renderContributorDirectory() {
         </div>
       </div>
       <div class="contributor-actions">
-        <a class="contributor-rss-button" data-contributor-rss="${escapeHtml(contributor.id)}" href="${escapeHtml(contributorFeedUrlFor(contributor.id).href)}" target="_blank" rel="noopener" title="订阅贡献者 RSS" aria-label="订阅贡献者 RSS">RSS</a>
-        <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献者链接" aria-label="复制贡献者链接">⧉</button>
+        <a class="contributor-rss-button" data-contributor-rss="${escapeHtml(contributor.id)}" href="${escapeHtml(contributorFeedUrlFor(contributor.id).href)}" target="_blank" rel="noopener" title="订阅贡献 RSS" aria-label="订阅贡献 RSS">RSS</a>
+        <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献主页链接" aria-label="复制贡献主页链接">⧉</button>
       </div>
     `;
     card.onclick = (event) => {
       if (event.target.closest('[data-contributor-rss]')) return;
       const copy = event.target.closest('[data-contributor-copy]');
       if (copy) {
-        copyText(contributorUrlFor(copy.dataset.contributorCopy).href, '贡献者链接已复制');
+        copyText(contributorUrlFor(copy.dataset.contributorCopy).href, '贡献主页链接已复制');
         return;
       }
       openContributor(contributor.id);
@@ -2179,6 +2270,7 @@ function renderList() {
     const src = sourceById(e.sourceId);
     const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
     const entryActivity = assetActivityLabel(e) || entryHistoryLabel(e);
+    const statsLine = entryStatsLabel(e);
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
     const card = document.createElement('div');
@@ -2198,6 +2290,7 @@ function renderList() {
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
         ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
         ${assetItems || (assetPreview ? assetPreviewHtml(assetPreview) : '')}
+        ${statsLine ? `<div class="entry-stats">${escapeHtml(statsLine)}</div>` : ''}
         ${entryActivity ? `<div class="entry-asset-activity">${escapeHtml(entryActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
@@ -2261,7 +2354,7 @@ function updateListTitle() {
     const prefix = state.assetSort === 'helpful' ? '有用 · ' : '';
     title = `${prefix}${state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产'}`;
   }
-  else if (state.view === 'contributors') title = '贡献者';
+  else if (state.view === 'contributors') title = '贡献榜';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
   updateSearchPlaceholder();
@@ -2270,7 +2363,7 @@ function updateListTitle() {
 function updateSearchPlaceholder() {
   const search = $('#search');
   if (!search) return;
-  search.placeholder = state.view === 'contributors' ? '搜索贡献者…' : state.view === 'assets' ? '搜索资产…' : '搜索文章…';
+  search.placeholder = state.view === 'contributors' ? '搜索贡献榜…' : state.view === 'assets' ? '搜索资产…' : '搜索文章…';
   if (search.value !== state.q) search.value = state.q;
 }
 
@@ -2283,6 +2376,175 @@ function sanitize(html) {
   doc.querySelectorAll('script,style,form,iframe,object,embed').forEach(n => n.remove());
   doc.querySelectorAll('*').forEach(n => [...n.attributes].forEach(a => { if (/^on/i.test(a.name)) n.removeAttribute(a.name); }));
   return doc.body.innerHTML;
+}
+
+function plainTextFromHtml(value) {
+  const doc = new DOMParser().parseFromString(String(value || ''), 'text/html');
+  return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function translationPairText(pair) {
+  if (!pair) return '';
+  return String(pair.target || '').trim() || plainTextFromHtml(pair.targetHtml);
+}
+
+function normalizeBlockText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+const TRANSLATION_BLOCK_SELECTOR = 'h1,h2,h3,h4,h5,h6,p,ul,ol,blockquote,pre,table,figure,img,hr,li';
+
+function isNestedTranslationBlock(el) {
+  const parent = el.parentElement && el.parentElement.closest(TRANSLATION_BLOCK_SELECTOR);
+  return Boolean(parent);
+}
+
+function sourceHtmlForBrowserBlock(el) {
+  const tag = el.tagName.toLowerCase();
+  const parent = el.parentElement;
+  if (/^h[1-6]$/.test(tag) && parent && parent.tagName && parent.tagName.toLowerCase() === 'a') {
+    const href = parent.getAttribute('href') || '';
+    return `<${tag}><a href="${escapeHtml(href)}">${el.innerHTML}</a></${tag}>`;
+  }
+  return el.outerHTML;
+}
+
+function extractTranslationSourceBlocks(entry = state.activeEntry) {
+  const html = (entry && (entry.content || contentCache.get(entry.id))) || '';
+  if (!html) return [];
+  const doc = new DOMParser().parseFromString(String(html), 'text/html');
+  const nodes = [...doc.body.querySelectorAll(TRANSLATION_BLOCK_SELECTOR)]
+    .filter(el => !isNestedTranslationBlock(el));
+  return nodes.map(el => {
+    const tag = el.tagName.toLowerCase();
+    const htmlBlock = sourceHtmlForBrowserBlock(el);
+    const source = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    const kind = tag === 'img' || tag === 'figure' || tag === 'hr' ? 'media' : 'text';
+    return { tag, html: htmlBlock, source, kind };
+  }).filter(block => block.kind === 'media' || block.source.length >= 12).slice(0, 40);
+}
+
+function sourceLinksFromHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  return [...doc.querySelectorAll('a[href]')]
+    .map(a => ({
+      href: a.getAttribute('href') || '',
+      label: (a.textContent || '').replace(/\s+/g, ' ').trim() || '源链接',
+    }))
+    .filter(link => /^https?:\/\//i.test(link.href))
+    .slice(0, 6);
+}
+
+function sourceImagesFromHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  return [...doc.querySelectorAll('img[src]')]
+    .map(img => {
+      img.setAttribute('loading', 'lazy');
+      img.setAttribute('referrerpolicy', 'no-referrer');
+      return img.outerHTML;
+    })
+    .join('');
+}
+
+function targetWithSourceLinks(target, sourceHtml, source = '') {
+  const text = escapeHtml(target || '');
+  const links = sourceLinksFromHtml(sourceHtml);
+  if (!links.length) return text;
+  const existing = String(target || '');
+  const missing = links.filter(link => !existing.includes(link.href));
+  if (!missing.length) return text;
+  if (missing.length === 1) {
+    const link = missing[0];
+    const sourceText = normalizeBlockText(source);
+    const linkText = normalizeBlockText(link.label);
+    const linkCoversBlock = sourceText && linkText && linkText.length >= sourceText.length * 0.65;
+    if (linkCoversBlock) {
+      return `<a href="${escapeHtml(link.href)}" target="_blank" rel="noopener">${text}</a>`;
+    }
+  }
+  const refs = missing
+    .map(link => `<a href="${escapeHtml(link.href)}" target="_blank" rel="noopener">${escapeHtml(link.label)}</a>`)
+    .join('、');
+  return `${text}<span class="translation-links">链接：${refs}</span>`;
+}
+
+function targetHtmlFromSourceBlock(block, target) {
+  const tag = block && block.tag || 'p';
+  const cleanTarget = String(target || '').trim();
+  if (!cleanTarget) return '';
+  const linked = targetWithSourceLinks(cleanTarget, block.html, block.source);
+  const media = sourceImagesFromHtml(block.html);
+  if (tag === 'blockquote') return `<blockquote><p>${linked}</p>${media}</blockquote>`;
+  if (/^h[1-6]$/.test(tag)) return `<${tag}>${linked}</${tag}>`;
+  if (tag === 'pre') return `<pre><code>${escapeHtml(cleanTarget)}</code></pre>`;
+  if (tag === 'li') return `<ul><li>${linked}</li></ul>`;
+  if (tag === 'td' || tag === 'th') return `<p>${linked}</p>`;
+  return `<p>${linked}</p>${media}`;
+}
+
+function enrichedTranslationBlocks(translation) {
+  const pairs = translation && Array.isArray(translation.content) ? translation.content : [];
+  if (!pairs.length) return [];
+  const hasRichBlocks = pairs.some(pair => pair && (pair.targetHtml || pair.sourceHtml || pair.tag || pair.kind === 'media'));
+  if (hasRichBlocks) return pairs.map((pair, index) => ({
+    ...pair,
+    i: Number(pair.i ?? index),
+    target: translationPairText(pair),
+    targetHtml: pair.targetHtml || targetHtmlFromSourceBlock({
+      tag: pair.tag || 'p',
+      html: pair.sourceHtml || '',
+      source: pair.source || '',
+    }, translationPairText(pair)),
+  }));
+
+  const sourceBlocks = extractTranslationSourceBlocks();
+  if (!sourceBlocks.length) return pairs;
+  const out = [];
+  let pairIndex = 0;
+  for (const block of sourceBlocks) {
+    if (block.kind === 'media') {
+      out.push({
+        kind: 'media',
+        tag: block.tag,
+        source: block.source,
+        sourceHtml: block.html,
+        target: '',
+        targetHtml: block.html,
+      });
+      continue;
+    }
+    let matchIndex = -1;
+    const blockText = normalizeBlockText(block.source);
+    for (let i = pairIndex; i < Math.min(pairs.length, pairIndex + 4); i++) {
+      const pairText = normalizeBlockText(pairs[i] && pairs[i].source);
+      if (pairText && (pairText === blockText || pairText.includes(blockText) || blockText.includes(pairText))) {
+        matchIndex = i;
+        break;
+      }
+    }
+    if (matchIndex < 0) matchIndex = pairIndex;
+    const pair = pairs[matchIndex];
+    if (!pair) continue;
+    pairIndex = Math.max(matchIndex + 1, pairIndex + 1);
+    const target = translationPairText(pair);
+    out.push({
+      ...pair,
+      tag: block.tag,
+      sourceHtml: block.html,
+      target,
+      targetHtml: targetHtmlFromSourceBlock(block, target),
+    });
+  }
+  return out.some(block => block.target || block.targetHtml) ? out : pairs;
+}
+
+function translationBlockTargetHtml(block) {
+  const html = block && block.targetHtml ? block.targetHtml : targetHtmlFromSourceBlock({
+    tag: block && block.tag || 'p',
+    html: block && block.sourceHtml || '',
+    source: block && block.source || '',
+  }, translationPairText(block));
+  return sanitize(html || `<p>${escapeHtml(translationPairText(block))}</p>`);
 }
 
 const contentCache = new Map();
@@ -2381,7 +2643,7 @@ function entryAssetHasContent(type, asset) {
 function assetPreviewFromCurrent(type, asset) {
   if (!entryAssetHasContent(type, asset)) return null;
   const text = type === 'translation'
-    ? asset.content.map(pair => pair && pair.target).find(Boolean)
+    ? asset.content.map(translationPairText).find(Boolean)
     : asset.body;
   const previewText = assetSummaryText(text || '');
   if (!previewText) return null;
@@ -2545,14 +2807,16 @@ function renderTranslation(translation, { loading = false } = {}) {
   action.textContent = translation.stale ? '更新中文翻译' : '重新生成中文翻译';
   $('#translation-meta').textContent = [translation.stale ? '原文已更新' : '', translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
   renderAssetHelpfulButton('translation', state.translation);
-  list.innerHTML = translation.content.map(pair => state.translationCompare
+  const blocks = enrichedTranslationBlocks(translation);
+  list.innerHTML = blocks.map(pair => state.translationCompare
     ? `<div class="translation-pair">
-        <p class="translation-source">${escapeHtml(pair.source)}</p>
-        <p class="translation-target">${escapeHtml(pair.target)}</p>
+        <div class="translation-source">${pair.sourceHtml ? sanitize(pair.sourceHtml) : `<p>${escapeHtml(pair.source || '')}</p>`}</div>
+        <div class="translation-target reader-content">${translationBlockTargetHtml(pair)}</div>
       </div>`
     : `<div class="translation-block">
-        <p class="translation-target">${escapeHtml(pair.target)}</p>
+        <div class="translation-target reader-content">${translationBlockTargetHtml(pair)}</div>
       </div>`).join('');
+  $$('#translation-list a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
   renderReaderAssetSummary();
   settlePendingAssetJump('translation');
 }
@@ -2560,7 +2824,7 @@ function renderTranslation(translation, { loading = false } = {}) {
 function copyTranslationText() {
   const translation = state.translation;
   const lines = translation && Array.isArray(translation.content)
-    ? translation.content.map(pair => String(pair.target || '').trim()).filter(Boolean)
+    ? translation.content.map(translationPairText).filter(Boolean)
     : [];
   copyText(lines.join('\n\n'), '译文已复制');
 }
@@ -3113,7 +3377,7 @@ function translationAssetText(translation, item = {}) {
   return [
     translation?.titleZh || item.titleZh || '',
     translation?.summaryZh || item.summaryZh || '',
-    ...content.map(pair => String(pair && pair.target || '').trim()).filter(Boolean),
+    ...content.map(translationPairText).filter(Boolean),
   ].map(part => String(part || '').trim()).filter(Boolean).join('\n\n');
 }
 
@@ -3271,7 +3535,7 @@ function syncContributorUrl({ replace = true } = {}) {
 
 function contributorPageTitle() {
   const profile = state.contributor.profile;
-  if (!profile) return '贡献者资产 · QMReader';
+  if (!profile) return '贡献主页 · QMReader';
   const sortPrefix = state.contributor.sort === 'helpful' ? '有用 · ' : '';
   const tab = normalizeUserAssetTab(state.contributor.tab);
   const label = tab === 'translation' ? '公开资产' : userAssetLabel(tab);
@@ -3288,7 +3552,7 @@ function renderContributorAssets() {
   const rssUrl = profile ? contributorFeedUrlFor(profile.id).href : '';
   const helpfulCount = Number(profile && profile.helpfulCount) || 0;
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
-  $('#contributor-title').textContent = profile ? `${profile.displayName} 的公开资产` : '贡献者资产';
+  $('#contributor-title').textContent = profile ? `${profile.displayName} 的贡献主页` : '贡献主页';
   $('#contributor-subtitle').textContent = profile
     ? `公开沉淀的翻译、重写、点评和文章对话。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
     : '正在读取公开资产…';
@@ -3300,7 +3564,7 @@ function renderContributorAssets() {
   if (linkCopy) linkCopy.classList.toggle('hidden', !profile);
   renderContributorTabs();
   if (state.contributor.loading) {
-    list.innerHTML = '<div class="my-comments-empty">正在读取贡献者资产…</div>';
+    list.innerHTML = '<div class="my-comments-empty">正在读取贡献主页…</div>';
     return;
   }
   const type = normalizeUserAssetTab(state.contributor.tab);
@@ -3386,7 +3650,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
     if (state.contributor.id !== id) return;
     state.contributor.loading = false;
     $('#contributor-list').innerHTML = `<div class="my-comments-empty">读取失败：${escapeHtml(err.message)}</div>`;
-    toast('读取贡献者资产失败: ' + err.message, 5000);
+    toast('读取贡献主页失败: ' + err.message, 5000);
   }
 }
 
@@ -3967,9 +4231,7 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   const date = e.published ? new Date(e.published).toLocaleString('zh-CN') : '';
   $('#reader-meta').textContent = [e.author, date].filter(Boolean).join(' · ');
   $('#reader-open').href = e.link || '#';
-  const starBtn = $('#reader-star');
-  starBtn.classList.toggle('starred', state.starred.has(e.id));
-  starBtn.textContent = state.starred.has(e.id) ? '★ 已收藏' : '★ 收藏';
+  renderReaderStatsUi();
   $('#comment-input').value = '';
   state.editingCommentId = '';
   state.translation = null;
@@ -4018,6 +4280,7 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
     if (state.activeEntry?.id !== e.id) return; // user moved on
   }
   renderOriginalContent(e, content);
+  if (state.translation && state.activeEntry?.id === e.id) renderTranslation(state.translation);
 }
 
 function closeReaderFromRoute() {
@@ -4837,7 +5100,7 @@ $('#asset-activity-strip').onclick = async (e) => {
   }
   const contributorCopy = e.target.closest('[data-contributor-copy-list]');
   if (contributorCopy) {
-    copyText(listUrlFor('contributors').href, '贡献者页链接已复制');
+    copyText(listUrlFor('contributors').href, '贡献榜链接已复制');
     return;
   }
   const filter = e.target.closest('[data-asset-strip-filter]');
@@ -4909,6 +5172,26 @@ $('#reader-star').onclick = () => {
   renderEntryStateUi();
   syncEntryState(e.id, { starred: nextStarred });
 };
+async function setReaderReaction(reaction) {
+  const entry = state.activeEntry;
+  if (!entry) return;
+  if (!requireAuth('login')) return;
+  const stats = entryStats(entry);
+  const next = stats.reactionByMe === reaction ? '' : reaction;
+  try {
+    const data = await api(`/api/entry/${encodeURIComponent(entry.id)}/reaction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction: next }),
+    });
+    if (data.stats) mergeEntryStats(entry.id, data.stats);
+    toast(next === 'like' ? '已点赞' : next === 'dislike' ? '已点踩' : '已取消反馈');
+  } catch (err) {
+    toast('反馈失败: ' + err.message, 5000);
+  }
+}
+$('#reader-like').onclick = () => setReaderReaction('like');
+$('#reader-dislike').onclick = () => setReaderReaction('dislike');
 $('#reader-fetch-original').onclick = fetchOriginalContent;
 $('#reader-copy-link').onclick = () => {
   copyReaderLink();
@@ -5046,6 +5329,7 @@ $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#my-comments-btn').onclick = openMyCommentsModal;
+$('#account-info').onclick = openMyCommentsModal;
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-public-profile-copy').onclick = copyMyPublicProfileLink;
 $('#my-public-rss-copy').onclick = copyMyPublicRssLink;
@@ -5080,7 +5364,7 @@ $('#my-comments-list').onclick = (e) => {
 $('#contributor-close').onclick = () => closeContributorModal();
 $('#contributor-link-copy').onclick = () => {
   if (!state.contributor.profile) {
-    toast('还没有可复制的贡献者页');
+    toast('还没有可复制的贡献主页');
     return;
   }
   copyText(
@@ -5088,15 +5372,15 @@ $('#contributor-link-copy').onclick = () => {
       sort: state.contributor.sort,
       tab: state.contributor.tab,
     }).href,
-    '贡献者页链接已复制',
+    '贡献主页链接已复制',
   );
 };
 $('#contributor-rss-copy').onclick = () => {
   if (!state.contributor.profile) {
-    toast('还没有可复制的贡献者 RSS');
+    toast('还没有可复制的贡献 RSS');
     return;
   }
-  copyText(contributorFeedUrlFor(state.contributor.profile.id).href, '贡献者 RSS 已复制');
+  copyText(contributorFeedUrlFor(state.contributor.profile.id).href, '贡献 RSS 已复制');
 };
 $('#contributor-modal').onclick = (e) => { if (e.target.id === 'contributor-modal') closeContributorModal(); };
 $$('#contributor-modal [data-contributor-tab]').forEach(btn => {

@@ -21,6 +21,8 @@ const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
 const DEFAULT_TITLE = 'QMReader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const UMAMI_WEBSITE_ID = String(process.env.UMAMI_WEBSITE_ID || '').trim();
+const UMAMI_SRC = String(process.env.UMAMI_SRC || 'https://umami.qiaomu.ai/script.js').trim();
 const ASSET_DIRECTORY_META = {
   translation: {
     label: '中文翻译',
@@ -85,6 +87,11 @@ function clipText(value, max = 180) {
     .trim();
   if (text.length <= max) return text;
   return `${text.slice(0, max - 1).trim()}…`;
+}
+
+function translationBlockText(pair) {
+  if (!pair) return '';
+  return String(pair.target || '').trim() || clipText(pair.targetHtml || '', 240);
 }
 
 function publicUrl(req, target = req.originalUrl || '/') {
@@ -197,7 +204,7 @@ function contributorDirectoryMeta(req = null) {
   const totalHelpful = contributors.reduce((sum, contributor) => sum + Number(contributor.helpfulCount || 0), 0);
   const latestAt = contributors.reduce((latest, contributor) => Math.max(latest, Number(contributor.latestAt) || 0), 0);
   const helpfulSuffix = totalHelpful ? `获得 ${totalHelpful} 次有用反馈。` : '';
-  const sortTitle = sort === 'helpful' ? '有用贡献者' : sort === 'assets' ? '高产贡献者' : '公开贡献者';
+  const sortTitle = sort === 'helpful' ? '有用贡献榜' : sort === 'assets' ? '高产贡献榜' : '公开贡献榜';
   const sortDescription = sort === 'helpful'
     ? '当前按读者有用反馈排序。'
     : sort === 'assets'
@@ -207,8 +214,8 @@ function contributorDirectoryMeta(req = null) {
     contributors,
     title: contributors.length ? `${sortTitle}（${contributors.length} 人） · QMReader` : `${sortTitle} · QMReader`,
     description: contributors.length
-      ? `QMReader 有 ${contributors.length} 位贡献者沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
-      : '浏览在 QMReader 沉淀过公开翻译、重写、点评和文章对话的贡献者。',
+      ? `QMReader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : '浏览在 QMReader 沉淀过公开翻译、重写、点评和文章对话的贡献榜。',
     latestAt,
   };
 }
@@ -736,7 +743,7 @@ function exactAssetPreview(entry, focus, req) {
       title: focus === 'translation' ? asset.titleZh || '' : asset.title || '',
       model: asset.model || '',
       text: focus === 'translation'
-        ? clipText((asset.content || []).map(pair => pair && pair.target).find(Boolean) || asset.summaryZh || '', 220)
+        ? clipText((asset.content || []).map(translationBlockText).find(Boolean) || asset.summaryZh || '', 220)
         : asset.body,
       at: asset.updatedAt || asset.createdAt,
       helpfulCount: Number(store.getEntryAssetReaction(entry.id, focus, null, asset.id).helpfulCount) || 0,
@@ -1143,7 +1150,7 @@ function renderContributorFeed(req, contributorPage) {
   return renderRssChannel({
     title: `${displayName} 的公开资产 · QMReader`,
     link: contributorPageUrl(req, contributorPage.contributor.id),
-    description: `${contributorPage.description} 当前订阅包含该贡献者公开翻译、重写、点评和文章对话。`,
+    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、重写、点评和文章对话。`,
     selfUrl: contributorFeedUrl(req, contributorPage.contributor.id),
     items,
   });
@@ -1258,10 +1265,24 @@ function renderSitemap(req) {
 function renderIndex(req, entry = null) {
   const html = fs.readFileSync(INDEX_PATH, 'utf8');
   const { title, tags } = socialMetaTags(req, entry);
+  const umami = umamiScriptTag();
   return html
     .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
-    .replace('</head>', `  ${tags}\n</head>`);
+    .replace('</head>', `  ${tags}${umami ? `\n  ${umami}` : ''}\n</head>`);
+}
+
+function umamiScriptTag() {
+  if (!UMAMI_WEBSITE_ID || !UMAMI_SRC) return '';
+  if (!/^[0-9a-f-]{36}$/i.test(UMAMI_WEBSITE_ID)) return '';
+  let src;
+  try {
+    src = new URL(UMAMI_SRC).toString();
+  } catch {
+    return '';
+  }
+  if (!/^https:\/\//i.test(src)) return '';
+  return `<script defer src="${escapeHtml(src)}" data-website-id="${escapeHtml(UMAMI_WEBSITE_ID)}" data-domains="rss.qiaomu.ai"></script>`;
 }
 
 app.get('/', (req, res) => {
@@ -1742,7 +1763,7 @@ app.get('/api/contributors/:id', (req, res) => {
 
 app.post('/api/me/entry-state', requireLogin, (req, res) => {
   const { entryId, read, starred, viewed } = req.body || {};
-  const entry = fetcher.getEntryById(entryId);
+  const entry = fetcher.getEntryById(entryId, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const entryState = store.setUserEntryState(req.user.id, entry.id, {
@@ -1750,7 +1771,7 @@ app.post('/api/me/entry-state', requireLogin, (req, res) => {
       starred: typeof starred === 'boolean' ? starred : undefined,
       viewed: typeof viewed === 'boolean' ? viewed : undefined,
     });
-    res.json({ entryState });
+    res.json({ entryState, stats: store.getEntryStats([entry.id], req.user)[entry.id] });
   } catch (e) {
     sendError(res, e, 'entry state update failed');
   }
@@ -1795,18 +1816,41 @@ app.get('/api/entries', (req, res) => {
     category: category || undefined,
     q: q || undefined,
     limit: limit ? parseInt(limit, 10) : undefined,
+    viewer: req.user,
   }).map(({ content, ...rest }) => rest);
   res.json({ entries });
 });
 
 app.get('/api/entry/:id', (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
+  const entry = fetcher.getEntryById(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   res.json({ entry });
 });
 
+app.post('/api/entry/:id/view', (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id, req.user);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    store.recordEntryView(entry.id);
+    res.json({ stats: store.getEntryStats([entry.id], req.user)[entry.id] });
+  } catch (e) {
+    sendError(res, e, 'record entry view failed');
+  }
+});
+
+app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id, req.user);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const reaction = String((req.body && req.body.reaction) || '').trim().toLowerCase();
+    res.json({ stats: store.setEntryReaction(entry.id, req.user.id, reaction) });
+  } catch (e) {
+    sendError(res, e, 'entry reaction failed');
+  }
+});
+
 app.post('/api/entry/:id/content', async (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
+  const entry = fetcher.getEntryById(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const updated = await fetcher.fetchEntryOriginal(entry);

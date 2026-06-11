@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=101" />
+  <link rel="stylesheet" href="/styles.css?v=102" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -26,7 +26,7 @@
         <button class="view-btn" data-view="starred"><span class="view-ico">★</span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
         <button class="view-btn" data-view="history"><span class="view-ico">◷</span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
         <button class="view-btn" data-view="assets"><span class="view-ico">◆</span><span class="view-label">资产</span><span class="count" id="count-assets"></span></button>
-        <button class="view-btn" data-view="contributors"><span class="view-ico">◇</span><span class="view-label">贡献者</span><span class="count" id="count-contributors"></span></button>
+        <button class="view-btn" data-view="contributors"><span class="view-ico">◇</span><span class="view-label">贡献榜</span><span class="count" id="count-contributors"></span></button>
       </div>
 
       <div id="asset-dashboard" class="asset-dashboard hidden">
@@ -60,7 +60,7 @@
       <div class="account-strip">
         <button id="auth-open" class="ghost-btn">登录 / 注册</button>
         <div id="account-info" class="account-info hidden"></div>
-        <button id="my-comments-btn" class="ghost-btn account-my-comments hidden" type="button" title="我的资产">资产</button>
+        <button id="my-comments-btn" class="ghost-btn account-my-comments hidden" type="button" title="我的公开贡献">我的贡献</button>
         <button id="sidebar-ai-settings" class="ghost-btn account-ai-settings" type="button" title="AI 模型配置">⚿ AI 设置</button>
         <button id="logout-btn" class="icon-btn hidden" title="退出登录">⎋</button>
       </div>
@@ -109,6 +109,9 @@
             <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
             <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
             <button id="reader-star" class="ghost-btn">★ 收藏</button>
+            <button id="reader-like" class="ghost-btn" type="button">赞</button>
+            <button id="reader-dislike" class="ghost-btn" type="button">踩</button>
+            <span id="reader-stats" class="reader-stats"></span>
             <button id="reader-assets-toggle" class="ghost-btn hidden" type="button" aria-expanded="false">资产导航</button>
           </div>
         </header>
@@ -249,8 +252,8 @@
     <div class="modal-box my-comments-box">
       <header>
         <div>
-          <h2>我的资产</h2>
-          <p>你沉淀过的公开翻译、重写、点评和文章对话，打开后会定位到对应文章。</p>
+          <h2>我的公开贡献</h2>
+          <p>你沉淀过的公开翻译、重写、点评和文章对话，会展示在你的个人贡献主页里。</p>
         </div>
         <div class="my-assets-header-actions">
           <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
@@ -279,23 +282,23 @@
     <div class="modal-box contributor-box">
       <header>
         <div>
-          <h2 id="contributor-title">贡献者资产</h2>
+          <h2 id="contributor-title">贡献主页</h2>
           <p id="contributor-subtitle">公开沉淀的翻译、重写、点评和文章对话。</p>
         </div>
         <div class="contributor-modal-actions">
-          <button class="icon-btn contributor-link-copy hidden" id="contributor-link-copy" type="button" title="复制当前贡献者页" aria-label="复制当前贡献者页">⧉</button>
+          <button class="icon-btn contributor-link-copy hidden" id="contributor-link-copy" type="button" title="复制当前贡献主页" aria-label="复制当前贡献主页">⧉</button>
           <a id="contributor-rss-link" class="ghost-btn contributor-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-          <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献者 RSS" aria-label="复制贡献者 RSS">RSS</button>
+          <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献 RSS" aria-label="复制贡献 RSS">RSS</button>
           <button class="icon-btn" id="contributor-close">✕</button>
         </div>
       </header>
-      <div class="my-asset-tabs" role="tablist" aria-label="贡献者资产类型">
+      <div class="my-asset-tabs" role="tablist" aria-label="贡献主页资产类型">
         <button class="my-asset-tab active" type="button" data-contributor-tab="translation">中译 <span id="contributor-translation-count">0</span></button>
         <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">重写 <span id="contributor-rewrite-count">0</span></button>
         <button class="my-asset-tab" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
         <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
       </div>
-      <div class="contributor-asset-sort" role="group" aria-label="贡献者资产排序">
+      <div class="contributor-asset-sort" role="group" aria-label="贡献主页资产排序">
         <span>排序</span>
         <button class="contributor-asset-sort-btn active" type="button" data-contributor-asset-sort="latest">最新</button>
         <button class="contributor-asset-sort-btn" type="button" data-contributor-asset-sort="helpful">有用</button>
@@ -399,6 +402,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=101"></script>
+  <script src="/app.js?v=102"></script>
 </body>
 </html>
