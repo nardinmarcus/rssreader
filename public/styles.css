@@ -2711,6 +2711,14 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
 }
 @media (max-width: 720px) {
+  .my-comments-box header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .my-assets-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
   .manage-status-grid {
     grid-template-columns: 1fr;
   }
