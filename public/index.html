@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=72" />
+  <link rel="stylesheet" href="/styles.css?v=73" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -244,6 +244,23 @@
     </div>
   </div>
 
+  <div id="contributor-modal" class="modal hidden">
+    <div class="modal-box contributor-box">
+      <header>
+        <div>
+          <h2 id="contributor-title">贡献者资产</h2>
+          <p id="contributor-subtitle">公开沉淀的点评和文章对话。</p>
+        </div>
+        <button class="icon-btn" id="contributor-close">✕</button>
+      </header>
+      <div class="my-asset-tabs" role="tablist" aria-label="贡献者资产类型">
+        <button class="my-asset-tab active" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
+        <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
+      </div>
+      <div id="contributor-list" class="my-comments-list"></div>
+    </div>
+  </div>
+
   <div id="ai-config-modal" class="modal hidden">
     <div class="modal-box ai-config-box">
       <header>
@@ -339,6 +356,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=72"></script>
+  <script src="/app.js?v=73"></script>
 </body>
 </html>

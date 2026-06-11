@@ -323,6 +323,7 @@ const state = {
   myComments: [],
   myChatMessages: [],
   myAssetTab: 'comments',
+  contributor: { id: '', profile: null, comments: [], messages: [], tab: 'comments', loading: false },
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
@@ -355,6 +356,7 @@ const state = {
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
+  const contributorMatch = window.location.pathname.match(/^\/contributors\/([^/?#]+)\/?$/);
   const pathAssetFilter = pathMatch ? (ASSET_FILTER_TYPES.includes(pathMatch[1]) ? pathMatch[1] : null) : null;
   const isAssetPath = Boolean(pathMatch);
   const queryAssetFilter = ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null;
@@ -366,6 +368,7 @@ function routeStateFromUrl() {
   const focus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
   return {
     entryId: String(params.get('entry') || '').trim(),
+    contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     tab: normalizeReaderTab(params.get('tab')),
     view: isAssetPath || params.get('view') === 'assets' ? 'assets' : '',
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
@@ -463,6 +466,14 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
       : '/assets';
     if (state.q) url.searchParams.set('q', state.q);
   }
+  return url;
+}
+
+function contributorUrlFor(contributorId) {
+  const url = new URL(window.location.href);
+  url.pathname = `/contributors/${encodeURIComponent(contributorId)}`;
+  url.search = '';
+  url.hash = '';
   return url;
 }
 
@@ -2094,12 +2105,15 @@ function renderComments() {
       : '';
     const helpfulCount = Number(comment.helpfulCount || 0);
     const helpfulActive = Boolean(comment.helpfulByMe);
+    const authorHtml = comment.contributorId
+      ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(comment.contributorId)}">${escapeHtml(comment.contributorName || comment.author)}</button>`
+      : escapeHtml(comment.author);
     return `
       <div id="comment-${escapeHtml(comment.id)}" class="comment-item${display.type ? ` comment-type-${display.type}` : ''}">
         <div class="comment-head">
           <div class="comment-head-left">
             ${display.label ? `<span class="comment-kind">${escapeHtml(display.label)}</span>` : ''}
-            <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}${escapeHtml(editedAt)}</div>
+            <div class="comment-meta">${authorHtml} · ${formatAssetTime(comment.createdAt)}${escapeHtml(editedAt)}</div>
           </div>
           <div class="comment-actions">
             <button type="button" class="comment-action comment-link-copy" data-comment-link="${escapeHtml(comment.id)}" title="复制这条点评链接" aria-label="复制这条点评链接">#</button>
@@ -2313,6 +2327,136 @@ function copyMyAssetLink(itemId) {
   copyText(url, `${state.myAssetTab === 'chat' ? '对话' : '点评'}链接已复制`);
 }
 
+function contributorAssetItemsForCurrentTab() {
+  return state.contributor.tab === 'chat' ? (state.contributor.messages || []) : (state.contributor.comments || []);
+}
+
+function renderContributorTabs() {
+  const commentCount = (state.contributor.comments || []).length;
+  const chatCount = (state.contributor.messages || []).length;
+  $('#contributor-comments-count').textContent = commentCount;
+  $('#contributor-chat-count').textContent = chatCount;
+  $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
+    const active = btn.dataset.contributorTab === state.contributor.tab;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+}
+
+function renderContributorAssets() {
+  const list = $('#contributor-list');
+  if (!list) return;
+  const profile = state.contributor.profile;
+  $('#contributor-title').textContent = profile ? `${profile.displayName} 的公开资产` : '贡献者资产';
+  $('#contributor-subtitle').textContent = profile ? '公开沉淀的点评和文章对话。' : '正在读取公开资产…';
+  renderContributorTabs();
+  if (state.contributor.loading) {
+    list.innerHTML = '<div class="my-comments-empty">正在读取贡献者资产…</div>';
+    return;
+  }
+  const type = state.contributor.tab === 'chat' ? 'chat' : 'comments';
+  const items = contributorAssetItemsForCurrentTab();
+  if (!items.length) {
+    list.innerHTML = `<div class="my-comments-empty">还没有公开${type === 'chat' ? '文章对话' : '点评'}</div>`;
+    return;
+  }
+  list.innerHTML = items.map(item => {
+    const entry = item.entry || {};
+    const isChat = type === 'chat';
+    const display = isChat ? { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' } : commentDisplayParts(item.body || item.bodySnippet || '');
+    const title = entry.titleZh || entry.title || '未命名文章';
+    const meta = isChat ? [
+      sourceName(entry.sourceId),
+      item.author,
+      item.model,
+      formatAssetTime(item.createdAt),
+    ].filter(Boolean).join(' · ') : [
+      sourceName(entry.sourceId),
+      Number(item.updatedAt || 0) > Number(item.createdAt || 0)
+        ? `编辑 ${formatAssetTime(item.updatedAt)}`
+        : formatAssetTime(item.createdAt),
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <article class="my-comment-item">
+        <div class="my-comment-head">
+          <div class="my-comment-title">
+            ${display.label ? `<span class="comment-kind">${escapeHtml(display.label)}</span>` : ''}
+            <strong>${escapeHtml(title)}</strong>
+          </div>
+          <span class="my-comment-meta">${escapeHtml(meta)}</span>
+        </div>
+        <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
+        <div class="my-comment-actions">
+          <button type="button" class="ghost-btn" data-contributor-asset-open="${escapeHtml(item.id)}">打开文章</button>
+          <button type="button" class="ghost-btn" data-contributor-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
+        </div>
+      </article>`;
+  }).join('');
+}
+
+async function openContributor(contributorId, { push = true } = {}) {
+  const id = String(contributorId || '').trim();
+  if (!id) return;
+  state.contributor = { id, profile: null, comments: [], messages: [], tab: state.contributor.tab || 'comments', loading: true };
+  $('#contributor-modal').classList.remove('hidden');
+  renderContributorAssets();
+  try {
+    const data = await api(`/api/contributors/${encodeURIComponent(id)}?limit=100`);
+    if (state.contributor.id !== id) return;
+    state.contributor = {
+      id,
+      profile: data.contributor || null,
+      comments: data.comments || [],
+      messages: data.messages || [],
+      tab: state.contributor.tab || 'comments',
+      loading: false,
+    };
+    renderContributorAssets();
+    const title = state.contributor.profile ? `${state.contributor.profile.displayName} 的公开资产 · QMReader` : '贡献者资产 · QMReader';
+    document.title = title;
+    if (push) history.pushState({ contributorId: id }, '', contributorUrlFor(id));
+  } catch (err) {
+    if (state.contributor.id !== id) return;
+    state.contributor.loading = false;
+    $('#contributor-list').innerHTML = `<div class="my-comments-empty">读取失败：${escapeHtml(err.message)}</div>`;
+    toast('读取贡献者资产失败: ' + err.message, 5000);
+  }
+}
+
+function closeContributorModal({ clearUrl = true } = {}) {
+  $('#contributor-modal').classList.add('hidden');
+  if (clearUrl && window.location.pathname.startsWith('/contributors/')) {
+    const url = state.activeEntry ? readerUrlFor(state.activeEntry, state.readerTab, state.readerFocus) : listUrlFor();
+    history.pushState({}, '', url);
+    document.title = state.activeEntry ? readerRouteTitle() : listRouteTitle();
+  }
+}
+
+async function openContributorAsset(itemId) {
+  const item = contributorAssetItemsForCurrentTab().find(asset => asset.id === itemId);
+  const entryId = item && (item.entry?.id || item.entryId);
+  if (!entryId) {
+    toast('找不到这条资产对应的文章');
+    return;
+  }
+  closeContributorModal({ clearUrl: false });
+  const ok = state.contributor.tab === 'chat'
+    ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
+    : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
+  if (!ok) toast('找不到这篇文章');
+}
+
+function copyContributorAssetLink(itemId) {
+  const item = contributorAssetItemsForCurrentTab().find(asset => asset.id === itemId);
+  const url = myAssetUrl(state.contributor.tab, item);
+  if (!url) {
+    toast('找不到这条资产链接');
+    return;
+  }
+  copyText(url, `${state.contributor.tab === 'chat' ? '对话' : '点评'}链接已复制`);
+}
+
 function autosizeCommentEditInput(input) {
   if (!input) return;
   input.style.height = 'auto';
@@ -2516,8 +2660,21 @@ function renderAgentMessages(extraPending = false) {
     head.className = 'agent-msg-head';
     const role = document.createElement('div');
     role.className = 'agent-msg-role';
-    role.textContent = agentMessageMeta(message);
-    role.title = role.textContent;
+    const metaText = agentMessageMeta(message);
+    if (message.contributorId && message.role === 'user') {
+      const author = message.author || message.contributorName || '读者';
+      const authorBtn = document.createElement('button');
+      authorBtn.type = 'button';
+      authorBtn.className = 'contributor-inline agent-contributor-link';
+      authorBtn.textContent = message.contributorName || author;
+      authorBtn.onclick = () => openContributor(message.contributorId);
+      role.appendChild(authorBtn);
+      const rest = metaText.startsWith(author) ? metaText.slice(author.length) : '';
+      role.appendChild(document.createTextNode(rest));
+    } else {
+      role.textContent = metaText;
+    }
+    role.title = metaText;
     head.appendChild(role);
     if (!message.pending) {
       const actions = document.createElement('div');
@@ -2817,6 +2974,19 @@ async function openEntryById(entryId, { tab = 'original', focus = null, commentI
 
 async function openEntryFromUrl() {
   const route = routeStateFromUrl();
+  if (route.contributorId) {
+    state.view = 'all';
+    state.filterSource = null;
+    state.filterCategory = null;
+    state.assetFilter = null;
+    state.q = '';
+    updateListTitle();
+    renderSidebar();
+    closeReaderFromRoute();
+    await openContributor(route.contributorId, { push: false });
+    return true;
+  }
+  $('#contributor-modal').classList.add('hidden');
   if (!route.entryId) {
     if (route.view === 'assets') {
       state.view = 'assets';
@@ -3607,6 +3777,11 @@ $('#comment-input').onkeydown = (e) => {
   }
 };
 $('#comments-list').onclick = (e) => {
+  const contributor = e.target.closest('[data-contributor-id]');
+  if (contributor) {
+    openContributor(contributor.dataset.contributorId);
+    return;
+  }
   const helpful = e.target.closest('[data-comment-helpful]');
   if (helpful) {
     toggleCommentHelpful(helpful.dataset.commentHelpful);
@@ -3700,6 +3875,23 @@ $('#my-comments-list').onclick = (e) => {
   const copy = e.target.closest('[data-my-asset-copy]');
   if (copy) copyMyAssetLink(copy.dataset.myAssetCopy);
 };
+$('#contributor-close').onclick = () => closeContributorModal();
+$('#contributor-modal').onclick = (e) => { if (e.target.id === 'contributor-modal') closeContributorModal(); };
+$$('#contributor-modal [data-contributor-tab]').forEach(btn => {
+  btn.onclick = () => {
+    state.contributor.tab = btn.dataset.contributorTab === 'chat' ? 'chat' : 'comments';
+    renderContributorAssets();
+  };
+});
+$('#contributor-list').onclick = (e) => {
+  const open = e.target.closest('[data-contributor-asset-open]');
+  if (open) {
+    openContributorAsset(open.dataset.contributorAssetOpen);
+    return;
+  }
+  const copy = e.target.closest('[data-contributor-asset-copy]');
+  if (copy) copyContributorAssetLink(copy.dataset.contributorAssetCopy);
+};
 $('#ai-config-close').onclick = closeAiConfigModal;
 $('#ai-config-modal').onclick = (e) => { if (e.target.id === 'ai-config-modal') closeAiConfigModal(); };
 $('#ai-add-profile').onclick = addAiProfile;
@@ -3774,6 +3966,7 @@ document.addEventListener('keydown', (e) => {
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
     $('#my-comments-modal').classList.add('hidden');
+    closeContributorModal();
   }
 });
 

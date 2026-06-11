@@ -869,6 +869,11 @@ app.get('/assets/:type', (req, res) => {
   res.type('html').send(renderIndex(req));
 });
 
+app.get('/contributors/:id', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
     if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
@@ -1224,6 +1229,23 @@ app.get('/api/me/comments', requireLogin, (req, res) => {
 app.get('/api/me/chat-messages', requireLogin, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ messages: store.getUserChatMessages(req.user.id, { limit }) });
+});
+
+app.get('/api/contributors/:id', (req, res) => {
+  const contributor = store.getContributor(req.params.id);
+  if (!contributor) return res.status(404).json({ error: 'contributor not found' });
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  const comments = store.getUserComments(contributor.id, { limit });
+  const messages = store.getUserChatMessages(contributor.id, { limit });
+  res.json({
+    contributor,
+    comments,
+    messages,
+    counts: {
+      comments: comments.length,
+      chat: messages.length,
+    },
+  });
 });
 
 app.post('/api/me/entry-state', requireLogin, (req, res) => {
