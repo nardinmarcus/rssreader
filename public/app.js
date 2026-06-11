@@ -18,10 +18,17 @@ function readJson(key, fallback) {
   try { return JSON.parse(storage.getItem(key) || fallback); } catch { return JSON.parse(fallback); }
 }
 
+function readStoredNumber(key) {
+  const n = parseInt(storage.getItem(key) || '', 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'translation', 'rewrite'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '乔木风格重写', comments: '人工点评', chat: '文章对话' };
+const ENTRY_PANE_MIN_WIDTH = 260;
+const ENTRY_PANE_MAX_WIDTH = 620;
 const COMMENT_TEMPLATES = {
   insight: '观点：',
   question: '疑问：',
@@ -323,6 +330,8 @@ const state = {
   fetchingOriginal: false,
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
+  sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
+  entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   me: null,
   authMode: 'login',
   aiProfiles: [],
@@ -2936,8 +2945,82 @@ function setAgentCollapsed(collapsed) {
   $('#agent-open').classList.toggle('hidden', !collapsed);
 }
 
+function setSidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = collapsed;
+  storage.setItem('qm_sidebar_collapsed', collapsed ? '1' : '0');
+  $('#app').classList.toggle('sidebar-collapsed', collapsed);
+  const toggle = $('#sidebar-toggle');
+  toggle.textContent = collapsed ? '⇥' : '⇤';
+  toggle.title = collapsed ? '展开左侧栏' : '收起左侧栏';
+  toggle.setAttribute('aria-label', toggle.title);
+}
+
+function entryPaneWidthBounds() {
+  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  const max = Math.min(ENTRY_PANE_MAX_WIDTH, Math.max(ENTRY_PANE_MIN_WIDTH, Math.floor(viewport * 0.45)));
+  return { min: ENTRY_PANE_MIN_WIDTH, max };
+}
+
+function clampEntryPaneWidth(width) {
+  const n = Number(width);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const bounds = entryPaneWidthBounds();
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(n)));
+}
+
+function setEntryPaneWidth(width, { persist: shouldPersist = true } = {}) {
+  const next = clampEntryPaneWidth(width);
+  state.entryPaneWidth = next;
+  if (next) {
+    $('#app').style.setProperty('--entry-width', `${next}px`);
+    if (shouldPersist) storage.setItem('qm_entry_pane_width', String(next));
+  } else {
+    $('#app').style.removeProperty('--entry-width');
+    if (shouldPersist) storage.removeItem('qm_entry_pane_width');
+  }
+}
+
+function setupListResizer() {
+  const resizer = $('#list-resizer');
+  if (!resizer) return;
+  let dragging = false;
+  const resizeTo = (clientX) => {
+    const entryRect = $('#entry-pane').getBoundingClientRect();
+    setEntryPaneWidth(clientX - entryRect.left);
+  };
+  resizer.addEventListener('pointerdown', (e) => {
+    if ((window.innerWidth || 0) <= 980) return;
+    dragging = true;
+    $('#app').classList.add('is-resizing');
+    resizer.setPointerCapture?.(e.pointerId);
+    resizeTo(e.clientX);
+    e.preventDefault();
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    resizeTo(e.clientX);
+  });
+  window.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    $('#app').classList.remove('is-resizing');
+  });
+  resizer.addEventListener('dblclick', () => setEntryPaneWidth(0));
+  resizer.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const bounds = entryPaneWidthBounds();
+    const current = state.entryPaneWidth || $('#entry-pane').getBoundingClientRect().width;
+    if (e.key === 'Home') setEntryPaneWidth(bounds.min);
+    if (e.key === 'End') setEntryPaneWidth(bounds.max);
+    if (e.key === 'ArrowLeft') setEntryPaneWidth(current - 24);
+    if (e.key === 'ArrowRight') setEntryPaneWidth(current + 24);
+  });
+}
+
 /* ---------- Events ---------- */
 $$('.view-btn').forEach(b => b.onclick = () => selectView(b.dataset.view));
+$('#sidebar-toggle').onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
 $('#asset-dashboard-open').onclick = () => selectAssetFilter(null);
 $('#asset-dashboard').onclick = (e) => {
   const btn = e.target.closest('[data-asset-filter]');
@@ -3154,12 +3237,19 @@ window.addEventListener('popstate', () => {
   openEntryFromUrl();
 });
 
+window.addEventListener('resize', () => {
+  if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
+});
+
 /* ---------- Init ---------- */
 (async function init() {
   document.body.dataset.theme = storage.getItem('fr_theme') || 'light';
   loadAiProfilesForScope();
   renderAiSettings();
   renderAuthState();
+  setSidebarCollapsed(state.sidebarCollapsed);
+  setEntryPaneWidth(state.entryPaneWidth, { persist: false });
+  setupListResizer();
   setAgentCollapsed(state.agentCollapsed);
   $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
   try {

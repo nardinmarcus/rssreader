@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=60" />
+  <link rel="stylesheet" href="/styles.css?v=61" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -16,14 +16,15 @@
       <div class="brand">
         <div class="brand-logo">Q</div>
         <div class="brand-name">QMReader</div>
+        <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏">⇤</button>
         <button id="theme-toggle" class="icon-btn" title="切换主题">◐</button>
       </div>
 
       <div class="views">
-        <button class="view-btn active" data-view="all"><span class="view-ico">▤</span>全部<span class="count" id="count-all"></span></button>
-        <button class="view-btn" data-view="unread"><span class="view-ico">●</span>未读<span class="count" id="count-unread"></span></button>
-        <button class="view-btn" data-view="starred"><span class="view-ico">★</span>收藏<span class="count" id="count-starred"></span></button>
-        <button class="view-btn" data-view="assets"><span class="view-ico">◆</span>资产<span class="count" id="count-assets"></span></button>
+        <button class="view-btn active" data-view="all"><span class="view-ico">▤</span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
+        <button class="view-btn" data-view="unread"><span class="view-ico">●</span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
+        <button class="view-btn" data-view="starred"><span class="view-ico">★</span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
+        <button class="view-btn" data-view="assets"><span class="view-ico">◆</span><span class="view-label">资产</span><span class="count" id="count-assets"></span></button>
       </div>
 
       <div id="asset-dashboard" class="asset-dashboard hidden">
@@ -75,6 +76,8 @@
       <div id="asset-activity-strip" class="asset-activity-strip hidden"></div>
       <div id="entry-list" class="entry-list"></div>
     </section>
+
+    <div id="list-resizer" class="pane-resizer" role="separator" aria-orientation="vertical" aria-label="调整文章列表宽度" tabindex="0"></div>
 
     <!-- ===== Reader ===== -->
     <section id="reader-pane">
@@ -311,6 +314,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=60"></script>
+  <script src="/app.js?v=61"></script>
 </body>
 </html>

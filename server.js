@@ -10,6 +10,11 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const DAILY_REFRESH_HOUR_SHANGHAI = 8;
 const TITLE_TRANSLATION_LIMIT = parseInt(process.env.TITLE_TRANSLATION_LIMIT || '80', 10);
+const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_IDS || 'bensbites,readwise-wise,nlp-elvis')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean));
+const AUTO_REWRITE_LIMIT_PER_SOURCE = parseInt(process.env.AUTO_REWRITE_LIMIT_PER_SOURCE || '10', 10);
 const SESSION_COOKIE = 'qm_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
@@ -966,6 +971,58 @@ async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   return translated;
 }
 
+async function autoRewriteSources(sourceIds = AUTO_REWRITE_SOURCE_IDS) {
+  const ids = sourceIds instanceof Set ? sourceIds : new Set(sourceIds);
+  if (!ids.size) return { rewritten: 0, cached: 0, failed: [], skipped: 'no sources configured' };
+  const config = deepseek.getConfig();
+  if (!config.configured) return { rewritten: 0, cached: 0, failed: [], skipped: 'AI not configured' };
+
+  const limitPerSource = Number.isFinite(AUTO_REWRITE_LIMIT_PER_SOURCE) && AUTO_REWRITE_LIMIT_PER_SOURCE > 0
+    ? AUTO_REWRITE_LIMIT_PER_SOURCE
+    : Infinity;
+  const perSource = new Map();
+  for (const entry of fetcher.getEntries({ limit: 1000 })) {
+    if (!ids.has(entry.sourceId)) continue;
+    const bucket = perSource.get(entry.sourceId) || [];
+    if (bucket.length >= limitPerSource) continue;
+    bucket.push(entry);
+    perSource.set(entry.sourceId, bucket);
+  }
+
+  const entries = Array.from(perSource.values()).flat();
+  let rewritten = 0;
+  let cached = 0;
+  const failed = [];
+  for (const entry of entries) {
+    const text = String(entry.content || entry.summary || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text.length < 80) {
+      failed.push({ entryId: entry.id, title: entry.title, error: '正文太短，无法自动重写' });
+      continue;
+    }
+    const existing = store.getRewrite(entry.id);
+    if (existing && existing.contentHash === deepseek.rewriteContentHash(entry)) {
+      cached++;
+      continue;
+    }
+    try {
+      const result = await deepseek.rewriteEntry(entry, {
+        author: '向阳乔木',
+        temperature: config.temperature,
+        maxTokens: Math.max(config.maxTokens, 7000),
+      });
+      if (result.cached) cached++;
+      else rewritten++;
+    } catch (error) {
+      failed.push({
+        entryId: entry.id,
+        title: entry.title,
+        error: String(error.message || error).slice(0, 200),
+      });
+    }
+  }
+  return { rewritten, cached, failed };
+}
+
 function seedAdminFromEnv() {
   const email = String(process.env.ADMIN_EMAIL || '').trim();
   const password = String(process.env.ADMIN_PASSWORD || '').trim();
@@ -992,6 +1049,12 @@ async function doRefreshAll() {
       await translateMissingTitles();
     } catch (e) {
       console.warn('Title translation skipped:', e.message || e);
+    }
+    try {
+      const result = await autoRewriteSources();
+      console.log(`Auto rewrite: rewritten=${result.rewritten}, cached=${result.cached}, failed=${result.failed.length}${result.skipped ? `, skipped=${result.skipped}` : ''}`);
+    } catch (e) {
+      console.warn('Auto rewrite skipped:', e.message || e);
     }
   } catch (e) {
     console.error('Refresh failed:', e.message || e);
@@ -1247,7 +1310,15 @@ app.post('/api/refresh', requireAdmin, async (req, res) => {
     if (!src) return res.status(404).json({ error: 'source not found' });
     const result = await fetcher.fetchSource(src);
     await translateMissingTitles(20);
-    return res.json({ status: result.status, error: result.error, entryCount: result.entries ? result.entries.length : 0 });
+    let autoRewrite = null;
+    if (AUTO_REWRITE_SOURCE_IDS.has(src.id)) {
+      try {
+        autoRewrite = await autoRewriteSources([src.id]);
+      } catch (e) {
+        autoRewrite = { rewritten: 0, cached: 0, failed: [], error: String(e.message || e).slice(0, 200) };
+      }
+    }
+    return res.json({ status: result.status, error: result.error, entryCount: result.entries ? result.entries.length : 0, autoRewrite });
   }
   doRefreshAll();
   res.json({ started: true });
