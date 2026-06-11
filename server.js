@@ -1384,6 +1384,17 @@ app.post('/api/translate-titles', requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/api/auto-rewrite', requireAdmin, async (req, res) => {
+  try {
+    const requested = Array.isArray(req.body && req.body.sourceIds) ? req.body.sourceIds : [];
+    const sourceIds = requested.length ? requested : Array.from(AUTO_REWRITE_SOURCE_IDS);
+    const result = queueAutoRewriteSources(sourceIds);
+    res.json({ autoRewrite: result });
+  } catch (e) {
+    sendError(res, e, 'auto rewrite failed');
+  }
+});
+
 app.post('/api/refresh', requireAdmin, async (req, res) => {
   const { sourceId } = req.body || {};
   if (sourceId) {

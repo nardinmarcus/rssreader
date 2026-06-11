@@ -2693,13 +2693,50 @@ function renderManageStatus() {
       </div>
       <div class="manage-status-item ${state.autoRewrite?.running ? 'active' : failures.length ? 'error' : ''}">
         <span>${escapeHtml(rewrite.label)}</span>
-        <strong>${escapeHtml(rewrite.value)}</strong>
+        <div class="manage-status-action-row">
+          <strong>${escapeHtml(rewrite.value)}</strong>
+          <button id="manage-auto-rewrite" class="manage-status-action" type="button" ${state.autoRewrite?.running ? 'disabled' : ''}>运行</button>
+        </div>
         <em title="${escapeHtml(rewrite.meta)}">${escapeHtml(rewrite.meta || '无运行记录')}</em>
       </div>
     </div>
     ${failures.length ? `<div class="manage-status-failures">${failures.map(item => `
       <div><strong>${escapeHtml(item.title || item.entryId || '未命名文章')}</strong><span>${escapeHtml(opsStatusText(item.error) || '未知错误')}</span></div>
     `).join('')}</div>` : ''}`;
+  const runBtn = $('#manage-auto-rewrite');
+  if (runBtn) runBtn.onclick = runAutoRewriteFromManage;
+}
+
+async function runAutoRewriteFromManage() {
+  if (!isAdmin()) {
+    toast('需要管理员权限');
+    return;
+  }
+  const btn = $('#manage-auto-rewrite');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '运行中';
+  }
+  try {
+    await api('/api/auto-rewrite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    toast('自动重写已启动');
+    for (let i = 0; i < 80; i++) {
+      await new Promise(r => setTimeout(r, 1500));
+      const data = await loadSources();
+      renderManageStatus();
+      if (!data.autoRewrite?.running) break;
+    }
+    await reload({ keepReader: true });
+    renderManage();
+  } catch (error) {
+    toast('启动自动重写失败: ' + error.message, 5000);
+    await loadSources().catch(() => null);
+    renderManageStatus();
+  }
 }
 
 function renderManage() {
