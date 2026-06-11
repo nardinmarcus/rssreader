@@ -487,6 +487,12 @@ function contributorUrlFor(contributorId) {
   return url;
 }
 
+function contributorFeedUrlFor(contributorId) {
+  const url = contributorUrlFor(contributorId);
+  url.pathname = `/contributors/${encodeURIComponent(contributorId)}.xml`;
+  return url;
+}
+
 function syncReaderUrl({ replace = false, commentId = '', chatMessageId = '' } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
@@ -1800,9 +1806,13 @@ function renderContributorDirectory() {
           <span>对话 ${Number(contributor.chatCount || 0)}</span>
         </div>
       </div>
-      <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献者链接" aria-label="复制贡献者链接">⧉</button>
+      <div class="contributor-actions">
+        <a class="contributor-rss-button" data-contributor-rss="${escapeHtml(contributor.id)}" href="${escapeHtml(contributorFeedUrlFor(contributor.id).href)}" target="_blank" rel="noopener" title="订阅贡献者 RSS" aria-label="订阅贡献者 RSS">RSS</a>
+        <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献者链接" aria-label="复制贡献者链接">⧉</button>
+      </div>
     `;
     card.onclick = (event) => {
+      if (event.target.closest('[data-contributor-rss]')) return;
       const copy = event.target.closest('[data-contributor-copy]');
       if (copy) {
         copyText(contributorUrlFor(copy.dataset.contributorCopy).href, '贡献者链接已复制');
@@ -2486,8 +2496,16 @@ function renderContributorAssets() {
   const list = $('#contributor-list');
   if (!list) return;
   const profile = state.contributor.profile;
+  const rssLink = $('#contributor-rss-link');
+  const rssCopy = $('#contributor-rss-copy');
+  const rssUrl = profile ? contributorFeedUrlFor(profile.id).href : '';
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的公开资产` : '贡献者资产';
   $('#contributor-subtitle').textContent = profile ? '公开沉淀的点评和文章对话。' : '正在读取公开资产…';
+  if (rssLink) {
+    rssLink.classList.toggle('hidden', !rssUrl);
+    rssLink.href = rssUrl || '#';
+  }
+  if (rssCopy) rssCopy.classList.toggle('hidden', !rssUrl);
   renderContributorTabs();
   if (state.contributor.loading) {
     list.innerHTML = '<div class="my-comments-empty">正在读取贡献者资产…</div>';
@@ -4043,6 +4061,13 @@ $('#my-comments-list').onclick = (e) => {
   if (copy) copyMyAssetLink(copy.dataset.myAssetCopy);
 };
 $('#contributor-close').onclick = () => closeContributorModal();
+$('#contributor-rss-copy').onclick = () => {
+  if (!state.contributor.profile) {
+    toast('还没有可复制的贡献者 RSS');
+    return;
+  }
+  copyText(contributorFeedUrlFor(state.contributor.profile.id).href, '贡献者 RSS 已复制');
+};
 $('#contributor-modal').onclick = (e) => { if (e.target.id === 'contributor-modal') closeContributorModal(); };
 $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
   btn.onclick = () => {
