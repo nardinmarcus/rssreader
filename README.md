@@ -9,6 +9,7 @@
 - 英文标题抓取后自动用 DeepSeek 翻译，列表展示中英双语
 - 单篇文章详情页支持原文 / 中文翻译 / 乔木风格重写三个 Tab，翻译和重写内容复用缓存，并支持读者“有用”反馈
 - 登录用户重新生成正文翻译或乔木风格重写时，会保留自己的公开贡献快照和稳定深链；同一篇文章的全局缓存被更新，也不会抹掉前一个用户的个人资产记录
+- 左侧提供独立的浏览记录视图；未登录用户使用浏览器本地记录，登录用户按账号记录最近打开过的文章，和收藏、已读状态互相独立
 - 人工点评公开保存，支持结构化点评模板、类型标签、单条点评链接、读者“有用”反馈、有用/最新排序，以及本人/管理员编辑和撤回，便于后来访问者浏览和复用
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用；本人和管理员可撤回单条对话
 - 账号级“我的资产”列表可找回自己沉淀过的公开翻译、乔木风格重写、点评和文章对话，并跳回对应文章位置
@@ -34,7 +35,7 @@ npm start          # 默认端口 8080，可用 PORT=3000 npm start 覆盖
 - 注册用户：发布人工点评、生成并保存正文双语翻译和乔木风格重写、围绕当前文章与 AI 对话
 - 管理员：手动刷新、启用/禁用信息源、触发标题补翻译
 - 管理员通过环境变量 seed；如果 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 变化，重启后会同步更新管理员密码
-- 未登录时已读/收藏只保存在当前浏览器；登录后已读/收藏按账号保存到 SQLite，不同账号互相隔离
+- 未登录时已读、收藏和浏览记录只保存在当前浏览器；登录后已读、收藏和浏览记录按账号保存到 SQLite，不同账号互相隔离
 
 ```bash
 cp .env.example .env
@@ -126,8 +127,8 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/api/me/chat-messages` | 登录用户读取自己发布过的公开文章对话 |
 | GET | `/api/contributors` | 公开贡献者列表，按公开资产活跃度排序，不含邮箱 |
 | GET | `/api/contributors/:id` | 公开读取某个用户的公开翻译、重写、点评和文章对话，不含邮箱 |
-| GET | `/api/me/entry-states` | 登录用户读取自己的已读/收藏状态 |
-| POST | `/api/me/entry-state` | 登录用户更新单篇已读/收藏状态 |
+| GET | `/api/me/entry-states` | 登录用户读取自己的已读、收藏和浏览记录状态 |
+| POST | `/api/me/entry-state` | 登录用户更新单篇已读、收藏和浏览记录状态；body 可传 `{"entryId":"","read":true,"starred":true,"viewed":true}` |
 | POST | `/api/me/entry-states/read` | 登录用户批量标记已读 |
 | POST | `/api/auth/register` | 注册并登录；body `{"email":"","password":"","displayName":""}` |
 | POST | `/api/auth/login` | 登录；body `{"email":"","password":""}` |
@@ -142,7 +143,7 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/entry/:id/translation` | 登录用户生成并保存单篇双语翻译 |
 | GET | `/api/entry/:id/rewrite` | 读取公开乔木风格重写 |
 | POST | `/api/entry/:id/rewrite` | 登录用户生成并保存乔木风格重写 |
-| POST | `/api/entry/:id/assets/:type/helpful` | 登录用户标记或取消单篇翻译/重写有用；`type` 为 `translation` / `rewrite`，body `{"helpful":true}` |
+| POST | `/api/entry/:id/assets/:type/helpful` | 登录用户标记或取消单条翻译/重写快照有用；`type` 为 `translation` / `rewrite`，body `{"helpful":true,"assetId":"..."}` |
 | GET | `/api/entry/:id/comments` | 读取公开人工点评 |
 | POST | `/api/entry/:id/comments` | 登录用户发布公开人工点评 |
 | PATCH | `/api/entry/:id/comments/:commentId` | 本人或管理员编辑单条公开点评 |
@@ -174,5 +175,5 @@ docker compose up -d --build
 ## 已知限制
 
 - There's An AI For That 被 Cloudflare 盾拦截，服务端无法抓取
-- 未登录时已读/收藏状态存浏览器 localStorage（沙箱 iframe 中自动降级为内存存储），登录后按账号存 SQLite
+- 未登录时已读、收藏和浏览记录存浏览器 localStorage（沙箱 iframe 中自动降级为内存存储），登录后按账号存 SQLite
 - favicon 使用 Google S2 favicon 服务，外部网络或 Google 被阻断时会退回字母图标

@@ -1681,13 +1681,14 @@ app.get('/api/contributors/:id', (req, res) => {
 });
 
 app.post('/api/me/entry-state', requireLogin, (req, res) => {
-  const { entryId, read, starred } = req.body || {};
+  const { entryId, read, starred, viewed } = req.body || {};
   const entry = fetcher.getEntryById(entryId);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const entryState = store.setUserEntryState(req.user.id, entry.id, {
       read: typeof read === 'boolean' ? read : undefined,
       starred: typeof starred === 'boolean' ? starred : undefined,
+      viewed: typeof viewed === 'boolean' ? viewed : undefined,
     });
     res.json({ entryState });
   } catch (e) {

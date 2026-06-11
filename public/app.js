@@ -302,11 +302,30 @@ function normalizeProfile(raw, index = 0) {
   };
 }
 
+function normalizeHistory(raw) {
+  const items = Array.isArray(raw) ? raw : [];
+  const map = new Map();
+  for (const item of items) {
+    const entryId = String((item && (item.entryId || item.id)) || item || '').trim();
+    if (!entryId) continue;
+    const viewedAt = Number(item && (item.viewedAt || item.at)) || Date.now();
+    map.set(entryId, viewedAt);
+  }
+  return new Map([...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 1000));
+}
+
+function historyEntriesForStorage(map) {
+  return [...(map || new Map()).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 1000)
+    .map(([entryId, viewedAt]) => ({ entryId, viewedAt }));
+}
+
 const state = {
   sources: [],
   entries: [],
   contributors: [],
-  view: 'all',            // all | unread | starred | assets | contributors
+  view: 'all',            // all | unread | starred | history | assets | contributors
   filterSource: null,
   filterCategory: null,
   assetFilter: null,
@@ -318,8 +337,10 @@ const state = {
   activeEntry: null,
   guestRead: new Set(readJson('fr_read', '[]')),
   guestStarred: new Set(readJson('fr_starred', '[]')),
+  guestHistory: normalizeHistory(readJson('qm_history', '[]')),
   read: new Set(readJson('fr_read', '[]')),
   starred: new Set(readJson('fr_starred', '[]')),
+  history: normalizeHistory(readJson('qm_history', '[]')),
   agentMessages: [],
   comments: [],
   myTranslations: [],
@@ -538,8 +559,10 @@ function persist() {
   if (state.me) return;
   state.guestRead = new Set(state.read);
   state.guestStarred = new Set(state.starred);
+  state.guestHistory = new Map(state.history);
   storage.setItem('fr_read', JSON.stringify([...state.guestRead].slice(-5000)));
   storage.setItem('fr_starred', JSON.stringify([...state.guestStarred]));
+  storage.setItem('qm_history', JSON.stringify(historyEntriesForStorage(state.guestHistory)));
 }
 
 function toast(msg, ms = 2200) {
@@ -858,6 +881,7 @@ async function loadContributors() {
 function applyGuestEntryStates() {
   state.read = new Set(state.guestRead);
   state.starred = new Set(state.guestStarred);
+  state.history = new Map(state.guestHistory);
 }
 
 async function loadUserEntryStates() {
@@ -868,6 +892,7 @@ async function loadUserEntryStates() {
   const data = await api('/api/me/entry-states');
   state.read = new Set((data.states && data.states.read) || []);
   state.starred = new Set((data.states && data.states.starred) || []);
+  state.history = normalizeHistory((data.states && data.states.history) || []);
 }
 
 function renderEntryStateUi() {
@@ -894,6 +919,14 @@ async function syncEntryState(entryId, patch) {
   } catch (err) {
     toast('同步阅读状态失败: ' + err.message, 4000);
   }
+}
+
+function recordEntryView(entryId) {
+  const id = String(entryId || '').trim();
+  if (!id) return;
+  state.history.delete(id);
+  state.history.set(id, Date.now());
+  state.history = new Map(historyEntriesForStorage(state.history).map(item => [item.entryId, item.viewedAt]));
 }
 
 async function loadMe() {
@@ -946,6 +979,7 @@ function renderSidebar() {
   $('#count-all').textContent = state.entries.length || '';
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
+  $('#count-history').textContent = state.history.size || '';
   $('#count-assets').textContent = assetTotalCount(state.entries.filter(hasEntryAssets)) || '';
   $('#count-contributors').textContent = state.contributors.length || '';
   renderAssetDashboard();
@@ -1052,6 +1086,12 @@ function visibleEntries() {
   let list = state.entries;
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
   if (state.view === 'starred') list = list.filter(e => state.starred.has(e.id));
+  if (state.view === 'history') {
+    list = list
+      .filter(e => state.history.has(e.id))
+      .slice()
+      .sort((a, b) => (Number(state.history.get(b.id)) || 0) - (Number(state.history.get(a.id)) || 0));
+  }
   if (state.view === 'assets') {
     list = list
       .filter(hasEntryAssets)
@@ -1230,6 +1270,11 @@ function assetActivityLabel(entry) {
   const labels = types.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean);
   const prefix = labels.length ? labels.join(' / ') : '资产';
   return `${prefix} · 最近沉淀 ${formatAssetTime(assets.latestAt)}`;
+}
+
+function entryHistoryLabel(entry) {
+  if (state.view !== 'history' || !entry || !state.history.has(entry.id)) return '';
+  return `最近阅读 ${formatAssetTime(state.history.get(entry.id))}`;
 }
 
 function assetPreviewForEntry(entry) {
@@ -1939,6 +1984,8 @@ function renderList() {
       ? `还没有${assetScope}<br/>换个类型或先沉淀一篇文章`
       : state.view === 'assets'
       ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
+      : state.view === 'history'
+      ? '还没有浏览记录<br/>打开几篇文章后会出现在这里'
       : '这里空空如也<br/>试试刷新或切换视图';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
     return;
@@ -1947,7 +1994,7 @@ function renderList() {
   for (const e of list) {
     const src = sourceById(e.sourceId);
     const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
-    const assetActivity = assetActivityLabel(e);
+    const entryActivity = assetActivityLabel(e) || entryHistoryLabel(e);
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
     const card = document.createElement('div');
@@ -1967,7 +2014,7 @@ function renderList() {
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
         ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
         ${assetItems || (assetPreview ? assetPreviewHtml(assetPreview) : '')}
-        ${assetActivity ? `<div class="entry-asset-activity">${escapeHtml(assetActivity)}</div>` : ''}
+        ${entryActivity ? `<div class="entry-asset-activity">${escapeHtml(entryActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
     card.onclick = (event) => {
@@ -2016,6 +2063,7 @@ function updateListTitle() {
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
+  else if (state.view === 'history') title = '浏览记录';
   else if (state.view === 'assets') {
     const prefix = state.assetSort === 'helpful' ? '有用 · ' : '';
     title = `${prefix}${state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产'}`;
@@ -3471,9 +3519,9 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
     : requestedFocus === 'rewrite'
       ? 'rewrite'
       : normalizeReaderTab(tab);
-  const wasRead = state.read.has(e.id);
   state.read.add(e.id);
-  if (!wasRead) syncEntryState(e.id, { read: true });
+  recordEntryView(e.id);
+  syncEntryState(e.id, { read: true, viewed: true });
   persist();
 
   const src = sourceById(e.sourceId);
