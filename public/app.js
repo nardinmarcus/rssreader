@@ -349,7 +349,7 @@ const state = {
   myComments: [],
   myChatMessages: [],
   myAssetTab: 'translation',
-  contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', loading: false },
+  contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
@@ -398,6 +398,7 @@ function routeStateFromUrl() {
   return {
     entryId: String(params.get('entry') || '').trim(),
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
+    contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     tab: normalizeReaderTab(params.get('tab')),
     view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
@@ -513,11 +514,12 @@ function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   return url;
 }
 
-function contributorUrlFor(contributorId) {
+function contributorUrlFor(contributorId, { sort = 'latest' } = {}) {
   const url = new URL(window.location.href);
   url.pathname = `/contributors/${encodeURIComponent(contributorId)}`;
   url.search = '';
   url.hash = '';
+  if (sort === 'helpful') url.searchParams.set('sort', 'helpful');
   return url;
 }
 
@@ -1174,6 +1176,10 @@ const CONTRIBUTOR_SORTS = {
 
 function normalizeContributorSort(sort = '') {
   return CONTRIBUTOR_SORTS[sort] ? sort : 'latest';
+}
+
+function normalizeContributorAssetSort(sort = '') {
+  return sort === 'helpful' ? 'helpful' : 'latest';
 }
 
 function assetTypeCount(entries, type) {
@@ -2935,10 +2941,14 @@ function copyMyAssetLink(itemId) {
 
 function contributorAssetItemsForCurrentTab() {
   const type = normalizeUserAssetTab(state.contributor.tab);
-  if (type === 'translation') return state.contributor.translations || [];
-  if (type === 'rewrite') return state.contributor.rewrites || [];
-  if (type === 'chat') return state.contributor.messages || [];
-  return state.contributor.comments || [];
+  const items = type === 'translation'
+    ? state.contributor.translations || []
+    : type === 'rewrite'
+    ? state.contributor.rewrites || []
+    : type === 'chat'
+    ? state.contributor.messages || []
+    : state.contributor.comments || [];
+  return sortContributorAssets(items, state.contributor.sort);
 }
 
 function renderContributorTabs() {
@@ -2955,6 +2965,34 @@ function renderContributorTabs() {
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
+  $$('#contributor-modal [data-contributor-asset-sort]').forEach(btn => {
+    const active = normalizeContributorAssetSort(btn.dataset.contributorAssetSort) === state.contributor.sort;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+function assetItemTime(item) {
+  return Math.max(Number(item && item.updatedAt) || 0, Number(item && item.createdAt) || 0, Number(item && item.at) || 0);
+}
+
+function sortContributorAssets(items, sort = 'latest') {
+  const contributorSort = normalizeContributorAssetSort(sort);
+  return [...(items || [])].sort((a, b) => {
+    if (contributorSort === 'helpful') {
+      const helpfulDelta = Number(b && b.helpfulCount || 0) - Number(a && a.helpfulCount || 0);
+      if (helpfulDelta) return helpfulDelta;
+    }
+    return assetItemTime(b) - assetItemTime(a);
+  });
+}
+
+function syncContributorUrl({ replace = true } = {}) {
+  const id = state.contributor.id || (state.contributor.profile && state.contributor.profile.id);
+  if (!id || !window.location.pathname.startsWith('/contributors/')) return;
+  const url = contributorUrlFor(id, { sort: state.contributor.sort });
+  const method = replace ? 'replaceState' : 'pushState';
+  history[method]({ contributorId: id }, '', url);
 }
 
 function renderContributorAssets() {
@@ -3033,10 +3071,11 @@ function renderContributorAssets() {
   }).join('');
 }
 
-async function openContributor(contributorId, { push = true } = {}) {
+async function openContributor(contributorId, { push = true, sort = state.contributor.sort } = {}) {
   const id = String(contributorId || '').trim();
   if (!id) return;
-  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: normalizeUserAssetTab(state.contributor.tab), loading: true };
+  const contributorAssetSort = normalizeContributorAssetSort(sort);
+  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: normalizeUserAssetTab(state.contributor.tab), sort: contributorAssetSort, loading: true };
   $('#contributor-modal').classList.remove('hidden');
   renderContributorAssets();
   try {
@@ -3050,12 +3089,13 @@ async function openContributor(contributorId, { push = true } = {}) {
       comments: data.comments || [],
       messages: data.messages || [],
       tab: normalizeUserAssetTab(state.contributor.tab),
+      sort: contributorAssetSort,
       loading: false,
     };
     renderContributorAssets();
     const title = state.contributor.profile ? `${state.contributor.profile.displayName} 的公开资产 · QMReader` : '贡献者资产 · QMReader';
     document.title = title;
-    if (push) history.pushState({ contributorId: id }, '', contributorUrlFor(id));
+    if (push) history.pushState({ contributorId: id }, '', contributorUrlFor(id, { sort: state.contributor.sort }));
   } catch (err) {
     if (state.contributor.id !== id) return;
     state.contributor.loading = false;
@@ -3718,7 +3758,7 @@ async function openEntryFromUrl() {
     updateListTitle();
     renderSidebar();
     closeReaderFromRoute();
-    await openContributor(route.contributorId, { push: false });
+    await openContributor(route.contributorId, { push: false, sort: route.contributorAssetSort });
     return true;
   }
   $('#contributor-modal').classList.add('hidden');
@@ -4699,6 +4739,13 @@ $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
   btn.onclick = () => {
     state.contributor.tab = normalizeUserAssetTab(btn.dataset.contributorTab);
     renderContributorAssets();
+  };
+});
+$$('#contributor-modal [data-contributor-asset-sort]').forEach(btn => {
+  btn.onclick = () => {
+    state.contributor.sort = normalizeContributorAssetSort(btn.dataset.contributorAssetSort);
+    renderContributorAssets();
+    syncContributorUrl();
   };
 });
 $('#contributor-list').onclick = (e) => {

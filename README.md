@@ -13,7 +13,7 @@
 - 人工点评公开保存，支持结构化点评模板、类型标签、单条点评链接、读者“有用”反馈、有用/最新排序，以及本人/管理员编辑和撤回，便于后来访问者浏览和复用
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用；本人和管理员可撤回单条对话
 - 账号级“我的资产”列表可找回自己沉淀过的公开翻译、乔木风格重写、点评和文章对话，并跳回对应文章位置
-- 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开翻译、乔木风格重写、点评和文章对话，不暴露邮箱；贡献者目录支持按最新、有用反馈和资产数量排序，并显示该贡献者获得的“有用”反馈汇总，提供个人公开资产 RSS：`/contributors/:id.xml`
+- 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开翻译、乔木风格重写、点评和文章对话，不暴露邮箱；贡献者个人资产可按最新或“有用”反馈排序，贡献者目录支持按最新、有用反馈和资产数量排序，并显示该贡献者获得的“有用”反馈汇总，提供个人公开资产 RSS：`/contributors/:id.xml`
 - 公开资产视图可按最新沉淀或读者“有用”反馈排序，侧栏公开资产仪表盘提供“有用优先”快捷入口；也可通过 `/assets`、`/assets?sort=helpful`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会按条数统计登录用户留下的翻译/重写快照，并预览最近几条中译、重写、点评和对话或高有用条目，单条预览深链可复制，点击可直达具体资产
 - 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；追加 `?sort=helpful` 可订阅有用排序版本，翻译/重写按用户 AI 快照逐条进入订阅流，并带作者、模型和有用次数，点评和对话同样按单条资产进入订阅流
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条翻译 / 重写 / 点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
@@ -156,6 +156,7 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | GET | `/assets` | 公开资产网页目录；支持 `?q=` 搜索和 `?sort=helpful` 有用排序 |
 | GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索、`?sort=helpful` 有用排序；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
 | GET | `/contributors` | 公开贡献者网页目录；支持 `?q=` 搜索和 `?sort=helpful` / `?sort=assets` 排序 |
+| GET | `/contributors/:id` | 某个贡献者的公开资产页；支持 `?sort=helpful` 优先查看被认可资产 |
 | GET | `/contributors/:id.xml` | 某个贡献者的公开翻译、重写、点评和文章对话 RSS 订阅流 |
 | GET | `/assets.xml` | 公开资产 RSS 订阅流；支持 `?sort=helpful` |
 | GET | `/assets/:type.xml` | 按类型订阅公开资产；支持 `?sort=helpful`，`type` 为 `translation` / `rewrite` / `comments` / `chat` |
