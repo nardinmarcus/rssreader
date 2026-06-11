@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=88" />
+  <link rel="stylesheet" href="/styles.css?v=89" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -34,6 +34,10 @@
           <span class="asset-dashboard-kicker">公开资产</span>
           <strong id="asset-dashboard-total">0 条</strong>
           <span id="asset-dashboard-recent">暂无沉淀</span>
+        </button>
+        <button id="asset-dashboard-helpful" class="asset-dashboard-action" type="button">
+          <span>有用优先</span>
+          <strong id="asset-dashboard-helpful-count">0</strong>
         </button>
         <div class="asset-dashboard-grid" aria-label="资产类型筛选">
           <button class="asset-stat asset-stat-translation" type="button" data-asset-filter="translation">
@@ -368,6 +372,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=88"></script>
+  <script src="/app.js?v=89"></script>
 </body>
 </html>

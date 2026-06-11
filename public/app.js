@@ -1232,10 +1232,14 @@ function assetDashboardStats() {
     .slice()
     .sort((a, b) => Number(b.assets?.latestAt || 0) - Number(a.assets?.latestAt || 0))[0] || null;
   const counts = Object.fromEntries(Object.keys(ASSET_FILTERS).map(type => [type, assetTypeCount(entries, type)]));
+  const helpfulTotal = entries.reduce((sum, entry) => sum + assetHelpfulScoreForType(entry), 0);
+  const helpfulEntries = entries.reduce((sum, entry) => sum + (assetHelpfulScoreForType(entry) > 0 ? 1 : 0), 0);
   return {
     entries,
     latest,
     counts,
+    helpfulEntries,
+    helpfulTotal,
     totalAssets: Object.values(counts).reduce((sum, count) => sum + count, 0),
   };
 }
@@ -1245,7 +1249,7 @@ function renderAssetDashboard() {
   if (!dashboard) return;
   dashboard.classList.toggle('hidden', !state.entries.length);
 
-  const { entries, latest, counts, totalAssets } = assetDashboardStats();
+  const { entries, latest, counts, helpfulEntries, helpfulTotal, totalAssets } = assetDashboardStats();
   const total = entries.length;
   $('#asset-dashboard-total').textContent = totalAssets ? `${totalAssets} 条` : '0 条';
   const recentTypes = latest && Array.isArray(latest.assets?.latestTypes)
@@ -1257,7 +1261,18 @@ function renderAssetDashboard() {
 
   const open = $('#asset-dashboard-open');
   open.disabled = total === 0;
-  open.classList.toggle('active', state.view === 'assets' && !state.assetFilter && !state.filterSource && !state.filterCategory);
+  open.classList.toggle('active', state.view === 'assets' && state.assetSort === 'latest' && !state.assetFilter && !state.filterSource && !state.filterCategory);
+
+  const helpful = $('#asset-dashboard-helpful');
+  if (helpful) {
+    helpful.disabled = helpfulTotal === 0;
+    helpful.title = helpfulTotal
+      ? `查看 ${helpfulEntries} 篇被读者标记有用的公开资产`
+      : '暂无读者标记有用的公开资产';
+    helpful.classList.toggle('active', state.view === 'assets' && state.assetSort === 'helpful' && !state.assetFilter && !state.filterSource && !state.filterCategory);
+    const value = $('#asset-dashboard-helpful-count');
+    if (value) value.textContent = helpfulTotal ? `${helpfulTotal} 次` : '0';
+  }
 
   for (const [type, def] of Object.entries(ASSET_FILTERS)) {
     const btn = $(`[data-asset-filter="${type}"]`);
@@ -4442,7 +4457,14 @@ function setupListResizer() {
 /* ---------- Events ---------- */
 $$('.view-btn').forEach(b => b.onclick = () => selectView(b.dataset.view));
 $('#sidebar-toggle').onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
-$('#asset-dashboard-open').onclick = () => selectAssetFilter(null);
+$('#asset-dashboard-open').onclick = () => {
+  state.assetSort = 'latest';
+  selectAssetFilter(null);
+};
+$('#asset-dashboard-helpful').onclick = () => {
+  state.assetFilter = null;
+  selectAssetSort('helpful');
+};
 $('#asset-dashboard').onclick = (e) => {
   const btn = e.target.closest('[data-asset-filter]');
   if (!btn || btn.disabled) return;
