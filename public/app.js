@@ -1531,6 +1531,23 @@ function updateEntryAssets(entryId, patch = {}, { rerenderList = true } = {}) {
   if (rerenderList) renderList();
 }
 
+function applyServerEntryUpdate(entry) {
+  if (!entry || !entry.id) return null;
+  const current = state.activeEntry && state.activeEntry.id === entry.id ? state.activeEntry : {};
+  const updated = { ...current, ...entry };
+  const idx = state.entries.findIndex(item => item.id === entry.id);
+  if (idx >= 0) state.entries[idx] = { ...state.entries[idx], ...updated, content: undefined };
+  if (updated.content) contentCache.set(updated.id, updated.content);
+  if (state.activeEntry?.id === entry.id) {
+    state.activeEntry = updated;
+    renderTitle(updated);
+    renderOriginalContent(updated, updated.content || contentCache.get(updated.id) || '');
+    updateFetchOriginalButton(updated);
+  }
+  renderList();
+  return updated;
+}
+
 function isAdmin() {
   return state.me && state.me.role === 'admin';
 }
@@ -1926,12 +1943,13 @@ async function generateTranslation({ force = false } = {}) {
       body: JSON.stringify({ force }),
     });
     if (state.activeEntry?.id !== entry.id) return;
+    if (data.entry) applyServerEntryUpdate(data.entry);
     renderTranslation(data.translation);
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
       updateEntryAssets(entry.id, { translation: true });
     }
     setReaderTab('translation');
-    toast(data.cached ? '已显示缓存翻译' : '双语翻译已保存');
+    toast(data.originalFetched ? '已获取原文并保存双语翻译' : data.cached ? '已显示缓存翻译' : '双语翻译已保存');
   } catch (err) {
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
       openAiConfigModal('translation', 'translation');
@@ -1967,10 +1985,11 @@ async function generateRewrite({ force = false } = {}) {
       body: JSON.stringify({ force }),
     });
     if (state.activeEntry?.id !== entry.id) return;
+    if (data.entry) applyServerEntryUpdate(data.entry);
     renderRewrite(data.rewrite);
     if (data.rewrite && data.rewrite.body) updateEntryAssets(entry.id, { rewrite: true });
     setReaderTab('rewrite');
-    toast(data.cached ? '已显示缓存重写' : '乔木风格重写已保存');
+    toast(data.originalFetched ? '已获取原文并保存乔木风格重写' : data.cached ? '已显示缓存重写' : '乔木风格重写已保存');
   } catch (err) {
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
       openAiConfigModal('settings');

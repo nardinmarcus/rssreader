@@ -940,6 +940,49 @@ function requestAuthor(req) {
   return req.user ? req.user.displayName : '读者';
 }
 
+function plainText(value) {
+  return String(value || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function entryPlainText(entry) {
+  return plainText(entry && (entry.content || entry.summary));
+}
+
+function shouldAutoFetchOriginal(entry) {
+  if (!entry || !/^https?:\/\//i.test(entry.link || '')) return false;
+  const contentText = plainText(entry.content);
+  const summaryText = plainText(entry.summary);
+  const textLength = (contentText || summaryText).length;
+  if (textLength >= 600) return false;
+  if (!contentText || contentText.length < 300) return true;
+  return Boolean(summaryText && contentText.length <= summaryText.length + 25);
+}
+
+async function prepareEntryForAiAsset(entry, reason = 'AI asset') {
+  if (!shouldAutoFetchOriginal(entry)) return { entry, fetched: false };
+  try {
+    const updated = await fetcher.fetchEntryOriginal(entry);
+    if (updated && entryPlainText(updated).length > entryPlainText(entry).length) {
+      console.log(`${reason}: fetched original content for ${entry.id}`);
+      return { entry: updated, fetched: true };
+    }
+  } catch (error) {
+    console.warn(`${reason}: original content auto-fetch skipped for ${entry.id}:`, error.message || error);
+    return {
+      entry,
+      fetched: false,
+      error: String(error.message || error).slice(0, 200),
+    };
+  }
+  return { entry: fetcher.getEntryById(entry.id) || entry, fetched: false };
+}
+
 function translationResponse(entry) {
   const translation = store.getTranslation(entry.id);
   if (!translation) return null;
@@ -996,18 +1039,20 @@ async function autoRewriteSources(sourceIds = AUTO_REWRITE_SOURCE_IDS) {
   let cached = 0;
   const failed = [];
   for (const entry of entries) {
-    const text = String(entry.content || entry.summary || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const prepared = await prepareEntryForAiAsset(entry, 'Auto rewrite');
+    const targetEntry = prepared.entry || entry;
+    const text = entryPlainText(targetEntry);
     if (text.length < 80) {
       failed.push({ entryId: entry.id, title: entry.title, error: '正文太短，无法自动重写' });
       continue;
     }
-    const existing = store.getRewrite(entry.id);
-    if (existing && existing.contentHash === deepseek.rewriteContentHash(entry)) {
+    const existing = store.getRewrite(targetEntry.id);
+    if (existing && existing.contentHash === deepseek.rewriteContentHash(targetEntry)) {
       cached++;
       continue;
     }
     try {
-      const result = await deepseek.rewriteEntry(entry, {
+      const result = await deepseek.rewriteEntry(targetEntry, {
         author: '向阳乔木',
         temperature: config.temperature,
         maxTokens: Math.max(config.maxTokens, 7000),
@@ -1256,12 +1301,13 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
-    const result = await deepseek.translateEntry(entry, {
+    const prepared = await prepareEntryForAiAsset(entry, 'Translation');
+    const result = await deepseek.translateEntry(prepared.entry, {
       ...requestAiConfig(req),
       author: requestAuthor(req),
       force: Boolean(req.body && req.body.force),
     });
-    res.json(result);
+    res.json({ ...result, originalFetched: prepared.fetched, originalFetchError: prepared.error || null, entry: prepared.fetched ? prepared.entry : undefined });
   } catch (e) {
     sendError(res, e, 'translation failed');
   }
@@ -1277,12 +1323,13 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
-    const result = await deepseek.rewriteEntry(entry, {
+    const prepared = await prepareEntryForAiAsset(entry, 'Rewrite');
+    const result = await deepseek.rewriteEntry(prepared.entry, {
       ...requestAiConfig(req),
       author: requestAuthor(req),
       force: Boolean(req.body && req.body.force),
     });
-    res.json(result);
+    res.json({ ...result, originalFetched: prepared.fetched, originalFetchError: prepared.error || null, entry: prepared.fetched ? prepared.entry : undefined });
   } catch (e) {
     sendError(res, e, 'rewrite failed');
   }
