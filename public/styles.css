@@ -1130,6 +1130,53 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-size: 14px;
   line-height: 1.7;
 }
+.comment-edit-box {
+  display: grid;
+  gap: 8px;
+}
+.comment-edit-input {
+  width: 100%;
+  min-height: 96px;
+  max-height: 260px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-0);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  padding: 9px 10px;
+  outline: none;
+}
+.comment-edit-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.comment-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.comment-edit-save,
+.comment-edit-cancel {
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 12px;
+}
+.comment-edit-save {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  color: var(--text-0);
+}
+.comment-edit-save:hover,
+.comment-edit-cancel:hover {
+  border-color: var(--text-2);
+  color: var(--text-0);
+}
 .comment-type-question .comment-kind {
   border-color: color-mix(in srgb, #4a789f 36%, var(--border));
   background: color-mix(in srgb, #4a789f 12%, var(--bg-1));

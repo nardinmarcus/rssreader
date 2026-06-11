@@ -491,7 +491,7 @@ function exactAssetPreview(entry, focus, req) {
       author: comment.author,
       model: comment.model || '',
       text: comment.body,
-      at: comment.createdAt,
+      at: comment.updatedAt || comment.createdAt,
     };
   }
   if (focus === 'chat') {
@@ -1352,6 +1352,20 @@ app.post('/api/entry/:id/comments', requireLogin, (req, res) => {
     body,
   });
   res.json({ comment, comments: store.getComments(entry.id, req.user) });
+});
+
+app.patch('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const comment = store.updateComment(entry.id, req.params.commentId, {
+      body: req.body && req.body.body,
+    }, req.user);
+    if (!comment) return res.status(404).json({ error: 'comment not found' });
+    res.json({ comment, comments: store.getComments(entry.id, req.user) });
+  } catch (e) {
+    sendError(res, e, 'update comment failed');
+  }
 });
 
 app.delete('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {

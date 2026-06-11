@@ -8,7 +8,7 @@
 - Google S2 favicon
 - 英文标题抓取后自动用 DeepSeek 翻译，列表展示中英双语
 - 单篇文章详情页支持原文 / 中文翻译 / 乔木风格重写三个 Tab，翻译和重写内容复用缓存
-- 人工点评公开保存，支持结构化点评模板、类型标签、单条点评链接和本人/管理员撤回，便于后来访问者浏览和复用
+- 人工点评公开保存，支持结构化点评模板、类型标签、单条点评链接，以及本人/管理员编辑和撤回，便于后来访问者浏览和复用
 - 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用；本人和管理员可撤回单条对话
 - 公开资产视图按最新沉淀排序，可通过 `/assets`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会预览最新翻译、重写，以及每篇文章最近几条点评或对话，单条预览深链可复制，点评/对话预览和单条链接可直达具体条目
 - 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；点评和对话按单条资产进入订阅流
@@ -134,6 +134,7 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/entry/:id/rewrite` | 登录用户生成并保存乔木风格重写 |
 | GET | `/api/entry/:id/comments` | 读取公开人工点评 |
 | POST | `/api/entry/:id/comments` | 登录用户发布公开人工点评 |
+| PATCH | `/api/entry/:id/comments/:commentId` | 本人或管理员编辑单条公开点评 |
 | DELETE | `/api/entry/:id/comments/:commentId` | 本人或管理员撤回单条公开点评 |
 | GET | `/api/entry/:id/chat` | 读取公开文章对话 |
 | POST | `/api/entry/:id/chat` | 登录用户以当前文章为上下文对话；body `{"messages":[{"role":"user","content":"..."}]}` |

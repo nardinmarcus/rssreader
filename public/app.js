@@ -319,6 +319,7 @@ const state = {
   starred: new Set(readJson('fr_starred', '[]')),
   agentMessages: [],
   comments: [],
+  editingCommentId: '',
   translation: null,
   translationLoading: false,
   translationGenerating: false,
@@ -2064,20 +2065,33 @@ function renderComments() {
   }
   list.innerHTML = comments.map(comment => {
     const display = commentDisplayParts(comment.body);
+    const isEditing = state.editingCommentId === comment.id;
+    const editedAt = Number(comment.updatedAt || 0) > Number(comment.createdAt || 0)
+      ? ` · 已编辑 ${formatAssetTime(comment.updatedAt)}`
+      : '';
     return `
       <div id="comment-${escapeHtml(comment.id)}" class="comment-item${display.type ? ` comment-type-${display.type}` : ''}">
         <div class="comment-head">
           <div class="comment-head-left">
             ${display.label ? `<span class="comment-kind">${escapeHtml(display.label)}</span>` : ''}
-            <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}</div>
+            <div class="comment-meta">${escapeHtml(comment.author)} · ${formatAssetTime(comment.createdAt)}${escapeHtml(editedAt)}</div>
           </div>
           <div class="comment-actions">
             <button type="button" class="comment-action comment-link-copy" data-comment-link="${escapeHtml(comment.id)}" title="复制这条点评链接" aria-label="复制这条点评链接">#</button>
             <button type="button" class="comment-action comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
-            ${comment.canDelete ? `<button type="button" class="comment-action comment-action-danger" data-comment-delete="${escapeHtml(comment.id)}" title="撤回这条点评" aria-label="撤回这条点评">×</button>` : ''}
+            ${comment.canEdit && !isEditing ? `<button type="button" class="comment-action comment-edit" data-comment-edit="${escapeHtml(comment.id)}" title="编辑这条点评" aria-label="编辑这条点评">✎</button>` : ''}
+            ${comment.canDelete && !isEditing ? `<button type="button" class="comment-action comment-action-danger" data-comment-delete="${escapeHtml(comment.id)}" title="撤回这条点评" aria-label="撤回这条点评">×</button>` : ''}
           </div>
         </div>
-        <div class="comment-body">${renderMarkdownLite(display.body)}</div>
+        ${isEditing ? `
+          <div class="comment-edit-box">
+            <textarea class="comment-edit-input" data-comment-edit-input="${escapeHtml(comment.id)}" rows="4">${escapeHtml(comment.body)}</textarea>
+            <div class="comment-edit-actions">
+              <button type="button" class="comment-edit-save" data-comment-save="${escapeHtml(comment.id)}">保存</button>
+              <button type="button" class="comment-edit-cancel" data-comment-cancel="${escapeHtml(comment.id)}">取消</button>
+            </div>
+          </div>
+        ` : `<div class="comment-body">${renderMarkdownLite(display.body)}</div>`}
       </div>`;
   }).join('');
   renderReaderAssetSummary();
@@ -2116,6 +2130,65 @@ function copyCommentLink(commentId) {
     return;
   }
   copyText(url, '点评链接已复制');
+}
+
+function autosizeCommentEditInput(input) {
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 260)}px`;
+}
+
+function editComment(commentId) {
+  const comment = (state.comments || []).find(item => item.id === commentId);
+  if (!comment || !comment.canEdit) {
+    toast('没有权限编辑这条点评');
+    return;
+  }
+  state.editingCommentId = commentId;
+  renderComments();
+  requestAnimationFrame(() => {
+    const input = document.querySelector(`[data-comment-edit-input="${CSS.escape(commentId)}"]`);
+    if (!input) return;
+    autosizeCommentEditInput(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+function cancelEditComment(commentId) {
+  if (state.editingCommentId !== commentId) return;
+  state.editingCommentId = '';
+  renderComments();
+}
+
+async function saveCommentEdit(commentId) {
+  const entry = state.activeEntry;
+  const input = document.querySelector(`[data-comment-edit-input="${CSS.escape(commentId)}"]`);
+  const body = input ? input.value.trim() : '';
+  if (!entry || !commentId) return;
+  if (!body) {
+    toast('点评不能为空');
+    return;
+  }
+  const btn = document.querySelector(`[data-comment-save="${CSS.escape(commentId)}"]`);
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api(`/api/entry/${entry.id}/comments/${encodeURIComponent(commentId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.comments = data.comments || [];
+    state.editingCommentId = '';
+    updateEntryAssets(entry.id, { comments: state.comments.length });
+    renderComments();
+    renderList();
+    toast('点评已更新');
+  } catch (err) {
+    toast('更新点评失败: ' + err.message, 5000);
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteComment(commentId) {
@@ -2174,6 +2247,7 @@ function insertCommentTemplate(type) {
 
 async function loadComments(entry) {
   state.comments = [];
+  state.editingCommentId = '';
   renderComments();
   try {
     const data = await api(`/api/entry/${entry.id}/comments`);
@@ -2453,6 +2527,7 @@ async function openEntry(e, { tab = 'original', focus = null, commentId = '', ch
   starBtn.classList.toggle('starred', state.starred.has(e.id));
   starBtn.textContent = state.starred.has(e.id) ? '★ 已收藏' : '★ 收藏';
   $('#comment-input').value = '';
+  state.editingCommentId = '';
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
@@ -3330,6 +3405,21 @@ $('#comments-list').onclick = (e) => {
     copyCommentLink(link.dataset.commentLink);
     return;
   }
+  const edit = e.target.closest('[data-comment-edit]');
+  if (edit) {
+    editComment(edit.dataset.commentEdit);
+    return;
+  }
+  const save = e.target.closest('[data-comment-save]');
+  if (save) {
+    saveCommentEdit(save.dataset.commentSave);
+    return;
+  }
+  const cancel = e.target.closest('[data-comment-cancel]');
+  if (cancel) {
+    cancelEditComment(cancel.dataset.commentCancel);
+    return;
+  }
   const del = e.target.closest('[data-comment-delete]');
   if (del) {
     deleteComment(del.dataset.commentDelete);
@@ -3338,6 +3428,23 @@ $('#comments-list').onclick = (e) => {
   const btn = e.target.closest('[data-comment-copy]');
   if (!btn) return;
   copyComment(btn.dataset.commentCopy);
+};
+$('#comments-list').oninput = (e) => {
+  const input = e.target.closest('[data-comment-edit-input]');
+  if (input) autosizeCommentEditInput(input);
+};
+$('#comments-list').onkeydown = (e) => {
+  const input = e.target.closest('[data-comment-edit-input]');
+  if (!input) return;
+  const commentId = input.dataset.commentEditInput;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cancelEditComment(commentId);
+  }
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    saveCommentEdit(commentId);
+  }
 };
 $('#comment-login').onclick = () => openAuth('login');
 $('#agent-form').onsubmit = (e) => {
