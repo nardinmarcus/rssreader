@@ -1040,6 +1040,48 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-size: 12px;
   white-space: nowrap;
 }
+.comment-head-tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.comment-head-tools #comments-count {
+  color: var(--text-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.comment-sort {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+}
+.comment-sort-btn {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.comment-sort-btn:hover,
+.comment-sort-btn:focus-visible {
+  color: var(--text-0);
+  outline: none;
+}
+.comment-sort-btn.active {
+  background: var(--bg-1);
+  color: var(--text-0);
+  box-shadow: 0 1px 5px rgba(20, 24, 33, 0.08);
+}
 .comments-list { margin-top: 12px; display: grid; gap: 10px; }
 .comments-empty { color: var(--text-2); font-size: 13px; }
 .comment-item {

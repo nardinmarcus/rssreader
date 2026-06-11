@@ -43,6 +43,7 @@ const COMMENT_TEMPLATE_LABELS = {
   quote: '引用',
   source: '资料',
 };
+const COMMENT_SORTS = ['helpful', 'latest'];
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
@@ -319,6 +320,7 @@ const state = {
   starred: new Set(readJson('fr_starred', '[]')),
   agentMessages: [],
   comments: [],
+  commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
   translationLoading: false,
@@ -2064,15 +2066,21 @@ async function fetchOriginalContent() {
 function renderComments() {
   const list = $('#comments-list');
   const comments = state.comments || [];
+  const sortedComments = sortComments(comments);
   const canWrite = Boolean(state.me);
   $('#comments-count').textContent = comments.length ? `${comments.length} 条` : '暂无';
+  $$('.comment-sort-btn').forEach(btn => {
+    const active = btn.dataset.commentSort === state.commentSort;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
   $('#comment-form').classList.toggle('hidden', !canWrite);
   $('#comment-gate').classList.toggle('hidden', canWrite);
   if (!comments.length) {
     list.innerHTML = '<div class="comments-empty">还没有人工点评</div>';
     return;
   }
-  list.innerHTML = comments.map(comment => {
+  list.innerHTML = sortedComments.map(comment => {
     const display = commentDisplayParts(comment.body);
     const isEditing = state.editingCommentId === comment.id;
     const editedAt = Number(comment.updatedAt || 0) > Number(comment.createdAt || 0)
@@ -2111,6 +2119,27 @@ function renderComments() {
   renderReaderAssetSummary();
   highlightCommentFromRoute();
   settlePendingAssetJump('comments');
+}
+
+function sortComments(comments) {
+  const list = [...(comments || [])];
+  if (state.commentSort === 'latest') {
+    return list.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  }
+  return list.sort((a, b) => {
+    const helpfulDelta = Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0);
+    if (helpfulDelta) return helpfulDelta;
+    const activityDelta = Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
+    if (activityDelta) return activityDelta;
+    return Number(b.createdAt || 0) - Number(a.createdAt || 0);
+  });
+}
+
+function setCommentSort(sort) {
+  if (!COMMENT_SORTS.includes(sort) || state.commentSort === sort) return;
+  state.commentSort = sort;
+  storage.setItem('qm_comment_sort', sort);
+  renderComments();
 }
 
 function commentDisplayParts(body) {
@@ -3491,6 +3520,9 @@ $('#comments-list').onkeydown = (e) => {
     saveCommentEdit(commentId);
   }
 };
+$$('.comment-sort-btn').forEach(btn => {
+  btn.onclick = () => setCommentSort(btn.dataset.commentSort);
+});
 $('#comment-login').onclick = () => openAuth('login');
 $('#agent-form').onsubmit = (e) => {
   e.preventDefault();

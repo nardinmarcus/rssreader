@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=69" />
+  <link rel="stylesheet" href="/styles.css?v=70" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -140,7 +140,13 @@
         <section id="reader-comments" class="reader-comments">
           <div class="reader-section-head">
             <span>人工点评</span>
-            <span id="comments-count"></span>
+            <div class="comment-head-tools">
+              <span id="comments-count"></span>
+              <div class="comment-sort" aria-label="点评排序">
+                <button type="button" class="comment-sort-btn" data-comment-sort="helpful">有用</button>
+                <button type="button" class="comment-sort-btn" data-comment-sort="latest">最新</button>
+              </div>
+            </div>
           </div>
           <div id="comments-list" class="comments-list"></div>
           <div id="comment-gate" class="asset-gate hidden">
@@ -315,6 +321,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=69"></script>
+  <script src="/app.js?v=70"></script>
 </body>
 </html>
