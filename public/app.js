@@ -2848,6 +2848,7 @@ function renderMyPublicProfileActions() {
   const link = $('#my-public-profile-link');
   const rss = $('#my-public-rss-link');
   const copy = $('#my-public-profile-copy');
+  const rssCopy = $('#my-public-rss-copy');
   if (link) {
     link.classList.toggle('hidden', !url);
     link.href = url || '#';
@@ -2857,6 +2858,7 @@ function renderMyPublicProfileActions() {
     rss.href = rssUrl || '#';
   }
   if (copy) copy.classList.toggle('hidden', !url);
+  if (rssCopy) rssCopy.classList.toggle('hidden', !rssUrl);
 }
 
 function renderMyAssets() {
@@ -2998,6 +3000,15 @@ function copyMyPublicProfileLink() {
     return;
   }
   copyText(url, '我的公开资产页已复制');
+}
+
+function copyMyPublicRssLink() {
+  const url = myPublicRssUrl();
+  if (!url) {
+    toast('还没有可复制的公开资产 RSS');
+    return;
+  }
+  copyText(url, '我的公开资产 RSS 已复制');
 }
 
 function contributorAssetItemsForCurrentTab() {
@@ -4787,6 +4798,7 @@ $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#my-comments-btn').onclick = openMyCommentsModal;
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-public-profile-copy').onclick = copyMyPublicProfileLink;
+$('#my-public-rss-copy').onclick = copyMyPublicRssLink;
 $('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
 $$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
   btn.onclick = () => {
