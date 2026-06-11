@@ -1906,7 +1906,9 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   gap: 6px;
   flex: none;
 }
-.my-public-profile-link {
+.my-public-profile-link,
+.my-public-rss-link {
+  white-space: nowrap;
   min-height: 32px;
   display: inline-grid;
   place-items: center;
@@ -1919,7 +1921,14 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-weight: 800;
   text-decoration: none;
 }
-.my-public-profile-link:hover {
+.my-public-profile-link {
+  min-width: 56px;
+}
+.my-public-rss-link {
+  min-width: 38px;
+}
+.my-public-profile-link:hover,
+.my-public-rss-link:hover {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
   text-decoration: none;

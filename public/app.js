@@ -2801,6 +2801,11 @@ function myPublicProfileUrl() {
   }).href;
 }
 
+function myPublicRssUrl() {
+  if (!state.me || !state.me.id) return '';
+  return contributorFeedUrlFor(state.me.id).href;
+}
+
 function normalizeUserAssetTab(type) {
   return ASSET_FILTER_TYPES.includes(type) ? type : 'translation';
 }
@@ -2839,11 +2844,17 @@ function renderMyAssetTabs() {
 
 function renderMyPublicProfileActions() {
   const url = myPublicProfileUrl();
+  const rssUrl = myPublicRssUrl();
   const link = $('#my-public-profile-link');
+  const rss = $('#my-public-rss-link');
   const copy = $('#my-public-profile-copy');
   if (link) {
     link.classList.toggle('hidden', !url);
     link.href = url || '#';
+  }
+  if (rss) {
+    rss.classList.toggle('hidden', !rssUrl);
+    rss.href = rssUrl || '#';
   }
   if (copy) copy.classList.toggle('hidden', !url);
 }
