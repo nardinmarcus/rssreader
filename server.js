@@ -1338,7 +1338,7 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
 app.get('/api/entry/:id/comments', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ comments: require('./lib/store').getComments(entry.id) });
+  res.json({ comments: store.getComments(entry.id, req.user) });
 });
 
 app.post('/api/entry/:id/comments', requireLogin, (req, res) => {
@@ -1351,7 +1351,19 @@ app.post('/api/entry/:id/comments', requireLogin, (req, res) => {
     author: requestAuthor(req),
     body,
   });
-  res.json({ comment, comments: store.getComments(entry.id) });
+  res.json({ comment, comments: store.getComments(entry.id, req.user) });
+});
+
+app.delete('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const deleted = store.deleteComment(entry.id, req.params.commentId, req.user);
+    if (!deleted) return res.status(404).json({ error: 'comment not found' });
+    res.json({ ok: true, comments: store.getComments(entry.id, req.user) });
+  } catch (e) {
+    sendError(res, e, 'delete comment failed');
+  }
 });
 
 app.post('/api/entry/:id/chat', requireLogin, async (req, res) => {
@@ -1372,7 +1384,19 @@ app.post('/api/entry/:id/chat', requireLogin, async (req, res) => {
 app.get('/api/entry/:id/chat', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ messages: require('./lib/store').getChatMessages(entry.id) });
+  res.json({ messages: store.getChatMessages(entry.id, req.user) });
+});
+
+app.delete('/api/entry/:id/chat/:messageId', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const deleted = store.deleteChatMessage(entry.id, req.params.messageId, req.user);
+    if (!deleted) return res.status(404).json({ error: 'chat message not found' });
+    res.json({ ok: true, messages: store.getChatMessages(entry.id, req.user) });
+  } catch (e) {
+    sendError(res, e, 'delete chat message failed');
+  }
 });
 
 app.post('/api/translate-titles', requireAdmin, async (req, res) => {

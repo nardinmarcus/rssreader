@@ -1116,6 +1116,11 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   color: var(--text-0);
   background: var(--bg-2);
 }
+.comment-action-danger:hover {
+  border-color: rgba(214, 69, 69, 0.28);
+  color: #b42318;
+  background: rgba(214, 69, 69, 0.08);
+}
 .comment-link-copy {
   font-weight: 700;
   line-height: 1;
@@ -1398,6 +1403,11 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-color: var(--border);
   color: var(--text-0);
   background: var(--bg-2);
+}
+.agent-msg-action-danger:hover {
+  border-color: rgba(214, 69, 69, 0.28);
+  color: #b42318;
+  background: rgba(214, 69, 69, 0.08);
 }
 .agent-msg-link {
   font-weight: 700;

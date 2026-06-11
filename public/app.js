@@ -2074,6 +2074,7 @@ function renderComments() {
           <div class="comment-actions">
             <button type="button" class="comment-action comment-link-copy" data-comment-link="${escapeHtml(comment.id)}" title="复制这条点评链接" aria-label="复制这条点评链接">#</button>
             <button type="button" class="comment-action comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
+            ${comment.canDelete ? `<button type="button" class="comment-action comment-action-danger" data-comment-delete="${escapeHtml(comment.id)}" title="撤回这条点评" aria-label="撤回这条点评">×</button>` : ''}
           </div>
         </div>
         <div class="comment-body">${renderMarkdownLite(display.body)}</div>
@@ -2115,6 +2116,23 @@ function copyCommentLink(commentId) {
     return;
   }
   copyText(url, '点评链接已复制');
+}
+
+async function deleteComment(commentId) {
+  const entry = state.activeEntry;
+  if (!entry || !commentId) return;
+  if (!window.confirm('确定撤回这条点评吗？撤回后公开资产页和 RSS 中也会移除。')) return;
+  try {
+    const data = await api(`/api/entry/${entry.id}/comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.comments = data.comments || [];
+    updateEntryAssets(entry.id, { comments: state.comments.length });
+    renderComments();
+    renderList();
+    toast('点评已撤回');
+  } catch (err) {
+    toast('撤回点评失败: ' + err.message, 5000);
+  }
 }
 
 function highlightCommentFromRoute() {
@@ -2239,6 +2257,15 @@ function renderAgentMessages(extraPending = false) {
       copy.textContent = '⧉';
       copy.onclick = () => copyText(message.content, '消息已复制');
       actions.appendChild(copy);
+      if (message.canDelete && message.id) {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'agent-msg-action agent-msg-action-danger';
+        del.title = '撤回这条对话';
+        del.textContent = '×';
+        del.onclick = () => deleteAgentMessage(message.id);
+        actions.appendChild(del);
+      }
       head.appendChild(actions);
     }
     const body = document.createElement('div');
@@ -2274,6 +2301,25 @@ function copyAgentMessageLink(messageId) {
     return;
   }
   copyText(url, '对话链接已复制');
+}
+
+async function deleteAgentMessage(messageId) {
+  const entry = state.activeEntry;
+  if (!entry || !messageId) return;
+  if (!window.confirm('确定撤回这条对话吗？撤回后公开资产页和 RSS 中也会移除。')) return;
+  try {
+    const data = await api(`/api/entry/${entry.id}/chat/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.agentMessages = data.messages || [];
+    updateEntryAssets(entry.id, { chatMessages: state.agentMessages.length });
+    renderAgentMessages();
+    renderList();
+    toast('对话已撤回');
+  } catch (err) {
+    toast('撤回对话失败: ' + err.message, 5000);
+  } finally {
+    updateAgentControls();
+  }
 }
 
 function highlightAgentMessageFromRoute() {
@@ -3282,6 +3328,11 @@ $('#comments-list').onclick = (e) => {
   const link = e.target.closest('[data-comment-link]');
   if (link) {
     copyCommentLink(link.dataset.commentLink);
+    return;
+  }
+  const del = e.target.closest('[data-comment-delete]');
+  if (del) {
+    deleteComment(del.dataset.commentDelete);
     return;
   }
   const btn = e.target.closest('[data-comment-copy]');
