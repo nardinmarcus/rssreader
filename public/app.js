@@ -390,6 +390,7 @@ function routeStateFromUrl() {
   const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
   const contributorsPath = /^\/contributors\/?$/.test(window.location.pathname);
   const contributorMatch = window.location.pathname.match(/^\/contributors\/([^/?#]+)\/?$/);
+  const articleRoute = articleRouteFromPath(window.location.pathname);
   const pathAssetFilter = pathMatch ? (ASSET_FILTER_TYPES.includes(pathMatch[1]) ? pathMatch[1] : null) : null;
   const isAssetPath = Boolean(pathMatch);
   const queryAssetFilter = ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null;
@@ -397,25 +398,82 @@ function routeStateFromUrl() {
   const queryCommentId = String(params.get('comment') || '').trim();
   const queryChatMessageId = String(params.get('chat') || '').trim();
   const queryAssetId = String(params.get('assetId') || '').trim();
-  const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : queryCommentId;
-  const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : queryChatMessageId;
-  const focus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
+  const pathCommentId = articleRoute && articleRoute.focus === 'comments' ? articleRoute.itemId : '';
+  const pathChatMessageId = articleRoute && articleRoute.focus === 'chat' ? articleRoute.itemId : '';
+  const pathAssetId = articleRoute && ['translation', 'rewrite'].includes(articleRoute.focus) ? articleRoute.itemId : '';
+  const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : (pathCommentId || queryCommentId);
+  const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : (pathChatMessageId || queryChatMessageId);
+  const queryFocus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
+  const focus = commentId ? 'comments' : chatMessageId ? 'chat' : (articleRoute && articleRoute.focus ? articleRoute.focus : queryFocus);
   return {
-    entryId: String(params.get('entry') || '').trim(),
+    entryId: articleRoute && articleRoute.id ? articleRoute.id : String(params.get('entry') || '').trim(),
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
-    tab: normalizeReaderTab(params.get('tab')),
+    tab: articleRoute && articleRoute.focus === 'translation'
+      ? 'translation'
+      : articleRoute && articleRoute.focus === 'rewrite'
+      ? 'rewrite'
+      : normalizeReaderTab(params.get('tab')),
     view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     contributorSort: contributorsPath ? normalizeContributorSort(params.get('sort')) : 'latest',
     focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
-    assetId: queryAssetId,
+    assetId: pathAssetId || queryAssetId,
     commentId,
     chatMessageId,
     q: String(params.get('q') || '').trim(),
   };
+}
+
+function articleRouteFromPath(pathname) {
+  const match = String(pathname || '').match(/^\/articles\/([^/?#]+)(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?\/?$/);
+  if (!match) return null;
+  let id = '';
+  try {
+    id = decodeURIComponent(match[1]).trim();
+  } catch {
+    id = String(match[1] || '').trim();
+  }
+  if (!id) return null;
+  const raw = match.slice(2).filter(Boolean).map(value => {
+    try {
+      return decodeURIComponent(value).trim();
+    } catch {
+      return String(value || '').trim();
+    }
+  });
+  let slug = raw[0] || '';
+  let focus = '';
+  let itemId = '';
+  const assetIndex = raw.findIndex(value => ASSET_FILTER_TYPES.includes(value));
+  if (assetIndex >= 0) {
+    focus = raw[assetIndex];
+    slug = raw.slice(0, assetIndex).filter(Boolean).join('-');
+    itemId = raw[assetIndex + 1] || '';
+  }
+  return { id, slug, focus, itemId };
+}
+
+function slugifyForUrl(value, fallback = 'article') {
+  const slug = String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    .slice(0, 96)
+    .replace(/-+$/g, '');
+  return slug || fallback;
+}
+
+function entrySlug(entry) {
+  const fallback = slugifyForUrl(entry && entry.id, 'article');
+  return slugifyForUrl(entry && (entry.title || entry.titleZh || entry.id), fallback);
 }
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
@@ -443,11 +501,19 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
   url.search = '';
   url.hash = '';
   if (entry && entry.id) {
-    url.searchParams.set('entry', entry.id);
     const nextTab = normalizeReaderTab(tab);
-    if (nextTab !== 'original') url.searchParams.set('tab', nextTab);
-    if (focus && ASSET_FILTER_TYPES.includes(focus)) url.searchParams.set('focus', focus);
-    if ((focus === 'translation' || focus === 'rewrite') && assetId) url.searchParams.set('assetId', assetId);
+    const nextFocus = focus && ASSET_FILTER_TYPES.includes(focus)
+      ? focus
+      : nextTab === 'translation'
+      ? 'translation'
+      : nextTab === 'rewrite'
+      ? 'rewrite'
+      : '';
+    url.pathname = `/articles/${encodeURIComponent(entry.id)}/${entrySlug(entry)}`;
+    if (nextFocus) {
+      url.pathname += `/${nextFocus}`;
+      if (assetId) url.pathname += `/${encodeURIComponent(assetId)}`;
+    }
   }
   return url;
 }
@@ -460,16 +526,14 @@ function readerAssetUrl(type, entry = state.activeEntry, assetId = '') {
 
 function commentUrl(commentId, entry = state.activeEntry) {
   if (!entry || !commentId) return '';
-  const url = readerUrlFor(entry, 'original', 'comments');
-  url.searchParams.set('comment', commentId);
+  const url = readerUrlFor(entry, 'original', 'comments', commentId);
   url.hash = `comment-${encodeURIComponent(commentId)}`;
   return url.href;
 }
 
 function chatMessageUrl(messageId, entry = state.activeEntry) {
   if (!entry || !messageId) return '';
-  const url = readerUrlFor(entry, 'original', 'chat');
-  url.searchParams.set('chat', messageId);
+  const url = readerUrlFor(entry, 'original', 'chat', messageId);
   url.hash = `chat-${encodeURIComponent(messageId)}`;
   return url.href;
 }
@@ -493,7 +557,7 @@ function copyReaderLink() {
   if (!entry) return;
   const focus = readerShareFocus();
   const tab = focus === 'translation' ? 'translation' : focus === 'rewrite' ? 'rewrite' : state.readerTab;
-  const url = readerUrlFor(entry, tab, focus);
+  const url = readerUrlFor(entry, tab, focus, state.readerAssetId);
   document.title = readerRouteTitle(entry, focus);
   if (url.href !== window.location.href) {
     history.replaceState({ entryId: entry.id, tab, focus }, '', url);
@@ -540,16 +604,10 @@ function contributorFeedUrlFor(contributorId) {
 function syncReaderUrl({ replace = false, commentId = '', chatMessageId = '' } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
-  const url = readerUrlFor(entry, state.readerTab);
-  if (commentId) {
-    url.searchParams.set('comment', commentId);
-    url.hash = `comment-${encodeURIComponent(commentId)}`;
-  }
-  if (chatMessageId) {
-    url.searchParams.set('chat', chatMessageId);
-    url.hash = `chat-${encodeURIComponent(chatMessageId)}`;
-  }
-  document.title = readerRouteTitle(entry);
+  const focus = commentId ? 'comments' : chatMessageId ? 'chat' : state.readerFocus;
+  const itemId = commentId || chatMessageId || state.readerAssetId;
+  const url = readerUrlFor(entry, state.readerTab, focus, itemId);
+  document.title = readerRouteTitle(entry, focus);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
   history[method]({ entryId: entry.id, tab: state.readerTab, commentId, chatMessageId }, '', url);

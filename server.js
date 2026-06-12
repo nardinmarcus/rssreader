@@ -89,6 +89,26 @@ function clipText(value, max = 180) {
   return `${text.slice(0, max - 1).trim()}…`;
 }
 
+function slugifyForUrl(value, fallback = 'article') {
+  const slug = String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    .slice(0, 96)
+    .replace(/-+$/g, '');
+  return slug || fallback;
+}
+
+function entrySlug(entry) {
+  const fallback = slugifyForUrl(entry && entry.id, 'article');
+  return slugifyForUrl(entry && (entry.title || entry.titleZh || entry.id), fallback);
+}
+
 function translationBlockText(pair) {
   if (!pair) return '';
   return String(pair.target || '').trim() || clipText(pair.targetHtml || '', 240);
@@ -143,7 +163,48 @@ function contributorIdFromRequest(req) {
   }
 }
 
+function articleRouteFromRequest(req) {
+  const match = String(req.path || '').match(/^\/articles\/([^/?#]+)(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?\/?$/);
+  if (!match) return null;
+  let id = '';
+  try {
+    id = decodeURIComponent(match[1]).trim();
+  } catch {
+    id = String(match[1] || '').trim();
+  }
+  if (!id) return null;
+  const raw = match.slice(2).filter(Boolean).map(value => {
+    try {
+      return decodeURIComponent(value).trim();
+    } catch {
+      return String(value || '').trim();
+    }
+  });
+  let slug = raw[0] || '';
+  let focus = '';
+  let itemId = '';
+  const firstAssetIndex = raw.findIndex(value => normalizeAssetDirectoryType(value));
+  if (firstAssetIndex >= 0) {
+    focus = normalizeAssetDirectoryType(raw[firstAssetIndex]);
+    slug = raw.slice(0, firstAssetIndex).filter(Boolean).join('-');
+    itemId = raw[firstAssetIndex + 1] || '';
+  }
+  return { id, slug, focus, itemId };
+}
+
+function requestAssetItemId(req, focus = '') {
+  const assetFocus = normalizeAssetDirectoryType(focus);
+  const articleRoute = articleRouteFromRequest(req);
+  if (articleRoute && articleRoute.focus === assetFocus && articleRoute.itemId) return articleRoute.itemId;
+  if (assetFocus === 'translation' || assetFocus === 'rewrite') return String(req.query.assetId || '').trim();
+  if (assetFocus === 'comments') return String(req.query.comment || '').trim();
+  if (assetFocus === 'chat') return String(req.query.chat || '').trim();
+  return '';
+}
+
 function requestAssetFocus(req) {
+  const articleRoute = articleRouteFromRequest(req);
+  if (articleRoute && articleRoute.focus) return articleRoute.focus;
   if (String(req.query.comment || '').trim()) return 'comments';
   if (String(req.query.chat || '').trim()) return 'chat';
   const focus = normalizeAssetDirectoryType(String(req.query.focus || ''));
@@ -382,10 +443,11 @@ function socialMetaTags(req, entry) {
   const modifiedTime = entry
     ? entryShareModifiedTime(entry, focus, req)
     : timestampIso(directoryMeta?.latestAt || contributorPage?.latestAt || contributorMeta?.latestAt);
-  const url = publicUrl(req);
+  const url = canonicalUrlForRequest(req, entry, focus);
   const image = entry ? absolutePublicUrl(req, entry.image) : '';
   const tags = [
     `<meta name="description" content="${escapeHtml(description)}" />`,
+    shouldNoindexRequest(req, entry) ? `<meta name="robots" content="noindex,follow" />` : '',
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
     `<meta property="og:site_name" content="QMReader" />`,
     `<meta property="og:type" content="${entry ? 'article' : contributorPage ? 'profile' : 'website'}" />`,
@@ -395,7 +457,7 @@ function socialMetaTags(req, entry) {
     `<meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}" />`,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
-  ];
+  ].filter(Boolean);
   if (image) {
     tags.push(`<meta property="og:image" content="${escapeHtml(image)}" />`);
     tags.push(`<meta name="twitter:image" content="${escapeHtml(image)}" />`);
@@ -420,6 +482,32 @@ function socialMetaTags(req, entry) {
   });
   if (structuredData) tags.push(jsonLdScript(structuredData));
   return { title, tags: tags.join('\n  ') };
+}
+
+function canonicalUrlForRequest(req, entry, focus = '') {
+  if (entry) {
+    const assetFocus = normalizeAssetDirectoryType(focus);
+    const itemId = requestAssetItemId(req, assetFocus);
+    if (assetFocus && itemId) {
+      return entryAssetItemUrl(req, entry, assetFocus, { id: itemId }, { includeHash: false });
+    }
+    return entryPublicUrl(req, entry, assetFocus);
+  }
+  if (isAssetDirectoryRequest(req)) return assetDirectoryUrl(req, requestAssetDirectoryType(req), requestAssetSort(req));
+  const contributorId = contributorIdFromRequest(req);
+  if (contributorId) return contributorPageUrl(req, contributorId);
+  if (isContributorDirectoryRequest(req)) {
+    const sort = normalizeContributorSort(req && req.query && req.query.sort);
+    const query = sort === 'latest' ? '' : `?sort=${encodeURIComponent(sort)}`;
+    return publicUrl(req, `/contributors${query}`);
+  }
+  return publicUrl(req, '/');
+}
+
+function shouldNoindexRequest(req, entry) {
+  if (String(req.query.q || '').trim()) return true;
+  if (entry && !hasPublicAssets(entry)) return true;
+  return false;
 }
 
 function shareStructuredData(req, { entry, focus, directoryMeta, contributorPage, title, description, modifiedTime, image, url }) {
@@ -734,7 +822,7 @@ function assetPreviewDescription(focus, preview) {
 function exactAssetPreview(entry, focus, req) {
   if (!entry || !req) return null;
   if (focus === 'translation' || focus === 'rewrite') {
-    const asset = store.getAiAssetContribution(String(req.query.assetId || '').trim(), focus);
+    const asset = store.getAiAssetContribution(requestAssetItemId(req, focus), focus);
     if (!asset || asset.entryId !== entry.id) return null;
     return {
       type: focus,
@@ -750,7 +838,7 @@ function exactAssetPreview(entry, focus, req) {
     };
   }
   if (focus === 'comments') {
-    const comment = store.getComment(entry.id, String(req.query.comment || '').trim());
+    const comment = store.getComment(entry.id, requestAssetItemId(req, focus));
     if (!comment) return null;
     return {
       type: 'comments',
@@ -762,7 +850,7 @@ function exactAssetPreview(entry, focus, req) {
     };
   }
   if (focus === 'chat') {
-    const message = store.getChatMessage(entry.id, String(req.query.chat || '').trim());
+    const message = store.getChatMessage(entry.id, requestAssetItemId(req, focus));
     if (!message) return null;
     return {
       type: 'chat',
@@ -851,11 +939,24 @@ function sitemapUrlXml(loc, { lastmod = '', changefreq = 'weekly', priority = '0
   return parts.filter(Boolean).join('\n');
 }
 
-function entryPublicUrl(req, entry, focus = '') {
-  const query = new URLSearchParams({ entry: entry.id });
+function entryPublicPath(entry, focus = '', itemId = '', { includeHash = true } = {}) {
+  const id = entry && entry.id ? encodeURIComponent(entry.id) : '';
+  if (!id) return '/';
+  const parts = ['/articles', id, entrySlug(entry)];
   const assetFocus = normalizeAssetDirectoryType(focus);
-  if (assetFocus) query.set('focus', assetFocus);
-  return publicUrl(req, `/?${query.toString()}`);
+  const safeItemId = String(itemId || '').trim();
+  let hash = '';
+  if (assetFocus) parts.push(assetFocus);
+  if (assetFocus && safeItemId) {
+    parts.push(encodeURIComponent(safeItemId));
+    if (includeHash && assetFocus === 'comments') hash = `#comment-${encodeURIComponent(safeItemId)}`;
+    if (includeHash && assetFocus === 'chat') hash = `#chat-${encodeURIComponent(safeItemId)}`;
+  }
+  return `${parts.join('/')}${hash}`;
+}
+
+function entryPublicUrl(req, entry, focus = '') {
+  return publicUrl(req, entryPublicPath(entry, focus));
 }
 
 function assetDirectoryUrl(req, type = '', sort = 'latest') {
@@ -898,21 +999,9 @@ function rssAlternateTag(req) {
 }
 
 function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true } = {}) {
-  const query = new URLSearchParams({ entry: entry.id, focus: type });
+  const assetFocus = normalizeAssetDirectoryType(type);
   const itemId = String(preview.id || '').trim();
-  let hash = '';
-  if ((type === 'translation' || type === 'rewrite') && itemId) {
-    query.set('assetId', itemId);
-  }
-  if (type === 'comments' && itemId) {
-    query.set('comment', itemId);
-    if (includeHash) hash = `#comment-${encodeURIComponent(itemId)}`;
-  }
-  if (type === 'chat' && itemId) {
-    query.set('chat', itemId);
-    if (includeHash) hash = `#chat-${encodeURIComponent(itemId)}`;
-  }
-  return publicUrl(req, `/?${query.toString()}${hash}`);
+  return publicUrl(req, entryPublicPath(entry, assetFocus, itemId, { includeHash }));
 }
 
 function publicExactAssetSitemapUrls(req, entry, lastmod = '') {
@@ -1226,16 +1315,14 @@ function renderSitemap(req) {
     }
   }
 
-  for (const entry of entries) {
+  for (const entry of assetEntries) {
     const lastmod = entryLastModified(entry);
-    const priority = hasPublicAssets(entry) ? '0.8' : '0.5';
-    const changefreq = hasPublicAssets(entry) ? 'weekly' : 'monthly';
     urls.push([
       `  <url>`,
       `    <loc>${escapeHtml(entryPublicUrl(req, entry))}</loc>`,
       lastmod ? `    <lastmod>${escapeHtml(lastmod)}</lastmod>` : '',
-      `    <changefreq>${changefreq}</changefreq>`,
-      `    <priority>${priority}</priority>`,
+      `    <changefreq>weekly</changefreq>`,
+      `    <priority>0.8</priority>`,
       `  </url>`,
     ].filter(Boolean).join('\n'));
 
@@ -1272,6 +1359,54 @@ function renderIndex(req, entry = null) {
     .replace('</head>', `  ${tags}${umami ? `\n  ${umami}` : ''}\n</head>`);
 }
 
+function renderLlmsTxt(req) {
+  const assetEntries = fetcher.getEntries({ limit: 1000 })
+    .filter(entry => entry && entry.id && hasPublicAssets(entry))
+    .sort((a, b) => entryAssetTypeTimestamp(b) - entryAssetTypeTimestamp(a));
+  const stats = assetDirectoryStats();
+  const recent = assetEntries.slice(0, 12).map(entry => {
+    const types = publicAssetTypes(entry).map(type => ASSET_DIRECTORY_META[type].label).join('、');
+    const title = entry.titleZh || entry.title || entry.id;
+    return `- ${title}\n  URL: ${entryPublicUrl(req, entry)}\n  Assets: ${types || '公开资产'}`;
+  });
+  return [
+    '# QMReader',
+    '',
+    'QMReader is a public Chinese RSS reading and knowledge asset site curated around article translation, Qiaomu-style rewrites, human comments, and article-context AI conversations.',
+    '',
+    'Primary language: zh-CN',
+    `Canonical site: ${publicUrl(req, '/')}`,
+    `Sitemap: ${publicUrl(req, '/sitemap.xml')}`,
+    '',
+    'Important public directories:',
+    `- All public assets: ${assetDirectoryUrl(req)}`,
+    `- Chinese translations: ${assetDirectoryUrl(req, 'translation')}`,
+    `- Qiaomu-style rewrites: ${assetDirectoryUrl(req, 'rewrite')}`,
+    `- Human comments: ${assetDirectoryUrl(req, 'comments')}`,
+    `- Article conversations: ${assetDirectoryUrl(req, 'chat')}`,
+    `- Contributor leaderboard: ${publicUrl(req, '/contributors')}`,
+    '',
+    'RSS feeds:',
+    `- All public assets: ${assetFeedUrl(req)}`,
+    `- Chinese translations: ${assetFeedUrl(req, 'translation')}`,
+    `- Qiaomu-style rewrites: ${assetFeedUrl(req, 'rewrite')}`,
+    `- Human comments: ${assetFeedUrl(req, 'comments')}`,
+    `- Article conversations: ${assetFeedUrl(req, 'chat')}`,
+    '',
+    'Citation guidance:',
+    '- Prefer canonical /articles/... URLs over query-parameter URLs.',
+    '- Prefer pages with public assets over raw RSS-only entries.',
+    '- Attribute human comments, translations, rewrites, and AI conversations to the displayed contributor or model metadata on the page.',
+    '',
+    `Current public asset count: ${stats.assetCount || 0}`,
+    `Covered article count: ${stats.entryCount || assetEntries.length}`,
+    '',
+    'Recent public asset pages:',
+    recent.length ? recent.join('\n') : '- No public asset pages are available yet.',
+    '',
+  ].join('\n');
+}
+
 function umamiScriptTag() {
   if (!UMAMI_WEBSITE_ID || !UMAMI_SRC) return '';
   if (!/^[0-9a-f-]{36}$/i.test(UMAMI_WEBSITE_ID)) return '';
@@ -1292,13 +1427,39 @@ app.get('/', (req, res) => {
   res.type('html').send(renderIndex(req, entry));
 });
 
+app.get(/^\/articles\/.+$/, (req, res) => {
+  const route = articleRouteFromRequest(req);
+  const entry = route && route.id ? fetcher.getEntryById(route.id) : null;
+  if (!entry) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req, entry));
+});
+
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send([
+    'User-agent: OAI-SearchBot',
+    'Allow: /',
+    '',
+    'User-agent: ChatGPT-User',
+    'Allow: /',
+    '',
+    'User-agent: PerplexityBot',
+    'Allow: /',
+    '',
+    'User-agent: Claude-SearchBot',
+    'Allow: /',
+    '',
     'User-agent: *',
     'Allow: /',
     `Sitemap: ${publicUrl(req, '/sitemap.xml')}`,
+    `LLMs: ${publicUrl(req, '/llms.txt')}`,
     '',
   ].join('\n'));
+});
+
+app.get('/llms.txt', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=900');
+  res.type('text/plain').send(renderLlmsTxt(req));
 });
 
 app.get('/favicon.ico', (req, res) => {

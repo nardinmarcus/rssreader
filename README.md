@@ -16,6 +16,8 @@
 - 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开翻译、乔木风格重写、点评和文章对话，不暴露邮箱；贡献者个人资产可按类型和最新/“有用”反馈排序，支持 `/contributors/:id?type=chat&sort=helpful` 这类可分享深链，弹层内可一键复制资产内容和当前视图链接，贡献者目录支持按最新、有用反馈和资产数量排序，并显示该贡献者获得的“有用”反馈汇总，提供个人公开资产 RSS：`/contributors/:id.xml`
 - 公开资产视图可按最新沉淀或读者“有用”反馈排序，侧栏公开资产仪表盘提供“有用优先”快捷入口；也可通过 `/assets`、`/assets?sort=helpful`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会按条数统计登录用户留下的翻译/重写快照，并预览最近几条中译、重写、点评和对话或高有用条目，单条预览支持直接复制内容或深链，点击可直达具体资产
 - 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；追加 `?sort=helpful` 可订阅有用排序版本，翻译/重写按用户 AI 快照逐条进入订阅流，并带作者、模型和有用次数，点评和对话同样按单条资产进入订阅流
+- 文章和资产使用可读的 canonical URL：`/articles/:id/:slug`、`/articles/:id/:slug/translation/:assetId`、`/articles/:id/:slug/comments/:commentId`；旧 `?entry=` 深链继续兼容，但 sitemap、RSS、分享和结构化数据优先输出新 URL；无公开资产的纯 RSS 文章默认 `noindex,follow`
+- GEO 入口：`/llms.txt` 汇总站点定位、公开目录、RSS、sitemap 和最近公开资产，`robots.txt` 显式允许搜索类 AI crawler 并暴露 sitemap / llms 入口
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条翻译 / 重写 / 点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
 - 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
 - 管理员登录后管理信息源和手动刷新；每天北京时间 08:00 自动刷新
