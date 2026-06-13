@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=110" />
+  <link rel="stylesheet" href="/styles.css?v=111" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -141,20 +141,25 @@
         </nav>
         <header class="reader-head">
           <div class="reader-source" id="reader-source"></div>
-          <h1 id="reader-title"></h1>
-          <div id="reader-title-zh" class="reader-title-zh hidden"></div>
-          <div class="reader-meta" id="reader-meta"></div>
+          <div class="reader-title-row">
+            <div class="reader-title-copy">
+              <h1 id="reader-title"></h1>
+              <div id="reader-title-zh" class="reader-title-zh hidden"></div>
+            </div>
+            <a id="reader-open" class="reader-open-btn" target="_blank" rel="noopener">打开原文 ↗</a>
+          </div>
+          <div class="reader-meta-row">
+            <div class="reader-meta" id="reader-meta"></div>
+            <span id="reader-view-count" class="reader-view-count"></span>
+          </div>
           <div id="reader-assets" class="asset-badges reader-asset-badges hidden"></div>
           <div id="reader-asset-summary" class="reader-asset-summary hidden"></div>
           <div class="reader-toolbar">
-            <a id="reader-open" class="ghost-btn" target="_blank" rel="noopener">↗ 打开原文</a>
             <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
             <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
-            <button id="reader-star" class="ghost-btn">★ 收藏</button>
-            <button id="reader-like" class="ghost-btn" type="button">赞</button>
-            <button id="reader-dislike" class="ghost-btn" type="button">踩</button>
-            <span id="reader-stats" class="reader-stats"></span>
-            <button id="reader-assets-toggle" class="ghost-btn hidden" type="button" aria-expanded="false">资产导航</button>
+            <button id="reader-star" class="reader-action-pill" type="button" aria-label="收藏这篇文章"></button>
+            <button id="reader-like" class="reader-action-pill" type="button" aria-label="点赞这篇文章"></button>
+            <button id="reader-dislike" class="reader-action-pill" type="button" aria-label="点踩这篇文章"></button>
           </div>
         </header>
         <div id="reader-audio"></div>
@@ -517,6 +522,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=110"></script>
+  <script src="/app.js?v=111"></script>
 </body>
 </html>

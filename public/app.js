@@ -391,7 +391,9 @@ const state = {
   translationCompare: false,
   pendingTranslationGenerate: false,
   rewrite: null,
+  rewriteLoading: false,
   rewriteGenerating: false,
+  pendingRewriteGenerate: false,
   readerTab: 'original',
   readerAssetsExpanded: false,
   readerTocAvailable: false,
@@ -1026,7 +1028,10 @@ function translationAiConfig() {
 
 function rewriteAiConfig() {
   const config = currentAiConfig();
-  if (hasUsableAiConfig(config)) return { ...config, temperature: config.temperature || 0.6, maxTokens: Math.max(config.maxTokens || 0, 7000) };
+  const isDeepSeek = value => String(value || '').trim().toLowerCase() === 'deepseek';
+  const deepseekProfile = state.aiProfiles.find(profile => isDeepSeek(profile.provider) && hasUsableAiConfig(configFromProfile(profile)));
+  const deepseekConfig = deepseekProfile ? configFromProfile(deepseekProfile) : (isDeepSeek(config.provider) && hasUsableAiConfig(config) ? config : null);
+  if (deepseekConfig) return { ...deepseekConfig, temperature: deepseekConfig.temperature || 0.6, maxTokens: Math.max(deepseekConfig.maxTokens || 0, 7000) };
   return {
     provider: 'deepseek',
     providerName: 'DeepSeek',
@@ -1172,20 +1177,22 @@ function renderReaderStatsUi() {
   const starBtn = $('#reader-star');
   if (starBtn) {
     starBtn.classList.toggle('starred', starred);
-    starBtn.textContent = `${starred ? '★ 已收藏' : '★ 收藏'}${favoriteText ? ` ${favoriteText}` : ''}`;
+    starBtn.setAttribute('aria-pressed', starred ? 'true' : 'false');
+    starBtn.title = starred ? '取消收藏' : '收藏这篇文章';
+    starBtn.innerHTML = readerActionPillHtml('★', favoriteText || '0', starred ? '已收藏' : '收藏');
   }
   const likeBtn = $('#reader-like');
   const dislikeBtn = $('#reader-dislike');
   if (likeBtn) {
     likeBtn.classList.toggle('active', stats.reactionByMe === 'like');
     likeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
-    likeBtn.textContent = `赞${stats.likeCount ? ` ${formatCompactCount(stats.likeCount)}` : ''}`;
+    likeBtn.innerHTML = readerActionPillHtml('▲', formatCompactCount(stats.likeCount) || '0', '赞');
     likeBtn.title = state.me ? '认可这篇文章' : '登录后可以点赞';
   }
   if (dislikeBtn) {
     dislikeBtn.classList.toggle('active', stats.reactionByMe === 'dislike');
     dislikeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'dislike' ? 'true' : 'false');
-    dislikeBtn.textContent = `踩${stats.dislikeCount ? ` ${formatCompactCount(stats.dislikeCount)}` : ''}`;
+    dislikeBtn.innerHTML = readerActionPillHtml('▼', formatCompactCount(stats.dislikeCount) || '0', '踩');
     dislikeBtn.title = state.me ? '减少类似内容推荐权重' : '登录后可以点踩';
   }
   const railLike = $('#reader-rail-like');
@@ -1212,13 +1219,17 @@ function renderReaderStatsUi() {
   if (railComment) $('#reader-rail-comment-count').textContent = formatCompactCount((state.comments || []).length) || '0';
   if (railRewrite) railRewrite.classList.toggle('active', Boolean(state.rewrite));
   if (railTranslate) railTranslate.classList.toggle('active', Boolean(state.translation));
-  const statLine = $('#reader-stats');
-  if (statLine) {
-    statLine.textContent = [
-      `访问 ${formatCompactCount(stats.viewCount) || 0}`,
-      `收藏 ${formatCompactCount(stats.favoriteCount) || 0}`,
-    ].join(' · ');
-  }
+  const viewCount = $('#reader-view-count');
+  if (viewCount) viewCount.textContent = `访问：${formatCompactCount(stats.viewCount) || 0}`;
+}
+
+function readerActionPillHtml(icon, count, label) {
+  return `
+    <span class="reader-action-icon" aria-hidden="true">
+      <span class="reader-action-symbol">${escapeHtml(icon)}</span>
+      <span class="reader-action-count">${escapeHtml(count)}</span>
+    </span>
+    <span class="reader-action-label">${escapeHtml(label)}</span>`;
 }
 
 function renderEntryStateUi() {
@@ -2957,12 +2968,33 @@ function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {})
     state.readerAssetId = '';
   }
   setReaderTab(tab, { replaceUrl });
-  if (tab !== 'translation' || state.translation) return;
-  if (state.translationLoading) {
-    state.pendingTranslationGenerate = true;
+  if (tab === 'translation') {
+    if (state.translation) return;
+    if (state.translationLoading) {
+      state.pendingTranslationGenerate = true;
+      return;
+    }
+    generateTranslation();
     return;
   }
-  generateTranslation();
+  if (tab !== 'rewrite' || state.rewrite) return;
+  if (state.rewriteLoading) {
+    state.pendingRewriteGenerate = true;
+    return;
+  }
+  generateRewrite();
+}
+
+function shouldAutoGenerateRewrite(entry = state.activeEntry) {
+  if (!entry || state.rewrite || state.rewriteLoading || state.rewriteGenerating) return false;
+  return state.readerTab === 'rewrite' || state.readerFocus === 'rewrite';
+}
+
+function maybeGenerateRewriteAfterLoad(entry = state.activeEntry) {
+  if (!state.pendingRewriteGenerate && state.readerTab !== 'rewrite') return;
+  state.pendingRewriteGenerate = false;
+  if (!shouldAutoGenerateRewrite(entry)) return;
+  generateRewrite();
 }
 
 function entryAssetHasContent(type, asset) {
@@ -3216,6 +3248,7 @@ function copyRewriteText() {
 }
 
 async function loadRewrite(entry) {
+  state.rewriteLoading = true;
   renderRewrite(null);
   try {
     const assetId = state.readerFocus === 'rewrite' ? state.readerAssetId : '';
@@ -3229,6 +3262,9 @@ async function loadRewrite(entry) {
     }
   } catch {
     renderRewrite(null);
+  } finally {
+    state.rewriteLoading = false;
+    if (state.activeEntry?.id === entry.id) maybeGenerateRewriteAfterLoad(entry);
   }
 }
 
@@ -4823,7 +4859,9 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   state.translationCompare = false;
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
+  state.rewriteLoading = false;
   state.rewriteGenerating = false;
+  state.pendingRewriteGenerate = false;
   state.readerFocus = requestedFocus;
   state.readerAssetId = requestedAssetId;
   state.readerAssetsExpanded = false;
@@ -4882,7 +4920,9 @@ function closeReaderFromRoute() {
   state.translationCompare = false;
   state.pendingTranslationGenerate = false;
   state.rewrite = null;
+  state.rewriteLoading = false;
   state.rewriteGenerating = false;
+  state.pendingRewriteGenerate = false;
   state.readerFocus = null;
   state.readerAssetId = '';
   state.readerAssetsExpanded = false;
@@ -5007,7 +5047,9 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.translationCompare = false;
     state.pendingTranslationGenerate = false;
     state.rewrite = null;
+    state.rewriteLoading = false;
     state.rewriteGenerating = false;
+    state.pendingRewriteGenerate = false;
     state.readerFocus = null;
     state.readerAssetId = '';
     state.readerAssetsExpanded = false;
@@ -5806,13 +5848,14 @@ $('#reader-rail-like').onclick = () => setReaderReaction('like');
 $('#reader-rail-dislike').onclick = () => setReaderReaction('dislike');
 $('#reader-rail-star').onclick = () => $('#reader-star').click();
 $('#reader-rail-comment').onclick = () => scrollReaderTarget('#reader-comments', { offset: 72 });
-$('#reader-rail-rewrite').onclick = () => setReaderTab('rewrite');
-$('#reader-rail-translate').onclick = () => setReaderTab('translation');
+$('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
+$('#reader-rail-translate').onclick = () => handleReaderTab('translation');
 $('#reader-fetch-original').onclick = fetchOriginalContent;
 $('#reader-copy-link').onclick = () => {
   copyReaderLink();
 };
-$('#reader-assets-toggle').onclick = () => setReaderAssetsExpanded(!state.readerAssetsExpanded);
+const readerAssetsToggle = $('#reader-assets-toggle');
+if (readerAssetsToggle) readerAssetsToggle.onclick = () => setReaderAssetsExpanded(!state.readerAssetsExpanded);
 $('#reader-toc').onclick = (e) => {
   const link = e.target.closest('a[href^="#reader-section-"]');
   if (!link) return;
