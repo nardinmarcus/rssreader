@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=108" />
+  <link rel="stylesheet" href="/styles.css?v=109" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -86,7 +86,7 @@
       <header class="pane-header">
         <div class="pane-title" id="list-title">全部</div>
         <div class="pane-actions">
-          <button id="submit-link-open" class="icon-btn submit-link-open" type="button" title="提交链接" aria-label="提交链接">＋</button>
+          <button id="submit-link-open" class="submit-link-open" type="button" title="提交链接" aria-label="提交链接"><span>＋</span> 提交</button>
           <input id="search" type="search" placeholder="搜索文章…" />
           <button id="mark-read-btn" class="icon-btn" title="全部标为已读">✓</button>
         </div>
@@ -108,6 +108,30 @@
         <p>选择一篇文章开始阅读</p>
       </div>
       <article id="reader" class="reader hidden">
+        <nav id="reader-signal-rail" class="reader-signal-rail" aria-label="文章反馈">
+          <button id="reader-rail-like" class="reader-signal-btn" type="button" title="点赞这篇文章" aria-label="点赞这篇文章">
+            <span class="reader-signal-icon">▲</span>
+            <span id="reader-rail-like-count" class="reader-signal-count">0</span>
+          </button>
+          <button id="reader-rail-dislike" class="reader-signal-btn" type="button" title="点踩这篇文章" aria-label="点踩这篇文章">
+            <span class="reader-signal-icon">▼</span>
+            <span id="reader-rail-dislike-count" class="reader-signal-count">0</span>
+          </button>
+          <button id="reader-rail-star" class="reader-signal-btn" type="button" title="收藏这篇文章" aria-label="收藏这篇文章">
+            <span class="reader-signal-icon">★</span>
+            <span id="reader-rail-star-count" class="reader-signal-count">0</span>
+          </button>
+          <button id="reader-rail-comment" class="reader-signal-btn" type="button" title="查看点评" aria-label="查看点评">
+            <span class="reader-signal-icon">评</span>
+            <span id="reader-rail-comment-count" class="reader-signal-count">0</span>
+          </button>
+          <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="中文改写" aria-label="中文改写">
+            <span class="reader-signal-icon">改</span>
+          </button>
+          <button id="reader-rail-translate" class="reader-signal-btn" type="button" title="中文翻译" aria-label="中文翻译">
+            <span class="reader-signal-icon">译</span>
+          </button>
+        </nav>
         <header class="reader-head">
           <div class="reader-source" id="reader-source"></div>
           <h1 id="reader-title"></h1>
@@ -198,6 +222,100 @@
           </form>
         </section>
       </article>
+      <section id="my-dashboard-page" class="workspace-page dashboard-page hidden">
+        <header class="workspace-page-head">
+          <div>
+            <h1>个人后台</h1>
+            <p>编辑公开主页、查看通知和管理你沉淀过的资产。</p>
+          </div>
+          <div class="my-assets-header-actions">
+            <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
+            <button class="icon-btn my-public-profile-copy hidden" id="my-public-profile-copy" type="button" title="复制我的公开资产页" aria-label="复制我的公开资产页">⧉</button>
+            <a id="my-public-rss-link" class="ghost-btn my-public-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
+            <button class="icon-btn my-public-rss-copy hidden" id="my-public-rss-copy" type="button" title="复制我的公开资产 RSS" aria-label="复制我的公开资产 RSS">⧉</button>
+            <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器">←</button>
+          </div>
+        </header>
+        <section class="profile-dashboard">
+          <div class="profile-editor">
+            <label class="profile-avatar-picker" title="上传头像">
+              <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+              <span id="profile-avatar-preview" class="profile-avatar-preview">Q</span>
+            </label>
+            <div class="profile-fields">
+              <label>
+                <span>显示名</span>
+                <input id="profile-display-name" type="text" maxlength="40" placeholder="你的名字" />
+              </label>
+              <label>
+                <span>简介</span>
+                <textarea id="profile-bio" rows="2" maxlength="280" placeholder="一句话介绍你关注什么、擅长什么"></textarea>
+              </label>
+              <div class="profile-links-head">
+                <span>喜欢的链接</span>
+                <button id="profile-link-add" class="ghost-btn" type="button">添加链接</button>
+              </div>
+              <div id="profile-links-editor" class="profile-links-editor"></div>
+              <div class="profile-actions">
+                <button id="profile-save" class="ghost-btn primary" type="button">保存资料</button>
+              </div>
+            </div>
+          </div>
+          <div class="profile-admin-actions hidden" id="profile-admin-actions">
+            <span>管理员</span>
+            <button id="profile-refresh-btn" class="ghost-btn" type="button">刷新全部</button>
+            <button id="profile-manage-btn" class="ghost-btn" type="button">管理源</button>
+          </div>
+          <div class="profile-notifications">
+            <div class="profile-panel-head">
+              <span>通知</span>
+              <button id="notifications-read" class="ghost-btn" type="button">全部已读</button>
+            </div>
+            <div id="notification-list" class="notification-list"></div>
+          </div>
+        </section>
+        <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
+          <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
+        </div>
+        <div class="my-asset-sort" role="group" aria-label="我的资产排序">
+          <span>排序</span>
+          <button class="my-asset-sort-btn active" type="button" data-my-asset-sort="latest">最新</button>
+          <button class="my-asset-sort-btn" type="button" data-my-asset-sort="helpful">有用</button>
+        </div>
+        <div id="my-comments-list" class="my-comments-list"></div>
+      </section>
+      <section id="contributor-page" class="workspace-page contributor-page hidden">
+        <header class="workspace-page-head">
+          <div>
+            <h1 id="contributor-title">贡献主页</h1>
+            <p id="contributor-subtitle">公开沉淀的翻译、重写、点评、文章对话和点赞文章。</p>
+          </div>
+          <div class="contributor-page-actions">
+            <button id="contributor-follow" class="ghost-btn contributor-follow hidden" type="button">关注</button>
+            <button class="icon-btn contributor-link-copy hidden" id="contributor-link-copy" type="button" title="复制当前贡献主页" aria-label="复制当前贡献主页">⧉</button>
+            <a id="contributor-rss-link" class="ghost-btn contributor-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
+            <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献 RSS" aria-label="复制贡献 RSS">RSS</button>
+            <button class="icon-btn" id="contributor-close" title="返回贡献榜" aria-label="返回贡献榜">←</button>
+          </div>
+        </header>
+        <section id="contributor-profile" class="contributor-profile hidden"></section>
+        <div class="my-asset-tabs" role="tablist" aria-label="贡献主页资产类型">
+          <button class="my-asset-tab active" type="button" data-contributor-tab="translation">中译 <span id="contributor-translation-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">重写 <span id="contributor-rewrite-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-contributor-tab="likes">点赞 <span id="contributor-likes-count">0</span></button>
+        </div>
+        <div class="contributor-asset-sort" role="group" aria-label="贡献主页资产排序">
+          <span>排序</span>
+          <button class="contributor-asset-sort-btn active" type="button" data-contributor-asset-sort="latest">最新</button>
+          <button class="contributor-asset-sort-btn" type="button" data-contributor-asset-sort="helpful">有用</button>
+        </div>
+        <div id="contributor-list" class="my-comments-list"></div>
+      </section>
     </section>
 
     <!-- ===== Article agent ===== -->
@@ -284,106 +402,6 @@
           <button id="submit-link-submit" class="ghost-btn primary" type="submit">提交</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <div id="my-comments-modal" class="modal hidden">
-    <div class="modal-box my-comments-box">
-      <header>
-        <div>
-          <h2>个人后台</h2>
-          <p>编辑公开主页、查看通知和管理你沉淀过的资产。</p>
-        </div>
-        <div class="my-assets-header-actions">
-          <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
-          <button class="icon-btn my-public-profile-copy hidden" id="my-public-profile-copy" type="button" title="复制我的公开资产页" aria-label="复制我的公开资产页">⧉</button>
-          <a id="my-public-rss-link" class="ghost-btn my-public-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-          <button class="icon-btn my-public-rss-copy hidden" id="my-public-rss-copy" type="button" title="复制我的公开资产 RSS" aria-label="复制我的公开资产 RSS">⧉</button>
-          <button class="icon-btn" id="my-comments-close">✕</button>
-        </div>
-      </header>
-      <section class="profile-dashboard">
-        <div class="profile-editor">
-          <label class="profile-avatar-picker" title="上传头像">
-            <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-            <span id="profile-avatar-preview" class="profile-avatar-preview">Q</span>
-          </label>
-          <div class="profile-fields">
-            <label>
-              <span>显示名</span>
-              <input id="profile-display-name" type="text" maxlength="40" placeholder="你的名字" />
-            </label>
-            <label>
-              <span>简介</span>
-              <textarea id="profile-bio" rows="2" maxlength="280" placeholder="一句话介绍你关注什么、擅长什么"></textarea>
-            </label>
-            <div class="profile-links-head">
-              <span>喜欢的链接</span>
-              <button id="profile-link-add" class="ghost-btn" type="button">添加链接</button>
-            </div>
-            <div id="profile-links-editor" class="profile-links-editor"></div>
-            <div class="profile-actions">
-              <button id="profile-save" class="ghost-btn primary" type="button">保存资料</button>
-            </div>
-          </div>
-        </div>
-        <div class="profile-admin-actions hidden" id="profile-admin-actions">
-          <span>管理员</span>
-          <button id="profile-refresh-btn" class="ghost-btn" type="button">刷新全部</button>
-          <button id="profile-manage-btn" class="ghost-btn" type="button">管理源</button>
-        </div>
-        <div class="profile-notifications">
-          <div class="profile-panel-head">
-            <span>通知</span>
-            <button id="notifications-read" class="ghost-btn" type="button">全部已读</button>
-          </div>
-          <div id="notification-list" class="notification-list"></div>
-        </div>
-      </section>
-      <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
-        <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
-      </div>
-      <div class="my-asset-sort" role="group" aria-label="我的资产排序">
-        <span>排序</span>
-        <button class="my-asset-sort-btn active" type="button" data-my-asset-sort="latest">最新</button>
-        <button class="my-asset-sort-btn" type="button" data-my-asset-sort="helpful">有用</button>
-      </div>
-      <div id="my-comments-list" class="my-comments-list"></div>
-    </div>
-  </div>
-
-  <div id="contributor-modal" class="modal hidden">
-    <div class="modal-box contributor-box">
-      <header>
-        <div>
-          <h2 id="contributor-title">贡献主页</h2>
-          <p id="contributor-subtitle">公开沉淀的翻译、重写、点评和文章对话。</p>
-        </div>
-        <div class="contributor-modal-actions">
-          <button id="contributor-follow" class="ghost-btn contributor-follow hidden" type="button">关注</button>
-          <button class="icon-btn contributor-link-copy hidden" id="contributor-link-copy" type="button" title="复制当前贡献主页" aria-label="复制当前贡献主页">⧉</button>
-          <a id="contributor-rss-link" class="ghost-btn contributor-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-          <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献 RSS" aria-label="复制贡献 RSS">RSS</button>
-          <button class="icon-btn" id="contributor-close">✕</button>
-        </div>
-      </header>
-      <section id="contributor-profile" class="contributor-profile hidden"></section>
-      <div class="my-asset-tabs" role="tablist" aria-label="贡献主页资产类型">
-        <button class="my-asset-tab active" type="button" data-contributor-tab="translation">中译 <span id="contributor-translation-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">重写 <span id="contributor-rewrite-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
-        <button class="my-asset-tab" type="button" data-contributor-tab="likes">点赞 <span id="contributor-likes-count">0</span></button>
-      </div>
-      <div class="contributor-asset-sort" role="group" aria-label="贡献主页资产排序">
-        <span>排序</span>
-        <button class="contributor-asset-sort-btn active" type="button" data-contributor-asset-sort="latest">最新</button>
-        <button class="contributor-asset-sort-btn" type="button" data-contributor-asset-sort="helpful">有用</button>
-      </div>
-      <div id="contributor-list" class="my-comments-list"></div>
     </div>
   </div>
 
@@ -482,6 +500,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=108"></script>
+  <script src="/app.js?v=109"></script>
 </body>
 </html>

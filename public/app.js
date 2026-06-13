@@ -380,6 +380,7 @@ const state = {
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
   contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
+  workspacePage: '',
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
   translation: null,
@@ -418,6 +419,7 @@ function routeStateFromUrl() {
   const pathMatch = window.location.pathname.match(/^\/assets(?:\/([^/.]+))?\/?$/);
   const contributorsPath = /^\/contributors\/?$/.test(window.location.pathname);
   const contributorMatch = window.location.pathname.match(/^\/contributors\/([^/?#]+)\/?$/);
+  const dashboardPath = /^\/(?:me|dashboard)\/?$/.test(window.location.pathname);
   const articleRoute = articleRouteFromPath(window.location.pathname);
   const pathAssetFilter = pathMatch ? (ASSET_FILTER_TYPES.includes(pathMatch[1]) ? pathMatch[1] : null) : null;
   const isAssetPath = Boolean(pathMatch);
@@ -435,6 +437,7 @@ function routeStateFromUrl() {
   const focus = commentId ? 'comments' : chatMessageId ? 'chat' : (articleRoute && articleRoute.focus ? articleRoute.focus : queryFocus);
   return {
     entryId: articleRoute && articleRoute.id ? articleRoute.id : String(params.get('entry') || '').trim(),
+    dashboard: dashboardPath,
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
@@ -627,6 +630,33 @@ function contributorFeedUrlFor(contributorId) {
   const url = contributorUrlFor(contributorId);
   url.pathname = `/contributors/${encodeURIComponent(contributorId)}.xml`;
   return url;
+}
+
+function dashboardUrlFor() {
+  const url = new URL(window.location.href);
+  url.pathname = '/me';
+  url.search = '';
+  url.hash = '';
+  return url;
+}
+
+function setWorkspacePage(page = '') {
+  const next = page === 'dashboard' || page === 'contributor' ? page : '';
+  state.workspacePage = next;
+  const app = $('#app');
+  app.classList.toggle('workspace-page-open', Boolean(next));
+  $('#my-dashboard-page')?.classList.toggle('hidden', next !== 'dashboard');
+  $('#contributor-page')?.classList.toggle('hidden', next !== 'contributor');
+  if (next) {
+    $('#reader').classList.add('hidden');
+    $('#reader-empty').classList.add('hidden');
+    app.classList.remove('reading');
+    $('#reader-pane').scrollTop = 0;
+    return;
+  }
+  $('#reader').classList.toggle('hidden', !state.activeEntry);
+  $('#reader-empty').classList.toggle('hidden', Boolean(state.activeEntry));
+  app.classList.toggle('reading', Boolean(state.activeEntry));
 }
 
 function syncReaderUrl({ replace = false, commentId = '', chatMessageId = '' } = {}) {
@@ -1152,6 +1182,30 @@ function renderReaderStatsUi() {
     dislikeBtn.textContent = `踩${stats.dislikeCount ? ` ${formatCompactCount(stats.dislikeCount)}` : ''}`;
     dislikeBtn.title = state.me ? '减少类似内容推荐权重' : '登录后可以点踩';
   }
+  const railLike = $('#reader-rail-like');
+  const railDislike = $('#reader-rail-dislike');
+  const railStar = $('#reader-rail-star');
+  const railComment = $('#reader-rail-comment');
+  const railRewrite = $('#reader-rail-rewrite');
+  const railTranslate = $('#reader-rail-translate');
+  if (railLike) {
+    railLike.classList.toggle('active', stats.reactionByMe === 'like');
+    railLike.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
+    $('#reader-rail-like-count').textContent = formatCompactCount(stats.likeCount) || '0';
+  }
+  if (railDislike) {
+    railDislike.classList.toggle('active', stats.reactionByMe === 'dislike');
+    railDislike.setAttribute('aria-pressed', stats.reactionByMe === 'dislike' ? 'true' : 'false');
+    $('#reader-rail-dislike-count').textContent = formatCompactCount(stats.dislikeCount) || '0';
+  }
+  if (railStar) {
+    railStar.classList.toggle('active', starred);
+    railStar.setAttribute('aria-pressed', starred ? 'true' : 'false');
+    $('#reader-rail-star-count').textContent = favoriteText || '0';
+  }
+  if (railComment) $('#reader-rail-comment-count').textContent = formatCompactCount((state.comments || []).length) || '0';
+  if (railRewrite) railRewrite.classList.toggle('active', Boolean(state.rewrite));
+  if (railTranslate) railTranslate.classList.toggle('active', Boolean(state.translation));
   const statLine = $('#reader-stats');
   if (statLine) {
     statLine.textContent = [
@@ -2367,6 +2421,7 @@ async function submitAuth() {
     renderComments();
     renderAgent();
     renderAiSettings();
+    if (routeStateFromUrl().dashboard) await openMyCommentsModal({ push: false });
     toast(state.authMode === 'register' ? '注册成功' : '已登录');
   } catch (err) {
     toast(err.message, 5000);
@@ -2403,31 +2458,35 @@ function renderContributorDirectory() {
     return;
   }
   const frag = document.createDocumentFragment();
-  for (const contributor of list) {
+  list.forEach((contributor, index) => {
     const card = document.createElement('div');
     card.className = 'contributor-card';
     card.dataset.contributorId = contributor.id;
-    const initials = String(contributor.displayName || '读者').trim().slice(0, 2) || '读';
     const assetCount = Number(contributor.assetCount || 0);
     const helpfulCount = Number(contributor.helpfulCount || 0);
     const helpfulAssets = Number(contributor.helpfulAssets || 0);
-    const metaParts = [`${assetCount} 条公开资产`];
-    if (helpfulCount > 0) metaParts.push(`有用 ${helpfulCount} 次`);
+    const followerCount = Number(contributor.followerCount || 0);
+    const metaParts = [];
+    if (contributor.bio) metaParts.push(contributor.bio);
     metaParts.push(`最近 ${formatAssetTime(contributor.latestAt)}`);
     card.innerHTML = `
-      <div class="contributor-avatar">${escapeHtml(initials)}</div>
+      <div class="contributor-rank">#${index + 1}</div>
+      ${avatarHtml(contributor, 'contributor-avatar')}
       <div class="contributor-main">
         <div class="contributor-name">${escapeHtml(contributor.displayName || '读者')}</div>
         <div class="contributor-meta">${escapeHtml(metaParts.join(' · '))}</div>
         <div class="contributor-stats">
-          <span>中译 ${Number(contributor.translationCount || 0)}</span>
-          <span>重写 ${Number(contributor.rewriteCount || 0)}</span>
-          <span>点评 ${Number(contributor.commentCount || 0)}</span>
-          <span>对话 ${Number(contributor.chatCount || 0)}</span>
-          ${helpfulCount > 0 ? `<span class="contributor-stat-helpful">认可 ${helpfulAssets || 1}</span>` : ''}
+          <span><strong>${assetCount}</strong> 资产</span>
+          <span><strong>${Number(contributor.translationCount || 0)}</strong> 中译</span>
+          <span><strong>${Number(contributor.rewriteCount || 0)}</strong> 改写</span>
+          <span><strong>${Number(contributor.commentCount || 0)}</strong> 点评</span>
+          <span><strong>${Number(contributor.chatCount || 0)}</strong> 对话</span>
+          ${helpfulCount > 0 ? `<span class="contributor-stat-helpful"><strong>${helpfulCount}</strong> 有用</span>` : ''}
+          ${followerCount > 0 ? `<span><strong>${followerCount}</strong> 关注者</span>` : ''}
         </div>
       </div>
       <div class="contributor-actions">
+        <button type="button" class="contributor-open">查看贡献</button>
         <a class="contributor-rss-button" data-contributor-rss="${escapeHtml(contributor.id)}" href="${escapeHtml(contributorFeedUrlFor(contributor.id).href)}" target="_blank" rel="noopener" title="订阅贡献 RSS" aria-label="订阅贡献 RSS">RSS</a>
         <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献主页链接" aria-label="复制贡献主页链接">⧉</button>
       </div>
@@ -2442,7 +2501,7 @@ function renderContributorDirectory() {
       openContributor(contributor.id);
     };
     frag.appendChild(card);
-  }
+  });
   el.appendChild(frag);
 }
 
@@ -3007,6 +3066,7 @@ function renderAssetHelpfulButton(type, asset) {
 function renderTranslation(translation, { loading = false } = {}) {
   const hasContent = Boolean(translation && Array.isArray(translation.content) && translation.content.length);
   state.translation = hasContent ? translation : null;
+  renderReaderStatsUi();
   const list = $('#translation-list');
   const empty = $('#translation-empty');
   const emptyText = empty.querySelector('p');
@@ -3096,6 +3156,7 @@ async function loadTranslation(entry) {
 
 function renderRewrite(rewrite) {
   state.rewrite = rewrite || null;
+  renderReaderStatsUi();
   const content = $('#rewrite-content');
   const empty = $('#rewrite-empty');
   const copy = $('#rewrite-copy');
@@ -3318,6 +3379,8 @@ function renderComments() {
   const sortedComments = sortComments(comments);
   const canWrite = Boolean(state.me);
   $('#comments-count').textContent = comments.length ? `${comments.length} 条` : '暂无';
+  const railCommentCount = $('#reader-rail-comment-count');
+  if (railCommentCount) railCommentCount.textContent = formatCompactCount(comments.length) || '0';
   $$('.comment-sort-btn').forEach(btn => {
     const active = btn.dataset.commentSort === state.commentSort;
     btn.classList.toggle('active', active);
@@ -3485,12 +3548,12 @@ function renderMyAssetTabs() {
   $('#my-rewrite-count').textContent = counts.rewrite;
   $('#my-comments-count').textContent = counts.comments;
   $('#my-chat-count').textContent = counts.chat;
-  $$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
+  $$('#my-dashboard-page [data-my-asset-tab]').forEach(btn => {
     const active = btn.dataset.myAssetTab === state.myAssetTab;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  $$('#my-comments-modal [data-my-asset-sort]').forEach(btn => {
+  $$('#my-dashboard-page [data-my-asset-sort]').forEach(btn => {
     const active = normalizeUserAssetSort(btn.dataset.myAssetSort) === state.myAssetSort;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -3700,9 +3763,14 @@ function renderMyAssets() {
   }).join('');
 }
 
-async function openMyCommentsModal() {
-  if (!requireAuth('login')) return;
-  $('#my-comments-modal').classList.remove('hidden');
+async function openMyCommentsModal({ push = true } = {}) {
+  if (!state.me) {
+    openAuth('login');
+    return false;
+  }
+  setWorkspacePage('dashboard');
+  document.title = '个人后台 · QMReader';
+  if (push) history.pushState({ dashboard: true }, '', dashboardUrlFor());
   renderProfileEditor();
   loadNotifications();
   renderMyAssetTabs();
@@ -3719,13 +3787,20 @@ async function openMyCommentsModal() {
     state.myComments = commentData.comments || [];
     state.myChatMessages = chatData.messages || [];
     renderMyAssets();
+    return true;
   } catch (err) {
     $('#my-comments-list').innerHTML = `<div class="my-comments-empty">读取失败：${escapeHtml(err.message)}</div>`;
+    return false;
   }
 }
 
-function closeMyCommentsModal() {
-  $('#my-comments-modal').classList.add('hidden');
+function closeMyCommentsModal({ clearUrl = true } = {}) {
+  setWorkspacePage('');
+  if (clearUrl && /^\/(?:me|dashboard)\/?$/.test(window.location.pathname)) {
+    const url = state.activeEntry ? readerUrlFor(state.activeEntry, state.readerTab, state.readerFocus) : listUrlFor();
+    history.pushState({}, '', url);
+    document.title = state.activeEntry ? readerRouteTitle(state.activeEntry, state.readerFocus) : listRouteTitle();
+  }
 }
 
 function myAssetItemsForTab(type) {
@@ -3877,12 +3952,12 @@ function renderContributorTabs() {
   $('#contributor-comments-count').textContent = commentCount;
   $('#contributor-chat-count').textContent = chatCount;
   $('#contributor-likes-count').textContent = likesCount;
-  $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
+  $$('#contributor-page [data-contributor-tab]').forEach(btn => {
     const active = btn.dataset.contributorTab === state.contributor.tab;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  $$('#contributor-modal [data-contributor-asset-sort]').forEach(btn => {
+  $$('#contributor-page [data-contributor-asset-sort]').forEach(btn => {
     const active = normalizeContributorAssetSort(btn.dataset.contributorAssetSort) === state.contributor.sort;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -4050,7 +4125,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
   const contributorAssetSort = normalizeContributorAssetSort(sort);
   const contributorAssetTab = normalizeUserAssetTab(tab);
   state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], likedEntries: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
-  $('#contributor-modal').classList.remove('hidden');
+  setWorkspacePage('contributor');
   renderContributorAssets();
   try {
     const data = await api(`/api/contributors/${encodeURIComponent(id)}?limit=100`);
@@ -4103,7 +4178,7 @@ async function toggleContributorFollow() {
 }
 
 function closeContributorModal({ clearUrl = true } = {}) {
-  $('#contributor-modal').classList.add('hidden');
+  setWorkspacePage('');
   if (clearUrl && window.location.pathname.startsWith('/contributors/')) {
     const url = state.activeEntry ? readerUrlFor(state.activeEntry, state.readerTab, state.readerFocus) : listUrlFor();
     history.pushState({}, '', url);
@@ -4659,6 +4734,7 @@ async function sendAgentMessage(text) {
 }
 
 async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', commentId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
+  setWorkspacePage('');
   state.activeEntry = e;
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
   const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite') ? String(aiAssetId || '').trim() : '';
@@ -4698,6 +4774,7 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   state.pendingAssetJump = requestedFocus;
   state.pendingCommentId = commentId || '';
   state.pendingChatMessageId = chatMessageId || '';
+  renderReaderStatsUi();
   if (requestedFocus === 'chat') setAgentCollapsed(false);
   else if (isCompactViewport()) setAgentCollapsed(true);
   state.fetchingOriginal = false;
@@ -4738,6 +4815,7 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
 }
 
 function closeReaderFromRoute() {
+  setWorkspacePage('');
   state.activeEntry = null;
   state.agentMessages = [];
   state.comments = [];
@@ -4780,6 +4858,21 @@ async function openEntryById(entryId, { tab = 'original', focus = null, aiAssetI
 
 async function openEntryFromUrl() {
   const route = routeStateFromUrl();
+  if (route.dashboard) {
+    state.view = 'all';
+    state.filterSource = null;
+    state.filterCategory = null;
+    state.assetFilter = null;
+    state.assetSort = 'latest';
+    state.contributorSort = 'latest';
+    state.q = '';
+    updateListTitle();
+    renderSidebar();
+    state.activeEntry = null;
+    const opened = await openMyCommentsModal({ push: false });
+    if (!opened) setWorkspacePage('');
+    return true;
+  }
   if (route.contributorId) {
     state.view = 'all';
     state.filterSource = null;
@@ -4790,11 +4883,12 @@ async function openEntryFromUrl() {
     state.q = '';
     updateListTitle();
     renderSidebar();
-    closeReaderFromRoute();
+    state.activeEntry = null;
+    setWorkspacePage('');
     await openContributor(route.contributorId, { push: false, sort: route.contributorAssetSort, tab: route.contributorAssetType });
     return true;
   }
-  $('#contributor-modal').classList.add('hidden');
+  setWorkspacePage('');
   if (!route.entryId) {
     if (route.view === 'contributors') {
       state.view = 'contributors';
@@ -4846,6 +4940,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
   renderList();
   renderSidebar();
   if (!keepReader) {
+    setWorkspacePage('');
     state.activeEntry = null;
     state.agentMessages = [];
     state.comments = [];
@@ -5646,6 +5741,12 @@ async function setReaderReaction(reaction) {
 }
 $('#reader-like').onclick = () => setReaderReaction('like');
 $('#reader-dislike').onclick = () => setReaderReaction('dislike');
+$('#reader-rail-like').onclick = () => setReaderReaction('like');
+$('#reader-rail-dislike').onclick = () => setReaderReaction('dislike');
+$('#reader-rail-star').onclick = () => $('#reader-star').click();
+$('#reader-rail-comment').onclick = () => scrollReaderTarget('#reader-comments', { offset: 72 });
+$('#reader-rail-rewrite').onclick = () => setReaderTab('rewrite');
+$('#reader-rail-translate').onclick = () => setReaderTab('translation');
 $('#reader-fetch-original').onclick = fetchOriginalContent;
 $('#reader-copy-link').onclick = () => {
   copyReaderLink();
@@ -5782,9 +5883,9 @@ $('#agent-open').onclick = () => setAgentCollapsed(false);
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
-$('#my-comments-btn').onclick = openMyCommentsModal;
-$('#account-info').onclick = openMyCommentsModal;
-$('#notification-open').onclick = openMyCommentsModal;
+$('#my-comments-btn').onclick = () => openMyCommentsModal();
+$('#account-info').onclick = () => openMyCommentsModal();
+$('#notification-open').onclick = () => openMyCommentsModal();
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-public-profile-copy').onclick = copyMyPublicProfileLink;
 $('#my-public-rss-copy').onclick = copyMyPublicRssLink;
@@ -5824,14 +5925,13 @@ $('#profile-avatar-input').onchange = async (e) => {
     e.target.value = '';
   }
 };
-$('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
-$$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
+$$('#my-dashboard-page [data-my-asset-tab]').forEach(btn => {
   btn.onclick = () => {
     state.myAssetTab = normalizeUserAssetTab(btn.dataset.myAssetTab);
     renderMyAssets();
   };
 });
-$$('#my-comments-modal [data-my-asset-sort]').forEach(btn => {
+$$('#my-dashboard-page [data-my-asset-sort]').forEach(btn => {
   btn.onclick = () => {
     state.myAssetSort = normalizeUserAssetSort(btn.dataset.myAssetSort);
     storage.setItem('qm_my_asset_sort', state.myAssetSort);
@@ -5874,8 +5974,7 @@ $('#contributor-rss-copy').onclick = () => {
   }
   copyText(contributorFeedUrlFor(state.contributor.profile.id).href, '贡献 RSS 已复制');
 };
-$('#contributor-modal').onclick = (e) => { if (e.target.id === 'contributor-modal') closeContributorModal(); };
-$$('#contributor-modal [data-contributor-tab]').forEach(btn => {
+$$('#contributor-page [data-contributor-tab]').forEach(btn => {
   btn.onclick = () => {
     state.contributor.tab = normalizeUserAssetTab(btn.dataset.contributorTab);
     renderContributorAssets();
@@ -5883,7 +5982,7 @@ $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
     document.title = contributorPageTitle();
   };
 });
-$$('#contributor-modal [data-contributor-asset-sort]').forEach(btn => {
+$$('#contributor-page [data-contributor-asset-sort]').forEach(btn => {
   btn.onclick = () => {
     state.contributor.sort = normalizeContributorAssetSort(btn.dataset.contributorAssetSort);
     renderContributorAssets();
@@ -5985,9 +6084,9 @@ document.addEventListener('keydown', (e) => {
     document.getElementById('app').classList.remove('reading');
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
-    $('#my-comments-modal').classList.add('hidden');
     $('#submit-link-modal').classList.add('hidden');
-    closeContributorModal();
+    if (state.workspacePage === 'dashboard') closeMyCommentsModal();
+    else if (state.workspacePage === 'contributor') closeContributorModal();
   }
 });
 
