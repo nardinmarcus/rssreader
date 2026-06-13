@@ -412,6 +412,8 @@ const state = {
   authMode: 'login',
   aiProfiles: [],
   activeAiProfileId: '',
+  rewriteAiProfileId: '',
+  agentAiProfileId: '',
   editingAiProfileId: '',
   aiConfigReason: '',
   pendingAiAction: '',
@@ -938,6 +940,10 @@ function aiActiveProfileKey(scope = aiScope()) {
   return `qm_ai_active_profile:${scope}`;
 }
 
+function aiPurposeProfileKey(purpose, scope = aiScope()) {
+  return `qm_ai_${purpose}_profile:${scope}`;
+}
+
 function migrateLegacyAiProfiles() {
   const profiles = [];
   const legacyConfigs = readJson('qm_ai_configs', '{}');
@@ -984,6 +990,10 @@ function loadAiProfilesForScope() {
   state.activeAiProfileId = profiles.some(profile => profile.id === activeId)
     ? activeId
     : (profiles.find(profile => profile.isDefault) || profiles[0]).id;
+  const rewriteId = storage.getItem(aiPurposeProfileKey('rewrite', scope));
+  const agentId = storage.getItem(aiPurposeProfileKey('agent', scope));
+  state.rewriteAiProfileId = profiles.some(profile => profile.id === rewriteId) ? rewriteId : state.activeAiProfileId;
+  state.agentAiProfileId = profiles.some(profile => profile.id === agentId) ? agentId : state.activeAiProfileId;
   state.editingAiProfileId = state.activeAiProfileId;
   state.loadedAiScope = scope;
   persistAiProfiles();
@@ -993,17 +1003,28 @@ function persistAiProfiles() {
   const scope = aiScope();
   storage.setItem(aiProfilesKey(scope), JSON.stringify(ensureSingleDefault(state.aiProfiles)));
   if (state.activeAiProfileId) storage.setItem(aiActiveProfileKey(scope), state.activeAiProfileId);
+  if (state.rewriteAiProfileId) storage.setItem(aiPurposeProfileKey('rewrite', scope), state.rewriteAiProfileId);
+  if (state.agentAiProfileId) storage.setItem(aiPurposeProfileKey('agent', scope), state.agentAiProfileId);
 }
 
-function currentAiProfile() {
-  return state.aiProfiles.find(profile => profile.id === state.activeAiProfileId)
+function profileByIdOrDefault(profileId = '') {
+  return state.aiProfiles.find(profile => profile.id === profileId)
     || state.aiProfiles.find(profile => profile.isDefault)
     || state.aiProfiles[0]
     || createProfileFromPreset(DEFAULT_AI_PRESET_ID, { isDefault: true });
 }
 
-function currentAiConfig() {
-  const profile = currentAiProfile();
+function currentAiProfile() {
+  return profileByIdOrDefault(state.activeAiProfileId);
+}
+
+function aiProfileForPurpose(purpose = '') {
+  if (purpose === 'rewrite') return profileByIdOrDefault(state.rewriteAiProfileId || state.activeAiProfileId);
+  if (purpose === 'agent') return profileByIdOrDefault(state.agentAiProfileId || state.activeAiProfileId);
+  return currentAiProfile();
+}
+
+function configFromProfile(profile) {
   return {
     profileId: profile.id,
     profileName: profile.name,
@@ -1018,18 +1039,34 @@ function currentAiConfig() {
   };
 }
 
+function currentAiConfig() {
+  return configFromProfile(currentAiProfile());
+}
+
+function aiConfigForPurpose(purpose = '') {
+  return configFromProfile(aiProfileForPurpose(purpose));
+}
+
 function hasUsableAiConfig(config = currentAiConfig()) {
   return Boolean(config.apiKey && config.baseUrl && config.model);
 }
 
+function aiHeaderValue(value, fallback = '') {
+  const clean = String(value || fallback || '')
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7e]/g, '')
+    .trim();
+  return clean || String(fallback || '').replace(/[^\x20-\x7e]/g, '').trim();
+}
+
 function aiHeadersFromConfig(config) {
   return {
-    'X-AI-Provider': config.provider,
-    'X-AI-Provider-Name': config.providerName || config.profileName || config.provider,
-    'X-AI-Provider-Type': config.providerType || 'openai_compatible',
-    'X-AI-Key': String(config.apiKey || '').trim(),
-    'X-AI-Base-URL': String(config.baseUrl || '').trim(),
-    'X-AI-Model': String(config.model || '').trim(),
+    'X-AI-Provider': aiHeaderValue(config.provider, 'custom'),
+    'X-AI-Provider-Name': aiHeaderValue(config.providerName || config.profileName, config.provider || 'AI'),
+    'X-AI-Provider-Type': aiHeaderValue(config.providerType, 'openai_compatible'),
+    'X-AI-Key': aiHeaderValue(config.apiKey),
+    'X-AI-Base-URL': aiHeaderValue(config.baseUrl),
+    'X-AI-Model': aiHeaderValue(config.model),
     'X-AI-Temperature': String(config.temperature ?? ''),
     'X-AI-Max-Tokens': String(config.maxTokens ?? ''),
   };
@@ -1055,11 +1092,10 @@ function translationAiConfig() {
 }
 
 function rewriteAiConfig() {
-  const config = currentAiConfig();
-  const isDeepSeek = value => String(value || '').trim().toLowerCase() === 'deepseek';
-  const deepseekProfile = state.aiProfiles.find(profile => isDeepSeek(profile.provider) && hasUsableAiConfig(configFromProfile(profile)));
-  const deepseekConfig = deepseekProfile ? configFromProfile(deepseekProfile) : (isDeepSeek(config.provider) && hasUsableAiConfig(config) ? config : null);
-  if (deepseekConfig) return { ...deepseekConfig, temperature: deepseekConfig.temperature || 0.6, maxTokens: Math.max(deepseekConfig.maxTokens || 0, 7000) };
+  const config = aiConfigForPurpose('rewrite');
+  if (hasUsableAiConfig(config)) {
+    return { ...config, temperature: config.temperature || 0.6, maxTokens: Math.max(config.maxTokens || 0, 7000) };
+  }
   return {
     provider: 'deepseek',
     providerName: 'DeepSeek',
@@ -2616,6 +2652,7 @@ function renderList() {
     const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
     const entryActivity = assetActivityLabel(e) || entryHistoryLabel(e) || hotEntryLabel(e);
     const statsLine = entryStatsLabel(e);
+    const metaRow = [statsLine ? `<span class="entry-stats">${escapeHtml(statsLine)}</span>` : '', assetsHtml ? `<span class="asset-badges entry-asset-badges">${assetsHtml}</span>` : ''].filter(Boolean).join('');
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
     const card = document.createElement('div');
@@ -2633,9 +2670,8 @@ function renderList() {
         <div class="entry-title">${escapeHtml(e.titleZh || e.title)}</div>
         ${e.titleZh ? `<div class="entry-original">${escapeHtml(e.title)}</div>` : ''}
         ${e.summary ? `<div class="entry-summary">${escapeHtml(e.summary)}</div>` : ''}
-        ${assetsHtml ? `<div class="asset-badges entry-asset-badges">${assetsHtml}</div>` : ''}
+        ${metaRow ? `<div class="entry-meta-row">${metaRow}</div>` : ''}
         ${assetItems || (assetPreview ? assetPreviewHtml(assetPreview) : '')}
-        ${statsLine ? `<div class="entry-stats">${escapeHtml(statsLine)}</div>` : ''}
         ${entryActivity ? `<div class="entry-asset-activity">${escapeHtml(entryActivity)}</div>` : ''}
       </div>
       ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
@@ -3409,7 +3445,7 @@ async function generateRewrite({ force = false } = {}) {
     toast(data.originalFetched ? '已获取原文并保存中文改写' : data.cached ? '已显示缓存重写' : '中文改写已保存');
   } catch (err) {
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
-      openAiConfigModal('settings');
+      openAiConfigModal('rewrite', 'rewrite');
     }
     toast('重写失败: ' + err.message, 5000);
   } finally {
@@ -4778,7 +4814,7 @@ function copyAgentThread() {
 function updateAgentControls() {
   const hasEntry = Boolean(state.activeEntry);
   const hasUser = Boolean(state.me);
-  const hasKey = hasUsableAiConfig();
+  const hasKey = hasUsableAiConfig(aiConfigForPurpose('agent'));
   const input = $('#agent-input');
   const send = $('#agent-send');
   if (!hasEntry) input.placeholder = '问当前文章…';
@@ -4822,7 +4858,8 @@ async function sendAgentMessage(text) {
   const content = String(text || '').trim();
   if (!entry || !content || state.agentBusy) return;
   if (!requireAuth('login')) return;
-  if (!hasUsableAiConfig()) {
+  const agentConfig = aiConfigForPurpose('agent');
+  if (!hasUsableAiConfig(agentConfig)) {
     openAiConfigModal('agent', 'agent', content);
     toast('请先保存一个可用的 AI 配置');
     return;
@@ -4837,7 +4874,7 @@ async function sendAgentMessage(text) {
   try {
     const data = await api(`/api/entry/${entry.id}/chat`, {
       method: 'POST',
-      ai: true,
+      aiConfig: agentConfig,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [{ role: 'user', content }] }),
     });
@@ -5130,6 +5167,22 @@ function selectView(v) {
   reload();
 }
 
+function goHomeAll() {
+  state.view = 'all';
+  state.filterSource = null;
+  state.filterCategory = null;
+  state.assetFilter = null;
+  state.assetSort = 'latest';
+  state.contributorSort = 'latest';
+  state.homeTab = 'entries';
+  state.q = '';
+  state.readerFocus = null;
+  state.readerAssetId = '';
+  const search = $('#search');
+  if (search) search.value = '';
+  reload();
+}
+
 function selectAssetFilter(type = null) {
   state.view = 'assets';
   state.filterSource = null;
@@ -5360,20 +5413,56 @@ function getEditingAiProfile() {
 function renderAiStatus() {
   const el = $('#agent-profile');
   renderSidebarAiSettings();
+  renderAiProfileControls();
   if (!el) return;
   if (!state.me) {
     el.textContent = '登录后配置模型';
     return;
   }
-  const profile = currentAiProfile();
-  const config = currentAiConfig();
+  const profile = aiProfileForPurpose('agent');
+  const config = aiConfigForPurpose('agent');
   el.textContent = hasUsableAiConfig(config)
-    ? `${profile.name} · ${config.model}`
+    ? `对话 · ${profile.name} · ${config.model}`
     : `${profile.name || 'AI 配置'} · 未填 API Key`;
+}
+
+function aiProfileSelectLabel(profile) {
+  const model = String(profile && profile.model || '').trim();
+  const name = String(profile && profile.name || profile && profile.providerName || 'AI 配置').trim();
+  const suffix = profile && profile.apiKey ? '' : ' · 未配置';
+  return `${name}${model ? ` · ${model}` : ''}${suffix}`;
+}
+
+function renderAiProfileSelect(selector, purpose) {
+  const select = $(selector);
+  if (!select) return;
+  const profile = aiProfileForPurpose(purpose);
+  select.innerHTML = state.aiProfiles.map(item => (
+    `<option value="${escapeHtml(item.id)}">${escapeHtml(aiProfileSelectLabel(item))}</option>`
+  )).join('');
+  select.value = profile.id;
+  select.disabled = !state.me || state.aiProfiles.length === 0;
+  select.classList.toggle('hidden', !state.me);
+}
+
+function renderAiProfileControls() {
+  renderAiProfileSelect('#rewrite-profile-select', 'rewrite');
+  renderAiProfileSelect('#agent-profile-select', 'agent');
+}
+
+function setAiProfileForPurpose(purpose, profileId) {
+  const profile = state.aiProfiles.find(item => item.id === profileId);
+  if (!profile) return;
+  if (purpose === 'rewrite') state.rewriteAiProfileId = profile.id;
+  if (purpose === 'agent') state.agentAiProfileId = profile.id;
+  persistAiProfiles();
+  renderAiProfileControls();
+  updateAgentControls();
 }
 
 function aiAlertText() {
   if (state.aiConfigReason === 'translation') return '生成双语对照翻译需要先保存一个可用的 AI 配置。';
+  if (state.aiConfigReason === 'rewrite') return '生成中文改写需要先保存一个可用的 AI 配置，保存后会继续当前文章。';
   if (state.aiConfigReason === 'agent') return '文章对话需要先保存一个可用的 AI 配置，当前问题会保留。';
   return '';
 }
@@ -5394,6 +5483,8 @@ function renderAiProfileList() {
     btn.onclick = () => {
       state.editingAiProfileId = profile.id;
       state.activeAiProfileId = profile.id;
+      if (state.aiConfigReason === 'rewrite') state.rewriteAiProfileId = profile.id;
+      if (state.aiConfigReason === 'agent') state.agentAiProfileId = profile.id;
       persistAiProfiles();
       renderAiSettings();
       updateAgentControls();
@@ -5496,21 +5587,6 @@ function readAiProfileForm() {
   });
 }
 
-function configFromProfile(profile) {
-  return {
-    profileId: profile.id,
-    profileName: profile.name,
-    provider: profile.provider,
-    providerName: profile.providerName,
-    providerType: profile.providerType,
-    apiKey: profile.apiKey,
-    baseUrl: profile.baseUrl,
-    model: profile.model,
-    temperature: clampTemperature(profile.temperature),
-    maxTokens: clampMaxTokens(profile.maxTokens),
-  };
-}
-
 function applyAiPreset(presetId) {
   const current = getEditingAiProfile() || createCustomProfile();
   const profile = presetId === 'custom'
@@ -5528,6 +5604,7 @@ function runPendingAiAction() {
   state.pendingAiAction = '';
   state.pendingAgentText = '';
   if (action === 'translation') setTimeout(() => generateTranslation(), 0);
+  if (action === 'rewrite') setTimeout(() => generateRewrite({ force: Boolean(state.rewrite) }), 0);
   if (action === 'agent' && text) setTimeout(() => sendAgentMessage(text), 0);
 }
 
@@ -5547,6 +5624,8 @@ function saveAiProfileFromForm({ silent = false } = {}) {
   }
   state.aiProfiles = ensureSingleDefault(nextProfiles);
   state.activeAiProfileId = profile.id;
+  if (state.aiConfigReason === 'rewrite') state.rewriteAiProfileId = profile.id;
+  if (state.aiConfigReason === 'agent') state.agentAiProfileId = profile.id;
   state.editingAiProfileId = profile.id;
   persistAiProfiles();
   renderAiSettings();
@@ -5576,6 +5655,8 @@ function deleteAiProfile() {
   if (!window.confirm(`确定删除「${profile.name}」吗？`)) return;
   state.aiProfiles = ensureSingleDefault(state.aiProfiles.filter(item => item.id !== profile.id));
   state.activeAiProfileId = (state.aiProfiles.find(item => item.isDefault) || state.aiProfiles[0]).id;
+  if (!state.aiProfiles.some(item => item.id === state.rewriteAiProfileId)) state.rewriteAiProfileId = state.activeAiProfileId;
+  if (!state.aiProfiles.some(item => item.id === state.agentAiProfileId)) state.agentAiProfileId = state.activeAiProfileId;
   state.editingAiProfileId = state.activeAiProfileId;
   persistAiProfiles();
   renderAiSettings();
@@ -5757,6 +5838,7 @@ function setupListResizer() {
 }
 
 /* ---------- Events ---------- */
+$('#brand-home').onclick = goHomeAll;
 $$('.view-btn[data-view]').forEach(b => b.onclick = () => selectView(b.dataset.view));
 $('#nav-more-toggle').onclick = () => {
   state.sidebarMoreOpen = !state.sidebarMoreOpen;
@@ -6014,6 +6096,8 @@ $('#agent-close').onclick = () => setAgentCollapsed(true);
 $('#agent-open').onclick = () => setAgentCollapsed(false);
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
+$('#agent-profile-select').onchange = (e) => setAiProfileForPurpose('agent', e.target.value);
+$('#rewrite-profile-select').onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
 $('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
 $('#account-settings-open').onclick = (e) => {
   e.stopPropagation();

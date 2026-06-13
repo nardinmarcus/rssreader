@@ -7,15 +7,17 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=112" />
+  <link rel="stylesheet" href="/styles.css?v=113" />
 </head>
 <body data-theme="light">
   <div id="app">
     <!-- ===== Sidebar ===== -->
     <aside id="sidebar">
       <div class="brand">
-        <div class="brand-logo">Q</div>
-        <div class="brand-name">QMReader</div>
+        <button id="brand-home" class="brand-home" type="button" title="返回全部" aria-label="返回全部">
+          <span class="brand-logo">Q</span>
+          <span class="brand-name">QMReader</span>
+        </button>
         <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏">⇤</button>
         <button id="theme-toggle" class="icon-btn" title="切换主题">◐</button>
       </div>
@@ -76,8 +78,8 @@
           ⚙<b id="notification-count" class="hidden">0</b>
         </button>
         <div id="account-menu" class="account-menu hidden" role="menu" aria-label="账户菜单">
-          <button id="account-menu-dashboard" type="button" role="menuitem">后台管理（个人后台）</button>
-          <button id="account-menu-profile" type="button" role="menuitem">我的贡献（个人公开页）</button>
+          <button id="account-menu-dashboard" type="button" role="menuitem">我的后台</button>
+          <button id="account-menu-profile" type="button" role="menuitem">我的贡献</button>
           <button id="account-menu-logout" type="button" role="menuitem">退出登录</button>
         </div>
       </div>
@@ -180,6 +182,7 @@
             <span>中文改写</span>
             <div class="reader-section-actions">
               <span id="rewrite-meta"></span>
+              <select id="rewrite-profile-select" class="ai-profile-select" title="选择用于中文改写的模型" aria-label="选择用于中文改写的模型"></select>
               <button id="rewrite-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
               <button id="rewrite-copy" class="ghost-btn hidden" type="button">⧉ 复制重写</button>
               <button id="reader-rewrite" class="ghost-btn primary" type="button">生成中文改写</button>
@@ -345,6 +348,7 @@
           <div class="agent-kicker">Article Agent</div>
           <div id="agent-title" class="agent-title">未选择文章</div>
           <div id="agent-profile" class="agent-profile">未配置模型</div>
+          <select id="agent-profile-select" class="ai-profile-select agent-profile-select" title="选择用于文章对话的模型" aria-label="选择用于文章对话的模型"></select>
         </div>
         <div class="agent-head-actions">
           <button id="agent-copy-thread" class="icon-btn" title="复制当前对话">⧉</button>
@@ -522,6 +526,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=112"></script>
+  <script src="/app.js?v=113"></script>
 </body>
 </html>
