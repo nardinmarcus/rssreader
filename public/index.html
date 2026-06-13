@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=109" />
+  <link rel="stylesheet" href="/styles.css?v=110" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -22,12 +22,17 @@
 
       <div class="views">
         <button class="view-btn active" data-view="all"><span class="view-ico">▤</span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
-        <button class="view-btn" data-view="hot"><span class="view-ico">▲</span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
         <button class="view-btn" data-view="unread"><span class="view-ico">●</span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
-        <button class="view-btn" data-view="starred"><span class="view-ico">★</span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
-        <button class="view-btn" data-view="history"><span class="view-ico">◷</span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
-        <button class="view-btn" data-view="assets"><span class="view-ico">◆</span><span class="view-label">资产</span><span class="count" id="count-assets"></span></button>
+        <button class="view-btn" data-view="hot"><span class="view-ico">▲</span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
         <button class="view-btn" data-view="contributors"><span class="view-ico">◇</span><span class="view-label">贡献榜</span><span class="count" id="count-contributors"></span></button>
+        <button id="nav-more-toggle" class="view-btn nav-more-toggle" type="button" aria-expanded="false">
+          <span class="view-ico">…</span><span class="view-label">更多</span><span class="count"></span>
+        </button>
+        <div id="nav-more-menu" class="nav-more-menu hidden">
+          <button class="view-btn secondary-view" data-view="starred"><span class="view-ico">★</span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
+          <button class="view-btn secondary-view" data-view="history"><span class="view-ico">◷</span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
+          <button class="view-btn secondary-view" data-view="assets"><span class="view-ico">◆</span><span class="view-label">资产</span><span class="count" id="count-assets"></span></button>
+        </div>
       </div>
 
       <div id="asset-dashboard" class="asset-dashboard hidden">
@@ -66,13 +71,15 @@
             <span>同步阅读与贡献</span>
           </span>
         </button>
-        <div id="account-info" class="account-info hidden"></div>
-        <button id="notification-open" class="icon-btn notification-open hidden" type="button" title="通知" aria-label="通知">
-          <span>铃</span><b id="notification-count" class="hidden">0</b>
+        <button id="account-info" class="account-card account-info hidden" type="button"></button>
+        <button id="account-settings-open" class="icon-btn account-settings hidden" type="button" title="账户设置" aria-label="账户设置">
+          ⚙<b id="notification-count" class="hidden">0</b>
         </button>
-        <button id="my-comments-btn" class="icon-btn account-my-comments hidden" type="button" title="个人后台" aria-label="个人后台">⌘</button>
-        <button id="sidebar-ai-settings" class="icon-btn account-ai-settings" type="button" title="AI 模型配置" aria-label="AI 模型配置">⚿</button>
-        <button id="logout-btn" class="icon-btn hidden" title="退出登录">⎋</button>
+        <div id="account-menu" class="account-menu hidden" role="menu" aria-label="账户菜单">
+          <button id="account-menu-dashboard" type="button" role="menuitem">后台管理（个人后台）</button>
+          <button id="account-menu-profile" type="button" role="menuitem">我的贡献（个人公开页）</button>
+          <button id="account-menu-logout" type="button" role="menuitem">退出登录</button>
+        </div>
       </div>
 
       <div class="sidebar-footer hidden">
@@ -230,62 +237,72 @@
           </div>
           <div class="my-assets-header-actions">
             <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
-            <button class="icon-btn my-public-profile-copy hidden" id="my-public-profile-copy" type="button" title="复制我的公开资产页" aria-label="复制我的公开资产页">⧉</button>
             <a id="my-public-rss-link" class="ghost-btn my-public-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-            <button class="icon-btn my-public-rss-copy hidden" id="my-public-rss-copy" type="button" title="复制我的公开资产 RSS" aria-label="复制我的公开资产 RSS">⧉</button>
             <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器">←</button>
           </div>
         </header>
-        <section class="profile-dashboard">
-          <div class="profile-editor">
-            <label class="profile-avatar-picker" title="上传头像">
-              <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-              <span id="profile-avatar-preview" class="profile-avatar-preview">Q</span>
-            </label>
-            <div class="profile-fields">
-              <label>
-                <span>显示名</span>
-                <input id="profile-display-name" type="text" maxlength="40" placeholder="你的名字" />
+        <div class="dashboard-tabs" role="tablist" aria-label="个人后台">
+          <button class="dashboard-tab active" type="button" data-dashboard-tab="profile">个人资料</button>
+          <button class="dashboard-tab" type="button" data-dashboard-tab="ai">AI 设置</button>
+          <button class="dashboard-tab" type="button" data-dashboard-tab="contributions">我的贡献</button>
+        </div>
+        <section id="dashboard-profile-panel" class="dashboard-panel">
+          <section class="profile-dashboard">
+            <div class="profile-editor">
+              <label class="profile-avatar-picker" title="上传头像">
+                <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+                <span id="profile-avatar-preview" class="profile-avatar-preview">Q</span>
               </label>
-              <label>
-                <span>简介</span>
-                <textarea id="profile-bio" rows="2" maxlength="280" placeholder="一句话介绍你关注什么、擅长什么"></textarea>
-              </label>
-              <div class="profile-links-head">
-                <span>喜欢的链接</span>
-                <button id="profile-link-add" class="ghost-btn" type="button">添加链接</button>
-              </div>
-              <div id="profile-links-editor" class="profile-links-editor"></div>
-              <div class="profile-actions">
-                <button id="profile-save" class="ghost-btn primary" type="button">保存资料</button>
+              <div class="profile-fields">
+                <label>
+                  <span>显示名</span>
+                  <input id="profile-display-name" type="text" maxlength="40" placeholder="你的名字" />
+                </label>
+                <label>
+                  <span>简介</span>
+                  <textarea id="profile-bio" rows="2" maxlength="280" placeholder="一句话介绍你关注什么、擅长什么"></textarea>
+                </label>
+                <div class="profile-links-head">
+                  <span>喜欢的链接</span>
+                  <button id="profile-link-add" class="ghost-btn" type="button">添加链接</button>
+                </div>
+                <div id="profile-links-editor" class="profile-links-editor"></div>
+                <div class="profile-actions">
+                  <button id="profile-save" class="ghost-btn primary" type="button">保存资料</button>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="profile-admin-actions hidden" id="profile-admin-actions">
-            <span>管理员</span>
-            <button id="profile-refresh-btn" class="ghost-btn" type="button">刷新全部</button>
-            <button id="profile-manage-btn" class="ghost-btn" type="button">管理源</button>
-          </div>
-          <div class="profile-notifications">
-            <div class="profile-panel-head">
-              <span>通知</span>
-              <button id="notifications-read" class="ghost-btn" type="button">全部已读</button>
+            <div class="profile-admin-actions hidden" id="profile-admin-actions">
+              <span>管理员</span>
+              <button id="profile-refresh-btn" class="ghost-btn" type="button">刷新全部</button>
+              <button id="profile-manage-btn" class="ghost-btn" type="button">管理源</button>
             </div>
-            <div id="notification-list" class="notification-list"></div>
-          </div>
+            <div class="profile-notifications">
+              <div class="profile-panel-head">
+                <span>通知</span>
+                <button id="notifications-read" class="ghost-btn" type="button">全部已读</button>
+              </div>
+              <div id="notification-list" class="notification-list"></div>
+            </div>
+          </section>
         </section>
-        <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
-          <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
-          <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
-          <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
-          <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
-        </div>
-        <div class="my-asset-sort" role="group" aria-label="我的资产排序">
-          <span>排序</span>
-          <button class="my-asset-sort-btn active" type="button" data-my-asset-sort="latest">最新</button>
-          <button class="my-asset-sort-btn" type="button" data-my-asset-sort="helpful">有用</button>
-        </div>
-        <div id="my-comments-list" class="my-comments-list"></div>
+        <section id="dashboard-ai-panel" class="dashboard-panel hidden">
+          <div id="dashboard-ai-mount" class="dashboard-ai-mount"></div>
+        </section>
+        <section id="dashboard-contributions-panel" class="dashboard-panel hidden">
+          <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
+            <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
+            <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
+            <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
+            <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
+          </div>
+          <div class="my-asset-sort" role="group" aria-label="我的资产排序">
+            <span>排序</span>
+            <button class="my-asset-sort-btn active" type="button" data-my-asset-sort="latest">最新</button>
+            <button class="my-asset-sort-btn" type="button" data-my-asset-sort="helpful">有用</button>
+          </div>
+          <div id="my-comments-list" class="my-comments-list"></div>
+        </section>
       </section>
       <section id="contributor-page" class="workspace-page contributor-page hidden">
         <header class="workspace-page-head">
@@ -295,9 +312,7 @@
           </div>
           <div class="contributor-page-actions">
             <button id="contributor-follow" class="ghost-btn contributor-follow hidden" type="button">关注</button>
-            <button class="icon-btn contributor-link-copy hidden" id="contributor-link-copy" type="button" title="复制当前贡献主页" aria-label="复制当前贡献主页">⧉</button>
             <a id="contributor-rss-link" class="ghost-btn contributor-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-            <button class="icon-btn contributor-rss-copy hidden" id="contributor-rss-copy" type="button" title="复制贡献 RSS" aria-label="复制贡献 RSS">RSS</button>
             <button class="icon-btn" id="contributor-close" title="返回贡献榜" aria-label="返回贡献榜">←</button>
           </div>
         </header>
@@ -414,6 +429,7 @@
         </div>
         <button class="icon-btn" id="ai-config-close">✕</button>
       </header>
+      <div id="ai-config-modal-mount">
       <div class="ai-config-content">
         <aside class="ai-profile-side">
           <div class="ai-side-head">
@@ -494,12 +510,13 @@
           </div>
         </form>
       </div>
+      </div>
     </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=109"></script>
+  <script src="/app.js?v=110"></script>
 </body>
 </html>

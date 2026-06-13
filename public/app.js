@@ -27,6 +27,7 @@ const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' }
 const READER_TABS = ['original', 'rewrite', 'translation'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
+const DASHBOARD_TABS = ['profile', 'ai', 'contributions'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', comments: '人工点评', chat: '文章对话' };
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
@@ -377,6 +378,7 @@ const state = {
   notifications: [],
   profileLinksDraft: [],
   profileAvatarDraft: '',
+  dashboardTab: normalizeDashboardTab(storage.getItem('qm_dashboard_tab')),
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
   contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
@@ -402,6 +404,7 @@ const state = {
   agentBusy: false,
   agentCollapsed: storage.getItem('qm_agent_collapsed') !== '0',
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
+  sidebarMoreOpen: storage.getItem('qm_sidebar_more_open') === '1',
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   me: null,
   authMode: 'login',
@@ -438,6 +441,7 @@ function routeStateFromUrl() {
   return {
     entryId: articleRoute && articleRoute.id ? articleRoute.id : String(params.get('entry') || '').trim(),
     dashboard: dashboardPath,
+    dashboardTab: dashboardPath ? normalizeDashboardTab(params.get('tab')) : 'profile',
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
@@ -632,11 +636,13 @@ function contributorFeedUrlFor(contributorId) {
   return url;
 }
 
-function dashboardUrlFor() {
+function dashboardUrlFor(tab = state.dashboardTab) {
   const url = new URL(window.location.href);
   url.pathname = '/me';
   url.search = '';
   url.hash = '';
+  const nextTab = normalizeDashboardTab(tab);
+  if (nextTab !== 'profile') url.searchParams.set('tab', nextTab);
   return url;
 }
 
@@ -1308,8 +1314,20 @@ function renderSidebar() {
   $('#count-assets').textContent = assetTotalCount(state.entries.filter(hasEntryAssets)) || '';
   $('#count-contributors').textContent = state.contributors.length || '';
   renderAssetDashboard();
+  renderSidebarMore();
 
-  $$('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
+  $$('.view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
+}
+
+function renderSidebarMore() {
+  const menu = $('#nav-more-menu');
+  const toggle = $('#nav-more-toggle');
+  if (!menu || !toggle) return;
+  const secondaryActive = ['starred', 'history', 'assets'].includes(state.view) && !state.filterSource && !state.filterCategory;
+  const open = state.sidebarMoreOpen || secondaryActive;
+  menu.classList.toggle('hidden', !open);
+  toggle.classList.toggle('active', secondaryActive);
+  toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 /* ---------- Entry list ---------- */
@@ -1516,6 +1534,10 @@ function normalizeContributorAssetSort(sort = '') {
 
 function normalizeUserAssetSort(sort = '') {
   return normalizeAssetSort(sort);
+}
+
+function normalizeDashboardTab(tab = '') {
+  return DASHBOARD_TABS.includes(tab) ? tab : 'profile';
 }
 
 function assetTypeCount(entries, type) {
@@ -1985,7 +2007,6 @@ function renderAssetActivityStrip() {
         <span>贡献榜</span>
         <strong>${contributorCount} 人</strong>
         <em>${escapeHtml(statusText)}</em>
-        <button type="button" class="asset-copy-link" data-contributor-copy-list title="复制当前贡献榜链接" aria-label="复制当前贡献榜链接">⧉</button>
       </div>
       <div class="asset-sort-row">
         <span>排序</span>
@@ -2281,17 +2302,16 @@ function isAdmin() {
 
 function renderAuthState() {
   const loggedIn = Boolean(state.me);
-  $('#auth-open').classList.toggle('hidden', loggedIn);
-  $('#account-info').classList.toggle('hidden', !loggedIn);
-  $('#my-comments-btn').classList.toggle('hidden', !loggedIn);
-  $('#notification-open').classList.toggle('hidden', !loggedIn);
-  $('#logout-btn').classList.toggle('hidden', !loggedIn);
+  $('#auth-open')?.classList.toggle('hidden', loggedIn);
+  $('#account-info')?.classList.toggle('hidden', !loggedIn);
+  $('#account-settings-open')?.classList.toggle('hidden', !loggedIn);
+  if (!loggedIn) setAccountMenuOpen(false);
   if (loggedIn) {
     $('#account-info').innerHTML = `
       ${avatarHtml(state.me, 'account-avatar')}
       <span class="account-text">
         <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
-        <span>${escapeHtml(state.me.bio || '个人后台')}</span>
+        <span>${escapeHtml(isAdmin() ? '管理员' : '个人后台')}</span>
       </span>
     `;
     $('#account-info').title = '打开个人后台';
@@ -2309,17 +2329,30 @@ function renderAuthState() {
   updateAgentControls();
 }
 
+function setAccountMenuOpen(open) {
+  const menu = $('#account-menu');
+  const trigger = $('#account-settings-open');
+  if (!menu || !trigger) return;
+  const nextOpen = Boolean(open) && Boolean(state.me);
+  menu.classList.toggle('hidden', !nextOpen);
+  trigger.classList.toggle('active', nextOpen);
+  trigger.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+}
+
+function toggleAccountMenu() {
+  const menu = $('#account-menu');
+  setAccountMenuOpen(menu ? menu.classList.contains('hidden') : true);
+}
+
 function renderSidebarAiSettings() {
-  const btn = $('#sidebar-ai-settings');
+  const btn = $('#account-settings-open');
   if (!btn) return;
   const loggedIn = Boolean(state.me);
   const config = currentAiConfig();
   const profile = currentAiProfile();
   const ready = loggedIn && hasUsableAiConfig(config);
-  btn.classList.toggle('ready', ready);
-  btn.textContent = '⚿';
   btn.title = loggedIn
-    ? (ready ? `${profile.name} · ${config.model}` : 'AI 模型配置')
+    ? (ready ? `账户设置 · ${profile.name} · ${config.model}` : '账户设置')
     : '登录后配置自己的 API Key';
 }
 
@@ -2421,7 +2454,8 @@ async function submitAuth() {
     renderComments();
     renderAgent();
     renderAiSettings();
-    if (routeStateFromUrl().dashboard) await openMyCommentsModal({ push: false });
+    const route = routeStateFromUrl();
+    if (route.dashboard) await openMyCommentsModal({ push: false, tab: route.dashboardTab });
     toast(state.authMode === 'register' ? '注册成功' : '已登录');
   } catch (err) {
     toast(err.message, 5000);
@@ -2432,9 +2466,12 @@ async function submitAuth() {
 
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
+  const wasDashboardOpen = state.workspacePage === 'dashboard';
   state.me = null;
   state.myComments = [];
   state.myChatMessages = [];
+  setAccountMenuOpen(false);
+  if (wasDashboardOpen) closeMyCommentsModal();
   applyGuestEntryStates();
   loadAiProfilesForScope();
   renderAuthState();
@@ -2488,16 +2525,10 @@ function renderContributorDirectory() {
       <div class="contributor-actions">
         <button type="button" class="contributor-open">查看贡献</button>
         <a class="contributor-rss-button" data-contributor-rss="${escapeHtml(contributor.id)}" href="${escapeHtml(contributorFeedUrlFor(contributor.id).href)}" target="_blank" rel="noopener" title="订阅贡献 RSS" aria-label="订阅贡献 RSS">RSS</a>
-        <button type="button" class="asset-copy-link contributor-copy" data-contributor-copy="${escapeHtml(contributor.id)}" title="复制贡献主页链接" aria-label="复制贡献主页链接">⧉</button>
       </div>
     `;
     card.onclick = (event) => {
       if (event.target.closest('[data-contributor-rss]')) return;
-      const copy = event.target.closest('[data-contributor-copy]');
-      if (copy) {
-        copyText(contributorUrlFor(copy.dataset.contributorCopy).href, '贡献主页链接已复制');
-        return;
-      }
       openContributor(contributor.id);
     };
     frag.appendChild(card);
@@ -3566,8 +3597,6 @@ function renderMyPublicProfileActions() {
   const rssUrl = myPublicRssUrl();
   const link = $('#my-public-profile-link');
   const rss = $('#my-public-rss-link');
-  const copy = $('#my-public-profile-copy');
-  const rssCopy = $('#my-public-rss-copy');
   if (link) {
     link.classList.toggle('hidden', !url);
     link.href = url || '#';
@@ -3576,8 +3605,39 @@ function renderMyPublicProfileActions() {
     rss.classList.toggle('hidden', !rssUrl);
     rss.href = rssUrl || '#';
   }
-  if (copy) copy.classList.toggle('hidden', !url);
-  if (rssCopy) rssCopy.classList.toggle('hidden', !rssUrl);
+}
+
+function mountAiConfigPanel(target = 'modal') {
+  const content = $('.ai-config-content');
+  const mount = target === 'dashboard' ? $('#dashboard-ai-mount') : $('#ai-config-modal-mount');
+  if (!content || !mount || content.parentElement === mount) return;
+  mount.appendChild(content);
+}
+
+function renderDashboardTabs() {
+  const tab = normalizeDashboardTab(state.dashboardTab);
+  $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
+    const active = btn.dataset.dashboardTab === tab;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  $('#dashboard-profile-panel')?.classList.toggle('hidden', tab !== 'profile');
+  $('#dashboard-ai-panel')?.classList.toggle('hidden', tab !== 'ai');
+  $('#dashboard-contributions-panel')?.classList.toggle('hidden', tab !== 'contributions');
+  if (tab === 'ai') {
+    mountAiConfigPanel('dashboard');
+    renderAiSettings();
+  }
+  renderMyPublicProfileActions();
+}
+
+function setDashboardTab(tab = 'profile', { push = false, persist = true } = {}) {
+  state.dashboardTab = normalizeDashboardTab(tab);
+  if (persist) storage.setItem('qm_dashboard_tab', state.dashboardTab);
+  renderDashboardTabs();
+  if (push && state.workspacePage === 'dashboard') {
+    history.pushState({ dashboard: true, tab: state.dashboardTab }, '', dashboardUrlFor(state.dashboardTab));
+  }
 }
 
 function renderProfileAvatarPreview(user = state.me) {
@@ -3763,14 +3823,15 @@ function renderMyAssets() {
   }).join('');
 }
 
-async function openMyCommentsModal({ push = true } = {}) {
+async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {}) {
   if (!state.me) {
     openAuth('login');
     return false;
   }
   setWorkspacePage('dashboard');
+  setDashboardTab(tab, { persist: true, push: false });
   document.title = '个人后台 · QMReader';
-  if (push) history.pushState({ dashboard: true }, '', dashboardUrlFor());
+  if (push) history.pushState({ dashboard: true, tab: state.dashboardTab }, '', dashboardUrlFor(state.dashboardTab));
   renderProfileEditor();
   loadNotifications();
   renderMyAssetTabs();
@@ -4036,8 +4097,6 @@ function renderContributorAssets() {
   if (!list) return;
   const profile = state.contributor.profile;
   const rssLink = $('#contributor-rss-link');
-  const rssCopy = $('#contributor-rss-copy');
-  const linkCopy = $('#contributor-link-copy');
   const rssUrl = profile ? contributorFeedUrlFor(profile.id).href : '';
   const helpfulCount = Number(profile && profile.helpfulCount) || 0;
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
@@ -4050,8 +4109,6 @@ function renderContributorAssets() {
     rssLink.classList.toggle('hidden', !rssUrl);
     rssLink.href = rssUrl || '#';
   }
-  if (rssCopy) rssCopy.classList.toggle('hidden', !rssUrl);
-  if (linkCopy) linkCopy.classList.toggle('hidden', !profile);
   renderContributorTabs();
   if (state.contributor.loading) {
     list.innerHTML = '<div class="my-comments-empty">正在读取贡献主页…</div>';
@@ -4869,7 +4926,7 @@ async function openEntryFromUrl() {
     updateListTitle();
     renderSidebar();
     state.activeEntry = null;
-    const opened = await openMyCommentsModal({ push: false });
+    const opened = await openMyCommentsModal({ push: false, tab: route.dashboardTab });
     if (!opened) setWorkspacePage('');
     return true;
   }
@@ -5463,6 +5520,7 @@ function openAiConfigModal(reason = '', pendingAction = '', pendingText = '') {
   state.aiConfigReason = reason;
   state.pendingAiAction = pendingAction || '';
   state.pendingAgentText = pendingText || '';
+  mountAiConfigPanel('modal');
   renderAiSettings();
   $('#ai-config-modal').classList.remove('hidden');
   const config = currentAiConfig();
@@ -5476,6 +5534,9 @@ function openAiConfigModal(reason = '', pendingAction = '', pendingText = '') {
 function closeAiConfigModal() {
   $('#ai-config-modal').classList.add('hidden');
   state.aiConfigReason = '';
+  if (state.workspacePage === 'dashboard' && state.dashboardTab === 'ai') {
+    mountAiConfigPanel('dashboard');
+  }
   renderAiSettings();
 }
 
@@ -5626,7 +5687,12 @@ function setupListResizer() {
 }
 
 /* ---------- Events ---------- */
-$$('.view-btn').forEach(b => b.onclick = () => selectView(b.dataset.view));
+$$('.view-btn[data-view]').forEach(b => b.onclick = () => selectView(b.dataset.view));
+$('#nav-more-toggle').onclick = () => {
+  state.sidebarMoreOpen = !state.sidebarMoreOpen;
+  storage.setItem('qm_sidebar_more_open', state.sidebarMoreOpen ? '1' : '0');
+  renderSidebarMore();
+};
 $('#sidebar-toggle').onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
 $('#asset-dashboard-open').onclick = () => {
   state.assetSort = 'latest';
@@ -5645,11 +5711,6 @@ $('#asset-activity-strip').onclick = async (e) => {
   const copy = e.target.closest('[data-asset-copy-list]');
   if (copy) {
     copyText(listUrlFor('assets', state.assetFilter).href, '资产页链接已复制');
-    return;
-  }
-  const contributorCopy = e.target.closest('[data-contributor-copy-list]');
-  if (contributorCopy) {
-    copyText(listUrlFor('contributors').href, '贡献榜链接已复制');
     return;
   }
   const filter = e.target.closest('[data-asset-strip-filter]');
@@ -5882,13 +5943,21 @@ $('#agent-close').onclick = () => setAgentCollapsed(true);
 $('#agent-open').onclick = () => setAgentCollapsed(false);
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
-$('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
-$('#my-comments-btn').onclick = () => openMyCommentsModal();
-$('#account-info').onclick = () => openMyCommentsModal();
-$('#notification-open').onclick = () => openMyCommentsModal();
+$('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
+$('#account-settings-open').onclick = (e) => {
+  e.stopPropagation();
+  toggleAccountMenu();
+};
+$('#account-menu-dashboard').onclick = () => {
+  setAccountMenuOpen(false);
+  openMyCommentsModal({ tab: 'profile' });
+};
+$('#account-menu-profile').onclick = () => {
+  setAccountMenuOpen(false);
+  if (state.me?.id) openContributor(state.me.id);
+};
+$('#account-menu-logout').onclick = () => logout();
 $('#my-comments-close').onclick = closeMyCommentsModal;
-$('#my-public-profile-copy').onclick = copyMyPublicProfileLink;
-$('#my-public-rss-copy').onclick = copyMyPublicRssLink;
 $('#profile-save').onclick = saveProfile;
 $('#notifications-read').onclick = markMyNotificationsRead;
 $('#profile-refresh-btn').onclick = refreshAll;
@@ -5938,6 +6007,9 @@ $$('#my-dashboard-page [data-my-asset-sort]').forEach(btn => {
     renderMyAssets();
   };
 });
+$$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
+  btn.onclick = () => setDashboardTab(btn.dataset.dashboardTab, { push: true });
+});
 $('#my-comments-list').onclick = (e) => {
   const open = e.target.closest('[data-my-asset-open]');
   if (open) {
@@ -5954,26 +6026,6 @@ $('#my-comments-list').onclick = (e) => {
 };
 $('#contributor-close').onclick = () => closeContributorModal();
 $('#contributor-follow').onclick = toggleContributorFollow;
-$('#contributor-link-copy').onclick = () => {
-  if (!state.contributor.profile) {
-    toast('还没有可复制的贡献主页');
-    return;
-  }
-  copyText(
-    contributorUrlFor(state.contributor.profile.id, {
-      sort: state.contributor.sort,
-      tab: state.contributor.tab,
-    }).href,
-    '贡献主页链接已复制',
-  );
-};
-$('#contributor-rss-copy').onclick = () => {
-  if (!state.contributor.profile) {
-    toast('还没有可复制的贡献 RSS');
-    return;
-  }
-  copyText(contributorFeedUrlFor(state.contributor.profile.id).href, '贡献 RSS 已复制');
-};
 $$('#contributor-page [data-contributor-tab]').forEach(btn => {
   btn.onclick = () => {
     state.contributor.tab = normalizeUserAssetTab(btn.dataset.contributorTab);
@@ -6031,7 +6083,6 @@ $('#manage-btn').onclick = () => { renderManage(); $('#manage-modal').classList.
 $('#manage-close').onclick = () => $('#manage-modal').classList.add('hidden');
 $('#manage-modal').onclick = (e) => { if (e.target.id === 'manage-modal') $('#manage-modal').classList.add('hidden'); };
 $('#auth-open').onclick = () => openAuth('login');
-$('#logout-btn').onclick = logout;
 $('#auth-close').onclick = closeAuth;
 $('#auth-modal').onclick = (e) => { if (e.target.id === 'auth-modal') closeAuth(); };
 $$('.auth-tab').forEach(btn => { btn.onclick = () => setAuthMode(btn.dataset.mode); });
@@ -6074,6 +6125,10 @@ window.addEventListener('error', (e) => {
   }
 });
 
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.account-strip')) setAccountMenuOpen(false);
+});
+
 document.addEventListener('keydown', (e) => {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
   const list = visibleEntries();
@@ -6082,6 +6137,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'k' && idx > 0) openEntry(list[idx - 1]);
   if (e.key === 'Escape') {
     document.getElementById('app').classList.remove('reading');
+    setAccountMenuOpen(false);
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
     $('#submit-link-modal').classList.add('hidden');

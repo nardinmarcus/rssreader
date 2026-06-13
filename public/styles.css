@@ -137,6 +137,17 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .view-ico { width: 16px; text-align: center; font-size: 12px; }
 .count { margin-left: auto; font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .view-btn.active .count { color: var(--accent); }
+.nav-more-menu {
+  display: grid;
+  gap: 2px;
+}
+.nav-more-menu .view-btn {
+  width: 100%;
+}
+.nav-more-toggle.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 
 .asset-dashboard {
   margin: 0 10px 10px;
@@ -308,6 +319,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   gap: 6px;
   flex: none;
   background: var(--bg-1);
+  position: relative;
 }
 .account-strip .ghost-btn { flex: 1; }
 .account-card {
@@ -348,18 +360,16 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   color: var(--text-2);
   font-size: 10.5px;
 }
-.account-strip .account-ai-settings,
-.account-strip .account-my-comments,
-.notification-open {
+.account-settings {
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: inline-grid;
   place-items: center;
   white-space: nowrap;
   position: relative;
 }
-.account-strip .account-ai-settings.ready {
+.account-settings.active {
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -403,13 +413,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-size: 12.5px;
   font-weight: 700;
 }
-.account-role {
-  flex: none;
-  color: var(--accent);
-  font-size: 10.5px;
-  font-weight: 800;
-}
-.notification-open b {
+.account-settings b {
   position: absolute;
   top: 1px;
   right: 1px;
@@ -423,6 +427,36 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   line-height: 15px;
   font-weight: 800;
   text-align: center;
+}
+.account-menu {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% + 8px);
+  z-index: 60;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-1) 96%, transparent);
+  box-shadow: 0 14px 36px var(--shadow);
+  backdrop-filter: blur(14px);
+}
+.account-menu button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-1);
+  text-align: left;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.account-menu button:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
 }
 .ghost-btn {
   background: var(--bg-2); border: 1px solid var(--border);
@@ -474,7 +508,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   padding: 8px 10px;
 }
 #app.sidebar-collapsed .sidebar-footer .ghost-btn,
-#app.sidebar-collapsed .account-strip .ghost-btn {
+#app.sidebar-collapsed .account-strip .ghost-btn,
+#app.sidebar-collapsed .account-settings {
   width: 44px;
   height: 36px;
   padding: 0;
@@ -493,9 +528,14 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: none;
 }
 #app.sidebar-collapsed #auth-open::before { content: '⎋'; font-size: 15px; }
-#app.sidebar-collapsed #sidebar-ai-settings::before { content: '⚿'; font-size: 15px; }
+#app.sidebar-collapsed .account-settings::before { content: '⚙'; font-size: 15px; }
 #app.sidebar-collapsed #refresh-btn::before { content: '↻'; font-size: 15px; }
 #app.sidebar-collapsed #manage-btn::before { content: '⚙'; font-size: 15px; }
+#app.sidebar-collapsed .account-menu {
+  left: 8px;
+  right: auto;
+  width: 190px;
+}
 
 /* ============ Entry list ============ */
 #entry-pane {
@@ -1007,11 +1047,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: color-mix(in srgb, var(--semantic-green) 9%, var(--bg-2));
   color: color-mix(in srgb, var(--semantic-green) 76%, var(--text-0));
 }
-.contributor-copy {
-  color: var(--text-2);
-  font-size: 13px;
-}
-.contributor-copy:hover { color: var(--accent); }
 .contributor-actions {
   display: flex;
   align-items: center;
@@ -1430,6 +1465,42 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-radius: 12px;
   background: var(--bg-1);
   padding: 16px;
+}
+.dashboard-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 14px;
+}
+.dashboard-tab {
+  flex: 1;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 750;
+}
+.dashboard-tab:hover {
+  border-color: var(--text-2);
+  color: var(--text-0);
+}
+.dashboard-tab.active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.dashboard-panel {
+  min-width: 0;
+}
+.dashboard-ai-mount {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-1);
+}
+.dashboard-ai-mount .ai-config-content {
+  min-height: min(62vh, 680px);
 }
 .workspace-page .my-asset-tabs,
 .workspace-page .my-asset-sort,
@@ -2455,10 +2526,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
   text-decoration: none;
 }
-.my-public-profile-copy,
-.my-public-rss-copy {
-  color: var(--text-2);
-}
 .profile-dashboard {
   flex: none;
   display: grid;
@@ -2707,17 +2774,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-2));
   text-decoration: none;
-}
-.contributor-link-copy,
-.contributor-rss-copy {
-  color: var(--text-2);
-}
-.contributor-rss-copy {
-  min-width: 34px;
-  padding: 0 8px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0;
 }
 .my-asset-tabs {
   flex: none;
@@ -3360,7 +3416,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     padding: 8px 10px;
   }
   .sidebar-footer .ghost-btn,
-  .account-strip .ghost-btn {
+  .account-strip .ghost-btn,
+  .account-settings {
     width: 44px;
     height: 36px;
     padding: 0;
@@ -3369,8 +3426,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .account-info { display: none; }
   #auth-open::before { content: '⎋'; font-size: 15px; }
-  #my-comments-btn::before { content: '贡'; font-size: 15px; }
-  #sidebar-ai-settings::before { content: '⚿'; font-size: 15px; }
+  .account-settings::before { content: '⚙'; font-size: 15px; }
   #refresh-btn::before { content: '↻'; font-size: 15px; }
   #manage-btn::before { content: '⚙'; font-size: 15px; }
   .asset-dashboard { display: none; }
@@ -3548,7 +3604,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     font-size: 0;
     flex: none;
   }
-  .account-strip .ghost-btn {
+  .account-strip .ghost-btn,
+  .account-settings {
     width: 44px;
     height: 36px;
     padding: 0;
@@ -3557,8 +3614,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .account-info { display: none; }
   #auth-open::before { content: '⎋'; font-size: 15px; }
-  #my-comments-btn::before { content: '贡'; font-size: 15px; }
-  #sidebar-ai-settings::before { content: '⚿'; font-size: 15px; }
+  .account-settings::before { content: '⚙'; font-size: 15px; }
   #refresh-btn::before { content: '↻'; font-size: 15px; }
   #manage-btn::before { content: '⚙'; font-size: 15px; }
   .asset-dashboard { display: none; }
@@ -3615,6 +3671,14 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .profile-link-remove {
     width: 100%;
+  }
+  .dashboard-ai-mount .ai-config-content {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-ai-mount .ai-profile-side {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    max-height: 220px;
   }
   .contributor-card {
     grid-template-columns: 34px 54px minmax(0, 1fr);
