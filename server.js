@@ -2010,6 +2010,19 @@ app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
   }
 });
 
+app.post('/api/submit-link', requireLogin, async (req, res) => {
+  const url = String((req.body && req.body.url) || '').trim();
+  const note = String((req.body && req.body.note) || '').trim();
+  if (!url) return res.status(400).json({ error: '请填写要提交的链接' });
+  try {
+    const submitted = await fetcher.submitLink(url, req.user, { note });
+    const entry = fetcher.getEntryById(submitted.id, req.user) || submitted;
+    res.json({ entry });
+  } catch (e) {
+    sendError(res, e, 'submit link failed');
+  }
+});
+
 app.post('/api/entry/:id/content', async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });

@@ -26,7 +26,7 @@ function readStoredNumber(key) {
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'translation', 'rewrite'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
-const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '乔木风格重写', comments: '人工点评', chat: '文章对话' };
+const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', comments: '人工点评', chat: '文章对话' };
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
 const COMMENT_TEMPLATES = {
@@ -349,7 +349,7 @@ const state = {
   sources: [],
   entries: [],
   contributors: [],
-  view: 'all',            // all | unread | starred | history | assets | contributors
+  view: 'all',            // all | hot | unread | starred | history | assets | contributors
   filterSource: null,
   filterCategory: null,
   assetFilter: null,
@@ -1030,6 +1030,24 @@ function entryStatsLabel(entry) {
   ].filter(Boolean).join(' · ');
 }
 
+function entryQualityScore(entry) {
+  const stats = entryStats(entry);
+  const assets = entry && entry.assets ? entry.assets : {};
+  const ageHours = Math.max(0, (Date.now() - (Number(entry && entry.publishedTs) || Date.now())) / 36e5);
+  const agePenalty = Math.log2(2 + ageHours / 12);
+  const signal =
+    (Number(stats.likeCount) || 0) * 4
+    + (Number(stats.favoriteCount) || 0) * 2.5
+    + (Number(assets.helpfulCount) || 0) * 3
+    + Math.min(8, (Number(stats.viewCount) || 0) / 8)
+    - (Number(stats.dislikeCount) || 0) * 3;
+  return signal / agePenalty;
+}
+
+function hotEntryCount(entries = state.entries) {
+  return entries.filter(entry => entryQualityScore(entry) > 0.4).length;
+}
+
 function mergeEntryStats(entryId, stats = {}, { rerenderList = true } = {}) {
   const id = String(entryId || stats.entryId || '').trim();
   if (!id) return;
@@ -1162,6 +1180,7 @@ function renderSidebar() {
   }
 
   $('#count-all').textContent = state.entries.length || '';
+  $('#count-hot').textContent = hotEntryCount() || '';
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-history').textContent = state.history.size || '';
@@ -1275,6 +1294,15 @@ function visibleContributors() {
 
 function visibleEntries() {
   let list = state.entries;
+  if (state.view === 'hot') {
+    list = list
+      .slice()
+      .sort((a, b) => {
+        const scoreDelta = entryQualityScore(b) - entryQualityScore(a);
+        return scoreDelta || (Number(b.publishedTs) || 0) - (Number(a.publishedTs) || 0);
+      })
+      .slice(0, 80);
+  }
   if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
   if (state.view === 'starred') list = list.filter(e => state.starred.has(e.id));
   if (state.view === 'history') {
@@ -1300,7 +1328,7 @@ function entryAssetItems(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const items = [];
   if (assets.translation) items.push({ type: 'translation', label: '中译', title: '查看中文翻译' });
-  if (assets.rewrite) items.push({ type: 'rewrite', label: '重写', title: '查看乔木风格重写' });
+  if (assets.rewrite) items.push({ type: 'rewrite', label: '重写', title: '查看中文改写' });
   if (assets.comments) items.push({ type: 'comments', label: `点评 ${assets.comments}`, title: '查看人工点评' });
   if (assets.chatMessages) items.push({ type: 'chat', label: `对话 ${assets.chatMessages}`, title: '查看文章对话' });
   return items;
@@ -1326,7 +1354,7 @@ const ASSET_TYPE_LABELS = {
 
 const ASSET_DIRECTORY_LABELS = {
   translation: '中文翻译',
-  rewrite: '乔木风格重写',
+  rewrite: '中文改写',
   comments: '人工点评',
   chat: '文章对话',
 };
@@ -1337,7 +1365,7 @@ function assetDirectoryLabel(type) {
 
 const ASSET_FILTERS = {
   translation: { label: '中译', count: entry => assetCountForType(entry, 'translation'), title: '查看有中文翻译的文章' },
-  rewrite: { label: '重写', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有乔木风格重写的文章' },
+  rewrite: { label: '重写', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有中文改写的文章' },
   comments: { label: '点评', count: entry => assetCountForType(entry, 'comments'), title: '查看有人工点评的文章' },
   chat: { label: '对话', count: entry => assetCountForType(entry, 'chat'), title: '查看有文章对话的文章' },
 };
@@ -1440,43 +1468,7 @@ function assetDashboardStats() {
 function renderAssetDashboard() {
   const dashboard = $('#asset-dashboard');
   if (!dashboard) return;
-  dashboard.classList.toggle('hidden', !state.entries.length);
-
-  const { entries, latest, counts, helpfulEntries, helpfulTotal, totalAssets } = assetDashboardStats();
-  const total = entries.length;
-  $('#asset-dashboard-total').textContent = totalAssets ? `${totalAssets} 条` : '0 条';
-  const recentTypes = latest && Array.isArray(latest.assets?.latestTypes)
-    ? latest.assets.latestTypes.map(type => ASSET_TYPE_LABELS[type]).filter(Boolean)
-    : [];
-  $('#asset-dashboard-recent').textContent = latest && latest.assets?.latestAt
-    ? `${total} 篇文章 · ${recentTypes.length ? recentTypes.join(' / ') : '资产'} · ${formatAssetTime(latest.assets.latestAt)}`
-    : '暂无沉淀';
-
-  const open = $('#asset-dashboard-open');
-  open.disabled = total === 0;
-  open.classList.toggle('active', state.view === 'assets' && state.assetSort === 'latest' && !state.assetFilter && !state.filterSource && !state.filterCategory);
-
-  const helpful = $('#asset-dashboard-helpful');
-  if (helpful) {
-    helpful.disabled = helpfulTotal === 0;
-    helpful.title = helpfulTotal
-      ? `查看 ${helpfulEntries} 篇被读者标记有用的公开资产`
-      : '暂无读者标记有用的公开资产';
-    helpful.classList.toggle('active', state.view === 'assets' && state.assetSort === 'helpful' && !state.assetFilter && !state.filterSource && !state.filterCategory);
-    const value = $('#asset-dashboard-helpful-count');
-    if (value) value.textContent = helpfulTotal ? `${helpfulTotal} 次` : '0';
-  }
-
-  for (const [type, def] of Object.entries(ASSET_FILTERS)) {
-    const btn = $(`[data-asset-filter="${type}"]`);
-    const count = counts[type] || 0;
-    if (!btn) continue;
-    btn.disabled = count === 0;
-    btn.title = count ? def.title : '暂无这类资产';
-    btn.classList.toggle('active', state.view === 'assets' && state.assetFilter === type && !state.filterSource && !state.filterCategory);
-    const value = btn.querySelector('strong');
-    if (value) value.textContent = count;
-  }
+  dashboard.classList.add('hidden');
 }
 
 function assetActivityLabel(entry) {
@@ -1503,6 +1495,18 @@ function assetActivityLabel(entry) {
 function entryHistoryLabel(entry) {
   if (state.view !== 'history' || !entry || !state.history.has(entry.id)) return '';
   return `最近阅读 ${formatAssetTime(state.history.get(entry.id))}`;
+}
+
+function hotEntryLabel(entry) {
+  if (state.view !== 'hot') return '';
+  const stats = entryStats(entry);
+  const parts = [
+    `热度 ${entryQualityScore(entry).toFixed(1)}`,
+    stats.likeCount ? `赞 ${formatCompactCount(stats.likeCount)}` : '',
+    stats.dislikeCount ? `踩 ${formatCompactCount(stats.dislikeCount)}` : '',
+    stats.favoriteCount ? `收藏 ${formatCompactCount(stats.favoriteCount)}` : '',
+  ].filter(Boolean);
+  return parts.join(' · ');
 }
 
 function assetPreviewForEntry(entry) {
@@ -2005,7 +2009,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
     const total = assetCountForType(entry, 'rewrite');
     rows.push({
       type: 'rewrite',
-      label: '乔木重写',
+      label: '中文改写',
       value: rewrite ? assetMetaLine([total > 1 ? `${total} 条` : '', rewrite.createdBy, rewrite.model, assetHelpfulMeta(rewrite), formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite', [total > 1 ? `${total} 条` : '']) || '正在加载详情'),
       preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
     });
@@ -2215,6 +2219,59 @@ function requireAuth(mode = 'login') {
   return false;
 }
 
+function openSubmitLinkModal() {
+  if (!requireAuth('login')) return;
+  $('#submit-link-url').value = '';
+  $('#submit-link-note').value = '';
+  $('#submit-link-submit').disabled = false;
+  $('#submit-link-submit').textContent = '提交';
+  $('#submit-link-modal').classList.remove('hidden');
+  setTimeout(() => $('#submit-link-url').focus(), 30);
+}
+
+function closeSubmitLinkModal() {
+  $('#submit-link-modal').classList.add('hidden');
+}
+
+async function submitReaderLink() {
+  if (!requireAuth('login')) return;
+  const url = $('#submit-link-url').value.trim();
+  const note = $('#submit-link-note').value.trim();
+  if (!url) {
+    toast('请填写链接');
+    return;
+  }
+  const btn = $('#submit-link-submit');
+  btn.disabled = true;
+  btn.textContent = '提交中…';
+  try {
+    const data = await api('/api/submit-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, note }),
+    });
+    closeSubmitLinkModal();
+    state.view = 'all';
+    state.filterSource = 'user-submitted';
+    state.filterCategory = null;
+    state.assetFilter = null;
+    state.assetSort = 'latest';
+    state.contributorSort = 'latest';
+    state.q = '';
+    await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+    updateListTitle();
+    renderList();
+    renderSidebar();
+    if (data.entry) await openEntry(data.entry);
+    toast('链接已提交');
+  } catch (err) {
+    toast('提交失败: ' + err.message, 5000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '提交';
+  }
+}
+
 async function submitAuth() {
   const email = $('#auth-email').value.trim();
   const password = $('#auth-password').value;
@@ -2343,6 +2400,8 @@ function renderList() {
       ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
       : state.view === 'history'
       ? '还没有浏览记录<br/>打开几篇文章后会出现在这里'
+      : state.view === 'hot'
+      ? '还没有足够反馈<br/>提交链接、点赞或收藏后会逐步形成热门列表'
       : '这里空空如也<br/>试试刷新或切换视图';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
     return;
@@ -2351,7 +2410,7 @@ function renderList() {
   for (const e of list) {
     const src = sourceById(e.sourceId);
     const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
-    const entryActivity = assetActivityLabel(e) || entryHistoryLabel(e);
+    const entryActivity = assetActivityLabel(e) || entryHistoryLabel(e) || hotEntryLabel(e);
     const statsLine = entryStatsLabel(e);
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
@@ -2429,6 +2488,7 @@ function updateListTitle() {
   let title = '全部';
   if (state.filterSource) title = sourceById(state.filterSource)?.name || state.filterSource;
   else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
+  else if (state.view === 'hot') title = '热门';
   else if (state.view === 'unread') title = '未读';
   else if (state.view === 'starred') title = '收藏';
   else if (state.view === 'history') title = '浏览记录';
@@ -2463,6 +2523,16 @@ function sanitize(html) {
 function plainTextFromHtml(value) {
   const doc = new DOMParser().parseFromString(String(value || ''), 'text/html');
   return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function entryOriginalTextLength(entry = state.activeEntry) {
+  if (!entry) return 0;
+  const content = contentCache.get(entry.id) || entry.content || '';
+  return plainTextFromHtml(content).length;
+}
+
+function hasUsableOriginalContent(entry = state.activeEntry) {
+  return entryOriginalTextLength(entry) >= 700;
 }
 
 function translationPairText(pair) {
@@ -2645,9 +2715,11 @@ function renderTitle(e) {
 function updateFetchOriginalButton(entry = state.activeEntry) {
   const btn = $('#reader-fetch-original');
   const canFetch = Boolean(entry && /^https?:\/\//i.test(entry.link || ''));
-  btn.classList.toggle('hidden', !canFetch);
-  btn.disabled = !canFetch || state.fetchingOriginal;
+  const alreadyHandled = Boolean(entry && (entry.originalFetchedAt || entry.originalFetchAttemptedAt || hasUsableOriginalContent(entry)));
+  btn.classList.toggle('hidden', !canFetch || alreadyHandled);
+  btn.disabled = !canFetch || alreadyHandled || state.fetchingOriginal;
   btn.textContent = state.fetchingOriginal ? '获取中…' : '获取原文';
+  btn.title = entry && entry.originalFetchError ? `上次获取失败：${entry.originalFetchError}` : '从原始网页提取正文';
 }
 
 function updateReaderTocVisibility(tab = state.readerTab) {
@@ -2947,12 +3019,12 @@ function renderRewrite(rewrite) {
   if (!rewrite || !rewrite.body) {
     empty.classList.remove('hidden');
     $('#rewrite-meta').textContent = '暂无';
-    $('#reader-rewrite').textContent = '生成乔木风格重写';
+    $('#reader-rewrite').textContent = '生成中文改写';
     renderAssetHelpfulButton('rewrite', null);
     return;
   }
   empty.classList.add('hidden');
-  $('#reader-rewrite').textContent = rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
+  $('#reader-rewrite').textContent = rewrite.stale ? '更新中文改写' : '重新生成中文改写';
   $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
   renderAssetHelpfulButton('rewrite', state.rewrite);
   content.innerHTML = renderMarkdownLite(rewrite.body);
@@ -3075,7 +3147,7 @@ async function generateRewrite({ force = false } = {}) {
   setReaderTab('rewrite');
   state.rewriteGenerating = true;
   btn.disabled = true;
-  btn.textContent = '重写中…';
+  btn.textContent = '改写中…';
   try {
     const data = await api(`/api/entry/${entry.id}/rewrite`, {
       method: 'POST',
@@ -3091,7 +3163,7 @@ async function generateRewrite({ force = false } = {}) {
       renderList();
     }
     setReaderTab('rewrite');
-    toast(data.originalFetched ? '已获取原文并保存乔木风格重写' : data.cached ? '已显示缓存重写' : '乔木风格重写已保存');
+    toast(data.originalFetched ? '已获取原文并保存中文改写' : data.cached ? '已显示缓存重写' : '中文改写已保存');
   } catch (err) {
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
       openAiConfigModal('settings');
@@ -3100,8 +3172,8 @@ async function generateRewrite({ force = false } = {}) {
   } finally {
     state.rewriteGenerating = false;
     btn.disabled = false;
-    if (!state.rewrite) btn.textContent = '生成乔木风格重写';
-    else btn.textContent = state.rewrite.stale ? '更新乔木风格重写' : '重新生成乔木风格重写';
+    if (!state.rewrite) btn.textContent = '生成中文改写';
+    else btn.textContent = state.rewrite.stale ? '更新中文改写' : '重新生成中文改写';
   }
 }
 
@@ -3137,7 +3209,15 @@ async function fetchOriginalContent() {
     loadRewrite(updated);
     toast('原文已获取并保存');
   } catch (err) {
-    renderOriginalContent(entry, contentCache.get(entry.id) || entry.content || '');
+    const failedEntry = {
+      ...entry,
+      originalFetchAttemptedAt: Date.now(),
+      originalFetchError: err.message,
+    };
+    state.activeEntry = failedEntry;
+    const idx = state.entries.findIndex(item => item.id === failedEntry.id);
+    if (idx >= 0) state.entries[idx] = { ...state.entries[idx], originalFetchAttemptedAt: failedEntry.originalFetchAttemptedAt, originalFetchError: failedEntry.originalFetchError };
+    renderOriginalContent(failedEntry, contentCache.get(entry.id) || entry.content || '');
     toast('获取原文失败: ' + err.message, 5000);
   } finally {
     state.fetchingOriginal = false;
@@ -3449,7 +3529,7 @@ function myAssetItemsForCurrentTab() {
 
 function userAssetDisplay(type, item) {
   if (type === 'translation') return { label: '中文翻译', body: item.contentSnippet || item.summaryZh || '' };
-  if (type === 'rewrite') return { label: '乔木重写', body: item.bodySnippet || '' };
+  if (type === 'rewrite') return { label: '中文改写', body: item.bodySnippet || '' };
   if (type === 'chat') return { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' };
   return commentDisplayParts(item.body || item.bodySnippet || '');
 }
@@ -4356,12 +4436,16 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
     $('#reader-content').innerHTML = '<p style="color:var(--text-2)">加载内容中…</p>';
     try {
       const data = await api(`/api/entry/${e.id}`);
-      content = data.entry.content;
+      if (data.entry && state.activeEntry?.id === e.id) {
+        state.activeEntry = { ...state.activeEntry, ...data.entry };
+      }
+      content = data.entry && data.entry.content;
       contentCache.set(e.id, content || '');
     } catch { /* fall through to summary */ }
     if (state.activeEntry?.id !== e.id) return; // user moved on
   }
-  renderOriginalContent(e, content);
+  renderOriginalContent(state.activeEntry || e, content);
+  updateFetchOriginalButton(state.activeEntry || e);
   if (state.translation && state.activeEntry?.id === e.id) renderTranslation(state.translation);
 }
 
@@ -5530,6 +5614,13 @@ $('#auth-form').onsubmit = (e) => {
   e.preventDefault();
   submitAuth();
 };
+$('#submit-link-open').onclick = openSubmitLinkModal;
+$('#submit-link-close').onclick = closeSubmitLinkModal;
+$('#submit-link-modal').onclick = (e) => { if (e.target.id === 'submit-link-modal') closeSubmitLinkModal(); };
+$('#submit-link-form').onsubmit = (e) => {
+  e.preventDefault();
+  submitReaderLink();
+};
 
 let searchTimer = null;
 $('#search').oninput = (e) => {
@@ -5569,6 +5660,7 @@ document.addEventListener('keydown', (e) => {
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
     $('#my-comments-modal').classList.add('hidden');
+    $('#submit-link-modal').classList.add('hidden');
     closeContributorModal();
   }
 });
