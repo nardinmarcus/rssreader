@@ -26,6 +26,7 @@ function readStoredNumber(key) {
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'rewrite', 'translation'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
+const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', comments: '人工点评', chat: '文章对话' };
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
@@ -3441,6 +3442,7 @@ function copyCommentLink(commentId) {
 function myAssetUrl(type, item) {
   if (!item) return '';
   const entry = item.entry || { id: item.entryId };
+  if (type === 'likes') return readerUrlFor(entry);
   if (type === 'translation' || type === 'rewrite') return readerAssetUrl(type, entry, item.id);
   if (type === 'chat') return chatMessageUrl(item.id, entry);
   return commentUrl(item.id, entry);
@@ -3460,10 +3462,11 @@ function myPublicRssUrl() {
 }
 
 function normalizeUserAssetTab(type) {
-  return ASSET_FILTER_TYPES.includes(type) ? type : 'translation';
+  return PROFILE_TAB_TYPES.includes(type) ? type : 'translation';
 }
 
 function userAssetLabel(type) {
+  if (type === 'likes') return '点赞文章';
   return ASSET_DIRECTORY_LABELS[type] || ASSET_TYPE_LABELS[type] || '资产';
 }
 
@@ -3741,6 +3744,7 @@ function myAssetItemsForCurrentTab() {
 }
 
 function userAssetDisplay(type, item) {
+  if (type === 'likes') return { label: '点赞文章', body: item.summaryZh || item.summary || item.entry?.summaryZh || item.entry?.summary || '' };
   if (type === 'translation') return { label: '中文翻译', body: item.contentSnippet || item.summaryZh || '' };
   if (type === 'rewrite') return { label: '中文改写', body: item.bodySnippet || '' };
   if (type === 'chat') return { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' };
@@ -3856,6 +3860,8 @@ function contributorAssetItemsForCurrentTab() {
     ? state.contributor.rewrites || []
     : type === 'chat'
     ? state.contributor.messages || []
+    : type === 'likes'
+    ? state.contributor.likedEntries || []
     : state.contributor.comments || [];
   return sortContributorAssets(items, state.contributor.sort);
 }
@@ -3865,10 +3871,12 @@ function renderContributorTabs() {
   const rewriteCount = (state.contributor.rewrites || []).length;
   const commentCount = (state.contributor.comments || []).length;
   const chatCount = (state.contributor.messages || []).length;
+  const likesCount = (state.contributor.likedEntries || []).length;
   $('#contributor-translation-count').textContent = translationCount;
   $('#contributor-rewrite-count').textContent = rewriteCount;
   $('#contributor-comments-count').textContent = commentCount;
   $('#contributor-chat-count').textContent = chatCount;
+  $('#contributor-likes-count').textContent = likesCount;
   $$('#contributor-modal [data-contributor-tab]').forEach(btn => {
     const active = btn.dataset.contributorTab === state.contributor.tab;
     btn.classList.toggle('active', active);
@@ -3930,9 +3938,9 @@ function renderContributorProfile() {
   box.classList.remove('hidden');
   box.innerHTML = `
     ${avatarHtml(profile, 'contributor-profile-avatar')}
-    <div class="contributor-profile-body">
-      <div class="contributor-profile-stats">
-        ${Number(profile.followerCount) || 0} 关注者 · ${Number(profile.followingCount) || 0} 正在关注 · ${Number(profile.helpfulCount) || 0} 有用反馈
+      <div class="contributor-profile-body">
+        <div class="contributor-profile-stats">
+        ${Number(profile.followerCount) || 0} 关注者 · ${Number(profile.followingCount) || 0} 正在关注 · ${Number(profile.helpfulCount) || 0} 有用反馈 · ${(state.contributor.likedEntries || []).length} 篇点赞
       </div>
       ${profile.bio ? `<div class="contributor-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}
       ${links.length ? `<div class="contributor-profile-links">${links.map(link => `<a href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.title || compactUrlLabel(link.url))}</a>`).join('')}</div>` : ''}
@@ -3960,7 +3968,7 @@ function renderContributorAssets() {
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的贡献主页` : '贡献主页';
   $('#contributor-subtitle').textContent = profile
-    ? `公开沉淀的翻译、重写、点评和文章对话。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
+    ? `公开沉淀的翻译、重写、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
     : '正在读取公开资产…';
   renderContributorProfile();
   if (rssLink) {
@@ -3983,12 +3991,20 @@ function renderContributorAssets() {
   list.innerHTML = items.map(item => {
     const entry = item.entry || {};
     const display = userAssetDisplay(type, item);
-    const title = type === 'translation'
+    const title = type === 'likes'
+      ? (item.titleZh || entry.titleZh || item.title || entry.title || '未命名文章')
+      : type === 'translation'
       ? (item.titleZh || entry.titleZh || entry.title || '未命名文章')
       : type === 'rewrite'
         ? (item.title || entry.titleZh || entry.title || '未命名文章')
         : (entry.titleZh || entry.title || '未命名文章');
-    const meta = type === 'chat' ? [
+    const meta = type === 'likes' ? [
+      sourceName(entry.sourceId || item.sourceId),
+      Number(item.stats?.likeCount || 0) ? `赞 ${Number(item.stats.likeCount)}` : '',
+      Number(item.stats?.dislikeCount || 0) ? `踩 ${Number(item.stats.dislikeCount)}` : '',
+      Number(item.stats?.viewCount || 0) ? `阅 ${Number(item.stats.viewCount)}` : '',
+      `点赞 ${formatAssetTime(item.updatedAt || item.createdAt)}`,
+    ].filter(Boolean).join(' · ') : type === 'chat' ? [
       sourceName(entry.sourceId),
       item.author,
       item.model,
@@ -4021,7 +4037,7 @@ function renderContributorAssets() {
         <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
         <div class="my-comment-actions">
           <button type="button" class="ghost-btn" data-contributor-asset-open="${escapeHtml(item.id)}">打开文章</button>
-          <button type="button" class="ghost-btn" data-contributor-asset-copy-content="${escapeHtml(item.id)}">⧉ 复制内容</button>
+          ${type === 'likes' ? '' : `<button type="button" class="ghost-btn" data-contributor-asset-copy-content="${escapeHtml(item.id)}">⧉ 复制内容</button>`}
           <button type="button" class="ghost-btn" data-contributor-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
         </div>
       </article>`;
@@ -4033,7 +4049,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
   if (!id) return;
   const contributorAssetSort = normalizeContributorAssetSort(sort);
   const contributorAssetTab = normalizeUserAssetTab(tab);
-  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
+  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], likedEntries: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
   $('#contributor-modal').classList.remove('hidden');
   renderContributorAssets();
   try {
@@ -4046,6 +4062,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
       rewrites: data.rewrites || [],
       comments: data.comments || [],
       messages: data.messages || [],
+      likedEntries: data.likedEntries || [],
       tab: contributorAssetTab,
       sort: contributorAssetSort,
       loading: false,
@@ -4103,7 +4120,9 @@ async function openContributorAsset(itemId) {
   }
   closeContributorModal({ clearUrl: false });
   const type = normalizeUserAssetTab(state.contributor.tab);
-  const ok = type === 'translation' || type === 'rewrite'
+  const ok = type === 'likes'
+    ? await openEntryById(entryId, { updateUrl: true, replaceUrl: false })
+    : type === 'translation' || type === 'rewrite'
     ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
     : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })

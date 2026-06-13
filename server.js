@@ -1976,17 +1976,20 @@ app.get('/api/contributors/:id', (req, res) => {
   const rewrites = store.getUserRewrites(contributor.id, { limit });
   const comments = store.getUserComments(contributor.id, { limit });
   const messages = store.getUserChatMessages(contributor.id, { limit });
+  const likedEntries = store.getUserEntryReactions(contributor.id, { limit, reaction: 'like' });
   res.json({
     contributor,
     translations,
     rewrites,
     comments,
     messages,
+    likedEntries,
     counts: {
       translation: translations.length,
       rewrite: rewrites.length,
       comments: comments.length,
       chat: messages.length,
+      likes: likedEntries.length,
       helpful: Number(contributor.helpfulCount) || 0,
       helpfulAssets: Number(contributor.helpfulAssets) || 0,
     },
