@@ -23,6 +23,7 @@ const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、乔木风格�
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const UMAMI_WEBSITE_ID = String(process.env.UMAMI_WEBSITE_ID || '').trim();
 const UMAMI_SRC = String(process.env.UMAMI_SRC || 'https://umami.qiaomu.ai/script.js').trim();
+const ARTICLE_SHORT_ID_LENGTH = 12;
 const ASSET_DIRECTORY_META = {
   translation: {
     label: '中文翻译',
@@ -91,22 +92,54 @@ function clipText(value, max = 180) {
 
 function slugifyForUrl(value, fallback = 'article') {
   const slug = String(value || '')
-    .normalize('NFKD')
+    .normalize('NFKC')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/&/g, ' and ')
-    .replace(/['’]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/['’"“”‘]/g, '')
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-')
-    .slice(0, 96)
+    .slice(0, 80)
     .replace(/-+$/g, '');
   return slug || fallback;
 }
 
 function entrySlug(entry) {
   const fallback = slugifyForUrl(entry && entry.id, 'article');
-  return slugifyForUrl(entry && (entry.title || entry.titleZh || entry.id), fallback);
+  return slugifyForUrl(entry && (entry.titleZh || entry.title || entry.id), fallback);
+}
+
+function entryShortId(entryOrId) {
+  const id = typeof entryOrId === 'string' ? entryOrId : entryOrId && entryOrId.id;
+  return String(id || '').trim().slice(0, ARTICLE_SHORT_ID_LENGTH);
+}
+
+function encodePathSegment(value) {
+  return encodeURIComponent(String(value || '').trim());
+}
+
+function entryArticleLocator(entry) {
+  const shortId = entryShortId(entry);
+  return `${entrySlug(entry)}--${shortId}`;
+}
+
+function decodePathSegment(value) {
+  try {
+    return decodeURIComponent(value).trim();
+  } catch {
+    return String(value || '').trim();
+  }
+}
+
+function splitArticleLocator(locator) {
+  const value = String(locator || '').trim();
+  const marker = value.lastIndexOf('--');
+  if (marker <= 0) return null;
+  const slug = value.slice(0, marker).replace(/^-+|-+$/g, '');
+  const shortId = value.slice(marker + 2).trim();
+  if (!slug || shortId.length < 6) return null;
+  return { slug, shortId };
 }
 
 function translationBlockText(pair) {
@@ -164,32 +197,58 @@ function contributorIdFromRequest(req) {
 }
 
 function articleRouteFromRequest(req) {
-  const match = String(req.path || '').match(/^\/articles\/([^/?#]+)(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?\/?$/);
+  const match = String(req.path || '').match(/^\/articles\/(.+?)\/?$/);
   if (!match) return null;
-  let id = '';
-  try {
-    id = decodeURIComponent(match[1]).trim();
-  } catch {
-    id = String(match[1] || '').trim();
+  const segments = String(match[1] || '').split('/').filter(Boolean).map(decodePathSegment);
+  const first = segments[0] || '';
+  if (!first) return null;
+  const locator = splitArticleLocator(first);
+  if (locator) {
+    const focus = normalizeAssetDirectoryType(segments[1] || '');
+    return {
+      id: locator.shortId,
+      shortId: locator.shortId,
+      slug: locator.slug,
+      focus,
+      itemId: focus ? (segments[2] || '') : '',
+      legacy: false,
+    };
   }
-  if (!id) return null;
-  const raw = match.slice(2).filter(Boolean).map(value => {
-    try {
-      return decodeURIComponent(value).trim();
-    } catch {
-      return String(value || '').trim();
-    }
-  });
-  let slug = raw[0] || '';
+  const id = first;
+  const raw = segments.slice(1);
   let focus = '';
   let itemId = '';
   const firstAssetIndex = raw.findIndex(value => normalizeAssetDirectoryType(value));
+  let slug = raw[0] || '';
   if (firstAssetIndex >= 0) {
     focus = normalizeAssetDirectoryType(raw[firstAssetIndex]);
     slug = raw.slice(0, firstAssetIndex).filter(Boolean).join('-');
     itemId = raw[firstAssetIndex + 1] || '';
   }
-  return { id, slug, focus, itemId };
+  return { id, shortId: '', slug, focus, itemId, legacy: true };
+}
+
+function entryForArticleRoute(route, viewer = null) {
+  if (!route || !route.id) return null;
+  return route.shortId
+    ? fetcher.getEntryByIdPrefix(route.shortId, viewer)
+    : fetcher.getEntryById(route.id, viewer);
+}
+
+function entryByIdOrPrefix(id, viewer = null) {
+  const clean = String(id || '').trim();
+  if (!clean) return null;
+  return fetcher.getEntryById(clean, viewer) || fetcher.getEntryByIdPrefix(clean, viewer);
+}
+
+function articleCanonicalPathForRoute(entry, route, { includeHash = false } = {}) {
+  if (!entry) return '/';
+  return entryPublicPath(entry, route && route.focus, route && route.itemId, { includeHash });
+}
+
+function normalizePathForCompare(value) {
+  const path = String(value || '').replace(/\/+$/, '');
+  return path || '/';
 }
 
 function requestAssetItemId(req, focus = '') {
@@ -941,17 +1000,16 @@ function sitemapUrlXml(loc, { lastmod = '', changefreq = 'weekly', priority = '0
 }
 
 function entryPublicPath(entry, focus = '', itemId = '', { includeHash = true } = {}) {
-  const id = entry && entry.id ? encodeURIComponent(entry.id) : '';
-  if (!id) return '/';
-  const parts = ['/articles', id, entrySlug(entry)];
+  if (!entry || !entry.id) return '/';
+  const parts = ['/articles', encodePathSegment(entryArticleLocator(entry))];
   const assetFocus = normalizeAssetDirectoryType(focus);
   const safeItemId = String(itemId || '').trim();
   let hash = '';
   if (assetFocus) parts.push(assetFocus);
   if (assetFocus && safeItemId) {
-    parts.push(encodeURIComponent(safeItemId));
-    if (includeHash && assetFocus === 'comments') hash = `#comment-${encodeURIComponent(safeItemId)}`;
-    if (includeHash && assetFocus === 'chat') hash = `#chat-${encodeURIComponent(safeItemId)}`;
+    parts.push(encodePathSegment(safeItemId));
+    if (includeHash && assetFocus === 'comments') hash = `#comment-${encodePathSegment(safeItemId)}`;
+    if (includeHash && assetFocus === 'chat') hash = `#chat-${encodePathSegment(safeItemId)}`;
   }
   return `${parts.join('/')}${hash}`;
 }
@@ -1395,7 +1453,7 @@ function renderLlmsTxt(req) {
     `- Article conversations: ${assetFeedUrl(req, 'chat')}`,
     '',
     'Citation guidance:',
-    '- Prefer canonical /articles/... URLs over query-parameter URLs.',
+    '- Prefer canonical /articles/<readable-slug>--<short-id> URLs over legacy ID-first or query-parameter URLs.',
     '- Prefer pages with public assets over raw RSS-only entries.',
     '- Attribute human comments, translations, rewrites, and AI conversations to the displayed contributor or model metadata on the page.',
     '',
@@ -1424,14 +1482,19 @@ function umamiScriptTag() {
 app.get('/', (req, res) => {
   const entryId = String(req.query.entry || '').trim();
   const entry = entryId ? fetcher.getEntryById(entryId) : null;
+  if (entry) return res.redirect(301, entryPublicUrl(req, entry));
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req, entry));
 });
 
 app.get(/^\/articles\/.+$/, (req, res) => {
   const route = articleRouteFromRequest(req);
-  const entry = route && route.id ? fetcher.getEntryById(route.id) : null;
+  const entry = entryForArticleRoute(route, req.user);
   if (!entry) return res.status(404).type('text/plain').send('Not found');
+  const canonicalPath = articleCanonicalPathForRoute(entry, route);
+  if (normalizePathForCompare(req.path) !== normalizePathForCompare(canonicalPath)) {
+    return res.redirect(301, publicUrl(req, canonicalPath));
+  }
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req, entry));
 });
@@ -2067,7 +2130,7 @@ app.get('/api/entries', (req, res) => {
 });
 
 app.get('/api/entry/:id', (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id, req.user);
+  const entry = entryByIdOrPrefix(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   res.json({ entry });
 });

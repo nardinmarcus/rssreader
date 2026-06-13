@@ -465,22 +465,31 @@ function routeStateFromUrl() {
 }
 
 function articleRouteFromPath(pathname) {
-  const match = String(pathname || '').match(/^\/articles\/([^/?#]+)(?:\/([^/?#]+))?(?:\/([^/?#]+))?(?:\/([^/?#]+))?\/?$/);
+  const match = String(pathname || '').match(/^\/articles\/(.+?)\/?$/);
   if (!match) return null;
-  let id = '';
-  try {
-    id = decodeURIComponent(match[1]).trim();
-  } catch {
-    id = String(match[1] || '').trim();
-  }
-  if (!id) return null;
-  const raw = match.slice(2).filter(Boolean).map(value => {
+  const segments = String(match[1] || '').split('/').filter(Boolean).map(value => {
     try {
       return decodeURIComponent(value).trim();
     } catch {
       return String(value || '').trim();
     }
   });
+  const first = segments[0] || '';
+  const locator = splitArticleLocator(first);
+  if (locator) {
+    const focus = ASSET_FILTER_TYPES.includes(segments[1]) ? segments[1] : '';
+    return {
+      id: locator.shortId,
+      slug: locator.slug,
+      focus,
+      itemId: focus ? (segments[2] || '') : '',
+      shortId: locator.shortId,
+      legacy: false,
+    };
+  }
+  const id = first;
+  if (!id) return null;
+  const raw = segments.slice(1);
   let slug = raw[0] || '';
   let focus = '';
   let itemId = '';
@@ -490,27 +499,46 @@ function articleRouteFromPath(pathname) {
     slug = raw.slice(0, assetIndex).filter(Boolean).join('-');
     itemId = raw[assetIndex + 1] || '';
   }
-  return { id, slug, focus, itemId };
+  return { id, slug, focus, itemId, shortId: '', legacy: true };
 }
 
 function slugifyForUrl(value, fallback = 'article') {
   const slug = String(value || '')
-    .normalize('NFKD')
+    .normalize('NFKC')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/&/g, ' and ')
-    .replace(/['’]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/['’"“”‘]/g, '')
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-')
-    .slice(0, 96)
+    .slice(0, 80)
     .replace(/-+$/g, '');
   return slug || fallback;
 }
 
 function entrySlug(entry) {
   const fallback = slugifyForUrl(entry && entry.id, 'article');
-  return slugifyForUrl(entry && (entry.title || entry.titleZh || entry.id), fallback);
+  return slugifyForUrl(entry && (entry.titleZh || entry.title || entry.id), fallback);
+}
+
+function entryShortId(entryOrId) {
+  const id = typeof entryOrId === 'string' ? entryOrId : entryOrId && entryOrId.id;
+  return String(id || '').trim().slice(0, 12);
+}
+
+function entryArticleLocator(entry) {
+  return `${entrySlug(entry)}--${entryShortId(entry)}`;
+}
+
+function splitArticleLocator(locator) {
+  const value = String(locator || '').trim();
+  const marker = value.lastIndexOf('--');
+  if (marker <= 0) return null;
+  const slug = value.slice(0, marker).replace(/^-+|-+$/g, '');
+  const shortId = value.slice(marker + 2).trim();
+  if (!slug || shortId.length < 6) return null;
+  return { slug, shortId };
 }
 
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
@@ -546,7 +574,7 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
       : nextTab === 'rewrite'
       ? 'rewrite'
       : '';
-    url.pathname = `/articles/${encodeURIComponent(entry.id)}/${entrySlug(entry)}`;
+    url.pathname = `/articles/${encodeURIComponent(entryArticleLocator(entry))}`;
     if (nextFocus) {
       url.pathname += `/${nextFocus}`;
       if (assetId) url.pathname += `/${encodeURIComponent(assetId)}`;
