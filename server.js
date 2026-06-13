@@ -44,7 +44,7 @@ const ASSET_DIRECTORY_META = {
 
 app.set('trust proxy', 1);
 app.use(compression());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
   req.user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE));
   next();
@@ -303,7 +303,6 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   const commentCount = comments.length;
   const chatCount = messages.length;
   const assetCount = translationCount + rewriteCount + commentCount + chatCount;
-  if (!assetCount) return null;
   const typeCounts = { translation: translationCount, rewrite: rewriteCount, comments: commentCount, chat: chatCount };
   const visibleAssetCount = assetType ? typeCounts[assetType] || 0 : assetCount;
   const latestAt = Math.max(
@@ -333,7 +332,9 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
     : `${sortPrefix}${displayName} 的公开资产（${assetCount} 条） · QMReader`;
   const description = typeMeta
     ? `${displayName} 在 QMReader 沉淀了 ${visibleAssetCount} 条${typeMeta.label}资产。${helpfulSentence}${sortSentence}${typeLatestAt ? `最新更新 ${formatShanghaiMinute(typeLatestAt)}。` : ''}`
-    : `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`;
+    : assetCount
+      ? `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : `${displayName} 的 QMReader 个人主页。`;
   return {
     contributor: { ...contributor, displayName },
     translations,
@@ -1671,6 +1672,48 @@ async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   return translated;
 }
 
+async function translateSubmittedTitle(entry) {
+  if (!entry || !entry.id || !deepseek.getConfig().configured || !deepseek.isLikelyEnglish(entry.title)) return null;
+  try {
+    const result = await deepseek.translateTitleBatch([entry], { author: 'system' });
+    return result.translations && result.translations[0] ? result.translations[0] : null;
+  } catch (error) {
+    console.warn(`Submit link title translation skipped for ${entry.id}:`, error.message || error);
+    return null;
+  }
+}
+
+function queueSubmittedContentTranslation(entry) {
+  if (!entry || !entry.id || !deepseek.getConfig().configured) return;
+  if (!deepseek.isLikelyEnglish(`${entry.title || ''}\n${plainText(entry.content || entry.summary || '').slice(0, 2000)}`)) return;
+  setTimeout(async () => {
+    try {
+      const latest = fetcher.getEntryById(entry.id) || entry;
+      await deepseek.translateEntry(latest, {
+        author: '向阳乔木',
+        temperature: 0.15,
+        maxTokens: 6000,
+      });
+      console.log(`Submitted link translated: ${entry.id}`);
+    } catch (error) {
+      console.warn(`Submit link content translation skipped for ${entry.id}:`, error.message || error);
+    }
+  }, 0);
+}
+
+function notifyTarget(target, actor, { type, objectType, entryId, fallbackMessage }) {
+  if (!target || !target.userId || !actor || !actor.id) return;
+  store.createNotification({
+    userId: target.userId,
+    actorId: actor.id,
+    type,
+    objectType,
+    objectId: target.objectId || '',
+    entryId,
+    message: target.message || fallbackMessage,
+  });
+}
+
 async function autoRewriteSources(sourceIds = AUTO_REWRITE_SOURCE_IDS) {
   const ids = sourceIds instanceof Set ? sourceIds : new Set(sourceIds);
   if (!ids.size) return { rewritten: 0, cached: 0, failed: [], skipped: 'no sources configured' };
@@ -1835,6 +1878,34 @@ app.get('/api/me', (req, res) => {
   res.json({ user: req.user || null });
 });
 
+app.patch('/api/me/profile', requireLogin, (req, res) => {
+  try {
+    const user = store.updateUserProfile(req.user.id, {
+      displayName: req.body && req.body.displayName,
+      bio: req.body && req.body.bio,
+      avatarUrl: req.body && req.body.avatarUrl,
+      links: req.body && req.body.links,
+    });
+    res.json({ user });
+  } catch (e) {
+    sendError(res, e, 'profile update failed');
+  }
+});
+
+app.get('/api/me/notifications', requireLogin, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 80));
+  res.json({
+    notifications: store.getUserNotifications(req.user.id, { limit }),
+    unreadCount: req.user.notificationUnreadCount || 0,
+  });
+});
+
+app.post('/api/me/notifications/read', requireLogin, (req, res) => {
+  const changed = store.markNotificationsRead(req.user.id);
+  const user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE)) || req.user;
+  res.json({ ok: true, changed, user });
+});
+
 app.post('/api/auth/register', (req, res) => {
   try {
     const user = store.createUser({
@@ -1898,7 +1969,7 @@ app.get('/api/contributors', (req, res) => {
 });
 
 app.get('/api/contributors/:id', (req, res) => {
-  const contributor = store.getContributor(req.params.id);
+  const contributor = store.getContributor(req.params.id, req.user);
   if (!contributor) return res.status(404).json({ error: 'contributor not found' });
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   const translations = store.getUserTranslations(contributor.id, { limit });
@@ -1920,6 +1991,16 @@ app.get('/api/contributors/:id', (req, res) => {
       helpfulAssets: Number(contributor.helpfulAssets) || 0,
     },
   });
+});
+
+app.post('/api/contributors/:id/follow', requireLogin, (req, res) => {
+  try {
+    const follow = req.body && typeof req.body.follow === 'boolean' ? req.body.follow : true;
+    const contributor = store.setUserFollow(req.user.id, req.params.id, follow);
+    res.json({ contributor });
+  } catch (e) {
+    sendError(res, e, 'follow failed');
+  }
 });
 
 app.post('/api/me/entry-state', requireLogin, (req, res) => {
@@ -2004,7 +2085,16 @@ app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const reaction = String((req.body && req.body.reaction) || '').trim().toLowerCase();
-    res.json({ stats: store.setEntryReaction(entry.id, req.user.id, reaction) });
+    const stats = store.setEntryReaction(entry.id, req.user.id, reaction);
+    if (reaction) {
+      notifyTarget(store.getEntrySubmissionOwner(entry.id), req.user, {
+        type: `entry_${reaction}`,
+        objectType: 'entry',
+        entryId: entry.id,
+        fallbackMessage: `有人反馈了你提交的链接：${entry.titleZh || entry.title}`,
+      });
+    }
+    res.json({ stats });
   } catch (e) {
     sendError(res, e, 'entry reaction failed');
   }
@@ -2016,6 +2106,8 @@ app.post('/api/submit-link', requireLogin, async (req, res) => {
   if (!url) return res.status(400).json({ error: '请填写要提交的链接' });
   try {
     const submitted = await fetcher.submitLink(url, req.user, { note });
+    await translateSubmittedTitle(submitted);
+    queueSubmittedContentTranslation(submitted);
     const entry = fetcher.getEntryById(submitted.id, req.user) || submitted;
     res.json({ entry });
   } catch (e) {
@@ -2106,6 +2198,14 @@ app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
     const assetId = String((req.body && req.body.assetId) || req.query.assetId || '').trim();
     const reaction = store.setEntryAssetHelpful(entry.id, type, req.user.id, helpful, assetId);
     if (!reaction) return res.status(404).json({ error: 'asset not found' });
+    if (helpful) {
+      notifyTarget(store.getEntryAssetNotificationTarget(entry.id, type, assetId), req.user, {
+        type: 'asset_helpful',
+        objectType: type,
+        entryId: entry.id,
+        fallbackMessage: `有人觉得你的${type === 'translation' ? '中文翻译' : '中文改写'}有用`,
+      });
+    }
     res.json({
       reaction: {
         helpfulCount: Number(reaction.helpful_count) || 0,
@@ -2161,6 +2261,14 @@ app.post('/api/entry/:id/comments/:commentId/helpful', requireLogin, (req, res) 
       : true;
     const reaction = store.setCommentHelpful(entry.id, req.params.commentId, req.user.id, helpful);
     if (!reaction) return res.status(404).json({ error: 'comment not found' });
+    if (helpful) {
+      notifyTarget(store.getCommentNotificationTarget(entry.id, req.params.commentId), req.user, {
+        type: 'comment_helpful',
+        objectType: 'comment',
+        entryId: entry.id,
+        fallbackMessage: '有人觉得你的点评有用',
+      });
+    }
     res.json({
       reaction: {
         helpfulCount: Number(reaction.helpful_count) || 0,
@@ -2215,6 +2323,14 @@ app.post('/api/entry/:id/chat/:messageId/helpful', requireLogin, (req, res) => {
       : true;
     const reaction = store.setChatMessageHelpful(entry.id, req.params.messageId, req.user.id, helpful);
     if (!reaction) return res.status(404).json({ error: 'chat message not found' });
+    if (helpful) {
+      notifyTarget(store.getChatNotificationTarget(entry.id, req.params.messageId), req.user, {
+        type: 'chat_helpful',
+        objectType: 'chat',
+        entryId: entry.id,
+        fallbackMessage: '有人觉得你的文章对话有用',
+      });
+    }
     res.json({
       reaction: {
         helpfulCount: Number(reaction.helpful_count) || 0,

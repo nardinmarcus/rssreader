@@ -24,7 +24,7 @@ function readStoredNumber(key) {
 }
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
-const READER_TABS = ['original', 'translation', 'rewrite'];
+const READER_TABS = ['original', 'rewrite', 'translation'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', comments: '人工点评', chat: '文章对话' };
 const ENTRY_PANE_MIN_WIDTH = 260;
@@ -373,6 +373,9 @@ const state = {
   myRewrites: [],
   myComments: [],
   myChatMessages: [],
+  notifications: [],
+  profileLinksDraft: [],
+  profileAvatarDraft: '',
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
   contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
@@ -395,7 +398,7 @@ const state = {
   pendingChatMessageId: '',
   fetchingOriginal: false,
   agentBusy: false,
-  agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
+  agentCollapsed: storage.getItem('qm_agent_collapsed') !== '0',
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   me: null,
@@ -681,6 +684,69 @@ function escapeHtml(value) {
 
 function escapeJsString(value) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+}
+
+function avatarInitial(user) {
+  return ((user && (user.displayName || user.email)) || 'Q').trim().slice(0, 1).toUpperCase() || 'Q';
+}
+
+function avatarHtml(user, className = 'account-avatar') {
+  const src = user && user.avatarUrl;
+  const initial = avatarInitial(user);
+  if (src) return `<span class="${className}"><img src="${escapeHtml(src)}" alt="${escapeHtml(initial)}" loading="lazy" /></span>`;
+  return `<span class="${className}">${escapeHtml(initial)}</span>`;
+}
+
+function normalizeProfileLinks(links = []) {
+  const seen = new Set();
+  return (Array.isArray(links) ? links : [])
+    .map(item => {
+      const url = String(item && item.url || '').trim();
+      if (!/^https?:\/\//i.test(url) || seen.has(url)) return null;
+      seen.add(url);
+      const title = String(item && item.title || '').replace(/\s+/g, ' ').trim().slice(0, 48);
+      return { title: title || domainOf(url) || '链接', url };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function compactUrlLabel(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace(/^www\./, '');
+  } catch {
+    return String(url || '').replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  }
+}
+
+function fileToAvatarDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\/(png|jpe?g|webp|gif)$/i.test(file.type || '')) {
+      reject(new Error('请选择 PNG、JPG、WebP 或 GIF 图片'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('读取头像失败'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('头像图片无法解析'));
+      img.onload = () => {
+        const size = 160;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const scale = Math.max(size / img.width, size / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+        resolve(canvas.toDataURL('image/webp', 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function renderInlineMarkdown(value) {
@@ -2163,19 +2229,27 @@ function renderAuthState() {
   $('#auth-open').classList.toggle('hidden', loggedIn);
   $('#account-info').classList.toggle('hidden', !loggedIn);
   $('#my-comments-btn').classList.toggle('hidden', !loggedIn);
+  $('#notification-open').classList.toggle('hidden', !loggedIn);
   $('#logout-btn').classList.toggle('hidden', !loggedIn);
   if (loggedIn) {
-    const initials = String(state.me.displayName || state.me.email || '读者').trim().slice(0, 2) || '读';
     $('#account-info').innerHTML = `
-      <span class="account-avatar">${escapeHtml(initials)}</span>
-      <span class="account-name">${escapeHtml(state.me.displayName || '读者')}</span>
-      ${isAdmin() ? '<span class="account-role">管理员</span>' : ''}
+      ${avatarHtml(state.me, 'account-avatar')}
+      <span class="account-text">
+        <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
+        <span>${escapeHtml(state.me.bio || '个人后台')}</span>
+      </span>
     `;
-    $('#account-info').title = '打开我的公开贡献';
+    $('#account-info').title = '打开个人后台';
+    const unread = Number(state.me.notificationUnreadCount) || 0;
+    const badge = $('#notification-count');
+    if (badge) {
+      badge.textContent = unread > 99 ? '99+' : String(unread);
+      badge.classList.toggle('hidden', unread <= 0);
+    }
   }
-  $('#refresh-btn').classList.toggle('hidden', !isAdmin());
-  $('#manage-btn').classList.toggle('hidden', !isAdmin());
-  $('.sidebar-footer').classList.toggle('hidden', !isAdmin());
+  $('.sidebar-footer').classList.add('hidden');
+  const adminActions = $('#profile-admin-actions');
+  if (adminActions) adminActions.classList.toggle('hidden', !isAdmin());
   renderSidebarAiSettings();
   updateAgentControls();
 }
@@ -2188,7 +2262,7 @@ function renderSidebarAiSettings() {
   const profile = currentAiProfile();
   const ready = loggedIn && hasUsableAiConfig(config);
   btn.classList.toggle('ready', ready);
-  btn.textContent = ready ? '⚿ AI 已配置' : '⚿ AI 设置';
+  btn.textContent = '⚿';
   btn.title = loggedIn
     ? (ready ? `${profile.name} · ${config.model}` : 'AI 模型配置')
     : '登录后配置自己的 API Key';
@@ -2511,13 +2585,25 @@ function updateSearchPlaceholder() {
 
 /* ---------- Reader ---------- */
 function sanitize(html) {
-  if (window.DOMPurify) {
-    return DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input'], ADD_ATTR: ['target'] });
-  }
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  doc.querySelectorAll('script,style,form,iframe,object,embed').forEach(n => n.remove());
+  doc.querySelectorAll('script,style,form,iframe,object,embed,button,input,select,textarea,svg,canvas').forEach(n => n.remove());
+  doc.querySelectorAll('.pencraft,.pc-reset,.icon-container,.image-link-expand,.view-image,[class*="image-link"],[class*="view-image"]').forEach(n => {
+    if (!n.querySelector('img') && !n.textContent.replace(/\s+/g, '').trim()) n.remove();
+  });
+  doc.querySelectorAll('a,div,span').forEach(n => {
+    if (n.querySelector('img,video,audio,table,hr')) return;
+    if (n.textContent.replace(/\s+/g, '').trim()) return;
+    n.remove();
+  });
   doc.querySelectorAll('*').forEach(n => [...n.attributes].forEach(a => { if (/^on/i.test(a.name)) n.removeAttribute(a.name); }));
-  return doc.body.innerHTML;
+  const cleaned = doc.body.innerHTML;
+  if (window.DOMPurify) {
+    return DOMPurify.sanitize(cleaned, {
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'svg', 'canvas', 'iframe', 'object', 'embed'],
+      ADD_ATTR: ['target'],
+    });
+  }
+  return cleaned;
 }
 
 function plainTextFromHtml(value) {
@@ -3428,6 +3514,131 @@ function renderMyPublicProfileActions() {
   if (rssCopy) rssCopy.classList.toggle('hidden', !rssUrl);
 }
 
+function renderProfileAvatarPreview(user = state.me) {
+  const target = $('#profile-avatar-preview');
+  if (!target) return;
+  const src = state.profileAvatarDraft || (user && user.avatarUrl) || '';
+  target.innerHTML = src
+    ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(avatarInitial(user))}" />`
+    : escapeHtml(avatarInitial(user));
+}
+
+function renderProfileLinksEditor() {
+  const wrap = $('#profile-links-editor');
+  if (!wrap) return;
+  const links = (Array.isArray(state.profileLinksDraft) ? state.profileLinksDraft : []).slice(0, 12);
+  if (!links.length) {
+    wrap.innerHTML = '<div class="notification-empty">还没有添加公开链接</div>';
+    return;
+  }
+  wrap.innerHTML = links.map((link, index) => `
+    <div class="profile-link-row" data-profile-link-row="${index}">
+      <input data-profile-link-title="${index}" type="text" maxlength="48" placeholder="标题" value="${escapeHtml(link.title)}" />
+      <input data-profile-link-url="${index}" type="url" placeholder="https://example.com" value="${escapeHtml(link.url)}" />
+      <button class="icon-btn profile-link-remove" type="button" data-profile-link-remove="${index}" title="移除链接">×</button>
+    </div>
+  `).join('');
+}
+
+function collectProfileLinks({ strict = false } = {}) {
+  const rows = $$('#profile-links-editor [data-profile-link-row]');
+  const links = rows.map(row => {
+    const index = row.dataset.profileLinkRow;
+    return {
+      title: $(`[data-profile-link-title="${index}"]`, row)?.value || '',
+      url: $(`[data-profile-link-url="${index}"]`, row)?.value || '',
+    };
+  }).slice(0, 12);
+  return strict ? normalizeProfileLinks(links) : links;
+}
+
+function renderProfileEditor() {
+  if (!state.me) return;
+  $('#profile-display-name').value = state.me.displayName || '';
+  $('#profile-bio').value = state.me.bio || '';
+  state.profileAvatarDraft = '';
+  state.profileLinksDraft = normalizeProfileLinks(state.me.links || []);
+  renderProfileAvatarPreview();
+  renderProfileLinksEditor();
+  const adminActions = $('#profile-admin-actions');
+  if (adminActions) adminActions.classList.toggle('hidden', !isAdmin());
+}
+
+function renderNotifications() {
+  const list = $('#notification-list');
+  if (!list) return;
+  const items = state.notifications || [];
+  if (!items.length) {
+    list.innerHTML = '<div class="notification-empty">暂无通知</div>';
+    return;
+  }
+  list.innerHTML = items.map(item => `
+    <div class="notification-item${item.read ? '' : ' unread'}">
+      <div>${escapeHtml(item.message || '新的通知')}</div>
+      <div class="notification-meta">${escapeHtml([item.actorName, item.entryTitle, timeAgo(item.createdAt)].filter(Boolean).join(' · '))}</div>
+    </div>
+  `).join('');
+}
+
+async function loadNotifications() {
+  if (!state.me) return;
+  try {
+    const data = await api('/api/me/notifications?limit=80');
+    state.notifications = data.notifications || [];
+    state.me = { ...state.me, notificationUnreadCount: Number(data.unreadCount) || 0 };
+    renderNotifications();
+    renderAuthState();
+  } catch (err) {
+    state.notifications = [];
+    renderNotifications();
+    toast('读取通知失败: ' + err.message, 4000);
+  }
+}
+
+async function markMyNotificationsRead() {
+  if (!state.me) return;
+  try {
+    const data = await api('/api/me/notifications/read', { method: 'POST' });
+    if (data.user) state.me = data.user;
+    state.notifications = (state.notifications || []).map(item => ({ ...item, read: true }));
+    renderNotifications();
+    renderAuthState();
+    toast('通知已标记为已读');
+  } catch (err) {
+    toast('更新通知失败: ' + err.message, 4000);
+  }
+}
+
+async function saveProfile() {
+  if (!state.me) return;
+  const btn = $('#profile-save');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  try {
+    const payload = {
+      displayName: $('#profile-display-name').value.trim(),
+      bio: $('#profile-bio').value.trim(),
+      avatarUrl: state.profileAvatarDraft || state.me.avatarUrl || '',
+      links: collectProfileLinks({ strict: true }),
+    };
+    const data = await api('/api/me/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (data.user) state.me = data.user;
+    renderAuthState();
+    renderProfileEditor();
+    renderMyPublicProfileActions();
+    toast('个人资料已保存');
+  } catch (err) {
+    toast('保存资料失败: ' + err.message, 5000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存资料';
+  }
+}
+
 function renderMyAssets() {
   const list = $('#my-comments-list');
   if (!list) return;
@@ -3489,6 +3700,8 @@ function renderMyAssets() {
 async function openMyCommentsModal() {
   if (!requireAuth('login')) return;
   $('#my-comments-modal').classList.remove('hidden');
+  renderProfileEditor();
+  loadNotifications();
   renderMyAssetTabs();
   $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的资产…</div>';
   try {
@@ -3704,6 +3917,37 @@ function contributorPageTitle() {
   return `${sortPrefix}${profile.displayName} 的${label} · QMReader`;
 }
 
+function renderContributorProfile() {
+  const profile = state.contributor.profile;
+  const box = $('#contributor-profile');
+  if (!box) return;
+  if (!profile) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+  const links = normalizeProfileLinks(profile.links || []);
+  box.classList.remove('hidden');
+  box.innerHTML = `
+    ${avatarHtml(profile, 'contributor-profile-avatar')}
+    <div class="contributor-profile-body">
+      <div class="contributor-profile-stats">
+        ${Number(profile.followerCount) || 0} 关注者 · ${Number(profile.followingCount) || 0} 正在关注 · ${Number(profile.helpfulCount) || 0} 有用反馈
+      </div>
+      ${profile.bio ? `<div class="contributor-profile-bio">${escapeHtml(profile.bio)}</div>` : ''}
+      ${links.length ? `<div class="contributor-profile-links">${links.map(link => `<a href="${escapeHtml(link.url)}" target="_blank" rel="noopener">${escapeHtml(link.title || compactUrlLabel(link.url))}</a>`).join('')}</div>` : ''}
+    </div>
+  `;
+  const follow = $('#contributor-follow');
+  if (follow) {
+    const isSelf = Boolean(state.me && state.me.id === profile.id);
+    follow.classList.toggle('hidden', !state.me || isSelf);
+    follow.textContent = profile.followedByMe ? '已关注' : '关注';
+    follow.classList.toggle('active', Boolean(profile.followedByMe));
+    follow.setAttribute('aria-pressed', profile.followedByMe ? 'true' : 'false');
+  }
+}
+
 function renderContributorAssets() {
   const list = $('#contributor-list');
   if (!list) return;
@@ -3718,6 +3962,7 @@ function renderContributorAssets() {
   $('#contributor-subtitle').textContent = profile
     ? `公开沉淀的翻译、重写、点评和文章对话。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
     : '正在读取公开资产…';
+  renderContributorProfile();
   if (rssLink) {
     rssLink.classList.toggle('hidden', !rssUrl);
     rssLink.href = rssUrl || '#';
@@ -3813,6 +4058,30 @@ async function openContributor(contributorId, { push = true, sort = state.contri
     state.contributor.loading = false;
     $('#contributor-list').innerHTML = `<div class="my-comments-empty">读取失败：${escapeHtml(err.message)}</div>`;
     toast('读取贡献主页失败: ' + err.message, 5000);
+  }
+}
+
+async function toggleContributorFollow() {
+  const profile = state.contributor.profile;
+  if (!profile || !state.me || state.me.id === profile.id) return;
+  const next = !profile.followedByMe;
+  const btn = $('#contributor-follow');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api(`/api/contributors/${encodeURIComponent(profile.id)}/follow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ follow: next }),
+    });
+    if (data.contributor) {
+      state.contributor.profile = { ...state.contributor.profile, ...data.contributor };
+      renderContributorAssets();
+    }
+    toast(next ? '已关注' : '已取消关注');
+  } catch (err) {
+    toast('关注失败: ' + err.message, 5000);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -5496,9 +5765,46 @@ $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#sidebar-ai-settings').onclick = () => openAiConfigModal('settings');
 $('#my-comments-btn').onclick = openMyCommentsModal;
 $('#account-info').onclick = openMyCommentsModal;
+$('#notification-open').onclick = openMyCommentsModal;
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#my-public-profile-copy').onclick = copyMyPublicProfileLink;
 $('#my-public-rss-copy').onclick = copyMyPublicRssLink;
+$('#profile-save').onclick = saveProfile;
+$('#notifications-read').onclick = markMyNotificationsRead;
+$('#profile-refresh-btn').onclick = refreshAll;
+$('#profile-manage-btn').onclick = () => {
+  closeMyCommentsModal();
+  renderManage();
+  $('#manage-modal').classList.remove('hidden');
+};
+$('#profile-link-add').onclick = () => {
+  state.profileLinksDraft = [...collectProfileLinks(), { title: '', url: '' }].slice(0, 12);
+  renderProfileLinksEditor();
+};
+$('#profile-links-editor').onclick = (e) => {
+  const remove = e.target.closest('[data-profile-link-remove]');
+  if (!remove) return;
+  const index = Number(remove.dataset.profileLinkRemove);
+  const links = collectProfileLinks();
+  links.splice(index, 1);
+  state.profileLinksDraft = links;
+  renderProfileLinksEditor();
+};
+$('#profile-links-editor').oninput = () => {
+  state.profileLinksDraft = collectProfileLinks();
+};
+$('#profile-avatar-input').onchange = async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    state.profileAvatarDraft = await fileToAvatarDataUrl(file);
+    renderProfileAvatarPreview();
+  } catch (err) {
+    toast(err.message, 4000);
+  } finally {
+    e.target.value = '';
+  }
+};
 $('#my-comments-modal').onclick = (e) => { if (e.target.id === 'my-comments-modal') closeMyCommentsModal(); };
 $$('#my-comments-modal [data-my-asset-tab]').forEach(btn => {
   btn.onclick = () => {
@@ -5528,6 +5834,7 @@ $('#my-comments-list').onclick = (e) => {
   if (copy) copyMyAssetLink(copy.dataset.myAssetCopy);
 };
 $('#contributor-close').onclick = () => closeContributorModal();
+$('#contributor-follow').onclick = toggleContributorFollow;
 $('#contributor-link-copy').onclick = () => {
   if (!state.contributor.profile) {
     toast('还没有可复制的贡献主页');
