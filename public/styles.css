@@ -2622,7 +2622,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .reader-content iframe { max-width: 100%; border-radius: 10px; }
 .reader-content hr { border: none; border-top: 1px solid var(--border); margin: 1.6em 0; }
 
-/* ============ Agent ============ */
+/* ============ Article context / Agent ============ */
 #agent-pane {
   background: var(--bg-1);
   border-left: 1px solid var(--border);
@@ -2630,6 +2630,141 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+.context-tabs {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-1) 94%, transparent);
+}
+.context-tab {
+  min-width: 0;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+.context-tab:hover {
+  color: var(--text-0);
+  background: var(--bg-2);
+}
+.context-tab.active {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.context-tab strong {
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+.context-close {
+  width: 34px;
+  height: 34px;
+}
+.context-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.agent-side-panel,
+.annotation-side-panel {
+  display: flex;
+  flex-direction: column;
+}
+.annotation-side-head {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.annotation-side-kicker {
+  color: color-mix(in srgb, var(--semantic-amber) 86%, var(--text-0));
+  font-size: 11px;
+  font-weight: 800;
+}
+.annotation-side-title {
+  margin-top: 4px;
+  color: var(--text-0);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.side-annotations-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+.side-annotations-list .annotation-item {
+  padding: 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: var(--bg-0);
+}
+.side-annotations-list .annotation-quote {
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 5.2em;
+  overflow: hidden;
+}
+.side-annotations-list .annotation-body,
+.side-annotations-list .annotation-reply-body {
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.side-annotations-list .annotation-actions {
+  gap: 4px;
+}
+.side-annotations-list .annotation-action {
+  font-size: 11px;
+  padding: 4px 6px;
+}
+.annotation-version-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--semantic-amber) 34%, var(--border));
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--semantic-amber) 88%, var(--text-0));
+  background: color-mix(in srgb, var(--semantic-amber) 10%, var(--bg-1));
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+.annotation-version-badge.legacy {
+  border-color: var(--border);
+  color: var(--text-2);
+  background: var(--bg-2);
+}
+.annotation-item.annotation-target {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .agent-head {
   flex: none;

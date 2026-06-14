@@ -379,6 +379,7 @@ const state = {
   annotationFilter: storage.getItem('qm_annotation_filter') || 'all',
   annotationOnlyDiscussed: storage.getItem('qm_annotation_only_discussed') === '1',
   pendingAnnotationId: '',
+  contextPanel: storage.getItem('qm_context_panel') === 'agent' ? 'agent' : 'annotations',
   myTranslations: [],
   myRewrites: [],
   myAnnotations: [],
@@ -2364,13 +2365,14 @@ function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = 
   if (type === 'annotations') {
     state.readerFocus = 'annotations';
     if (syncUrl) syncReaderUrl({ replace: replaceUrl });
-    scrollReaderTarget('#reader-annotations');
+    setContextPanel('annotations', { expand: !isCompactViewport() });
+    if (isCompactViewport()) scrollReaderTarget('#reader-annotations');
     return;
   }
   if (type === 'chat') {
     state.readerFocus = 'chat';
     if (syncUrl) syncReaderUrl({ replace: replaceUrl });
-    setAgentCollapsed(false);
+    setContextPanel('agent', { expand: true });
     if (highlightAgentMessageFromRoute()) return;
     const messages = $('#agent-messages');
     if (messages) messages.scrollTop = messages.scrollHeight;
@@ -3619,6 +3621,57 @@ function normalizeAnnotationText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function annotationHashText(value) {
+  const text = normalizeAnnotationText(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return text ? `fnv1a:${(hash >>> 0).toString(16)}` : '';
+}
+
+function currentAnnotationVersion(surface = state.readerTab) {
+  const clean = normalizeAnnotationSurface(surface);
+  if (clean === 'translation') {
+    return {
+      surface: clean,
+      assetId: String(state.translation?.id || '').trim(),
+      contentHash: String(state.translation?.contentHash || '').trim() || annotationHashText(annotationSurfaceRoot(clean)?.textContent || ''),
+    };
+  }
+  if (clean === 'rewrite') {
+    return {
+      surface: clean,
+      assetId: String(state.rewrite?.id || '').trim(),
+      contentHash: String(state.rewrite?.contentHash || '').trim() || annotationHashText(annotationSurfaceRoot(clean)?.textContent || ''),
+    };
+  }
+  return {
+    surface: clean,
+    assetId: '',
+    contentHash: annotationHashText(annotationSurfaceRoot(clean)?.textContent || ''),
+  };
+}
+
+function annotationVersionState(annotation) {
+  if (!annotation) return 'current';
+  const current = currentAnnotationVersion(annotation.surface);
+  const annotationAssetId = String(annotation.assetId || '').trim();
+  const annotationHash = String(annotation.contentHash || '').trim();
+  if (!annotationAssetId && !annotationHash) return 'legacy';
+  if (annotationAssetId && current.assetId && annotationAssetId !== current.assetId) return 'stale';
+  if (annotationHash && current.contentHash && annotationHash !== current.contentHash) return 'stale';
+  return 'current';
+}
+
+function annotationVersionBadge(annotation) {
+  const version = annotationVersionState(annotation);
+  if (version === 'current') return '';
+  const label = version === 'legacy' ? '早期划线' : '旧版本';
+  return `<span class="annotation-version-badge ${version === 'legacy' ? 'legacy' : ''}">${label}</span>`;
+}
+
 function normalizedRangeInText(text, quote) {
   const target = normalizeAnnotationText(quote);
   if (!target) return null;
@@ -3754,6 +3807,11 @@ function applyTextAnnotations() {
     clearAnnotationMarks(root);
     const surfaceAnnotations = (state.annotations || []).filter(item => item.surface === surface);
     for (const annotation of surfaceAnnotations) {
+      annotation.versionState = annotationVersionState(annotation);
+      if (annotation.versionState === 'stale') {
+        annotation.anchorMissing = true;
+        continue;
+      }
       annotation.anchorMissing = !markAnnotationAnchor(annotation, root);
     }
   }
@@ -3774,9 +3832,10 @@ function selectionAnnotationContext() {
   const idx = rootText.indexOf(quote);
   const prefix = idx >= 0 ? rootText.slice(Math.max(0, idx - 120), idx) : '';
   const suffix = idx >= 0 ? rootText.slice(idx + quote.length, idx + quote.length + 120) : '';
+  const version = currentAnnotationVersion(surface);
   const rect = range.getBoundingClientRect();
   if (!rect || (!rect.width && !rect.height)) return null;
-  return { surface, quote, prefix, suffix, rect };
+  return { surface, quote, prefix, suffix, assetId: version.assetId, contentHash: version.contentHash, rect };
 }
 
 function hideAnnotationPopover() {
@@ -3792,6 +3851,8 @@ function showAnnotationPopover(context) {
     quote: context.quote,
     prefix: context.prefix,
     suffix: context.suffix,
+    assetId: context.assetId || '',
+    contentHash: context.contentHash || '',
   };
   $('#annotation-popover-quote').textContent = `${ANNOTATION_SURFACE_LABELS[context.surface]}：${context.quote}`;
   const input = $('#annotation-popover-input');
@@ -3862,68 +3923,57 @@ function annotationAssetPatch(annotations = state.annotations) {
   };
 }
 
-function renderAnnotations() {
-  const list = $('#annotations-list');
-  if (!list) return;
+function visibleAnnotationsForReader() {
   const annotations = state.annotations || [];
-  $('#annotations-count').textContent = annotations.length ? `${annotations.length} 条` : '暂无';
-  const rail = $('#reader-rail-annotation-count');
-  if (rail) rail.textContent = formatCompactCount(annotations.length) || '0';
   const filter = ANNOTATION_SURFACES.includes(state.annotationFilter) ? state.annotationFilter : 'all';
-  const select = $('#annotation-surface-filter');
-  if (select) select.value = filter;
-  const toggle = $('#annotation-discussed-toggle');
-  if (toggle) {
-    toggle.classList.toggle('active', Boolean(state.annotationOnlyDiscussed));
-    toggle.setAttribute('aria-pressed', state.annotationOnlyDiscussed ? 'true' : 'false');
-  }
-  const visible = annotations
+  return annotations
+    .map(item => ({ ...item, versionState: annotationVersionState(item) }))
     .filter(item => filter === 'all' || item.surface === filter)
     .sort((a, b) => {
       const helpfulDelta = Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0);
       if (helpfulDelta) return helpfulDelta;
       return Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
     });
-  $('#annotation-nav').innerHTML = visible.map(item => `
-    <button type="button" class="annotation-nav-btn" data-annotation-jump="${escapeHtml(item.id)}">
-      ${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')} · ${escapeHtml(plainSnippet(item.quote, 42))}
-    </button>
-  `).join('');
-  if (!visible.length) {
-    list.innerHTML = '<div class="comments-empty">选中文章中的文字，就可以发布划线点评。</div>';
-    renderReaderAssetSummary();
-    applyTextAnnotations();
-    return;
-  }
-  list.innerHTML = visible.map(item => {
-    const helpfulActive = Boolean(item.helpfulByMe);
-    const helpfulCount = Number(item.helpfulCount || 0);
-    const authorHtml = item.contributorId
-      ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(item.contributorId)}">${escapeHtml(item.contributorName || item.author)}</button>`
-      : escapeHtml(item.author);
-    const replies = (item.replies || []).map(reply => {
-      const replyAuthor = reply.contributorId
-        ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(reply.contributorId)}">${escapeHtml(reply.contributorName || reply.author)}</button>`
-        : escapeHtml(reply.author);
-      return `
-        <div class="annotation-reply">
-          <div class="annotation-reply-meta">${replyAuthor} · ${formatAssetTime(reply.createdAt)}</div>
-          <div class="annotation-reply-body">${renderMarkdownLite(reply.body)}</div>
-        </div>`;
-    }).join('');
+}
+
+function renderAnnotationItem(item, { side = false } = {}) {
+  const helpfulActive = Boolean(item.helpfulByMe);
+  const helpfulCount = Number(item.helpfulCount || 0);
+  const authorHtml = item.contributorId
+    ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(item.contributorId)}">${escapeHtml(item.contributorName || item.author)}</button>`
+    : escapeHtml(item.author);
+  const replies = (item.replies || []).map(reply => {
+    const replyAuthor = reply.contributorId
+      ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(reply.contributorId)}">${escapeHtml(reply.contributorName || reply.author)}</button>`
+      : escapeHtml(reply.author);
     return `
-      <article id="annotation-${escapeHtml(item.id)}" class="annotation-item">
+      <div class="annotation-reply">
+        <div class="annotation-reply-meta">${replyAuthor} · ${formatAssetTime(reply.createdAt)}</div>
+        <div class="annotation-reply-body">${renderMarkdownLite(reply.body)}</div>
+      </div>`;
+  }).join('');
+  const versionBadge = annotationVersionBadge(item);
+  const staleMessage = item.versionState === 'stale'
+    ? '这条划线属于旧版本内容，已保留为历史讨论。'
+    : item.anchorMissing
+      ? '这段文字暂时没有在当前内容中定位到，可能原文已更新。'
+      : '';
+  const idPrefix = side ? 'side-annotation' : 'annotation';
+  const focusLabel = side ? '定位' : '定位原文';
+  return `
+      <article id="${idPrefix}-${escapeHtml(item.id)}" class="annotation-item" data-annotation-item="${escapeHtml(item.id)}">
         <div class="annotation-meta">
           <span class="annotation-surface-badge">${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')}</span>
+          ${versionBadge}
           <span>${authorHtml} · ${formatAssetTime(item.createdAt)}</span>
           ${Number(item.updatedAt || 0) > Number(item.createdAt || 0) ? `<span>更新 ${formatAssetTime(item.updatedAt)}</span>` : ''}
         </div>
         <div class="annotation-quote">${escapeHtml(item.quote)}</div>
-        ${item.anchorMissing ? '<div class="annotation-anchor-missing">这段文字暂时没有在当前内容中定位到，可能原文已更新。</div>' : ''}
+        ${staleMessage ? `<div class="annotation-anchor-missing">${escapeHtml(staleMessage)}</div>` : ''}
         <div class="annotation-body">${renderMarkdownLite(item.body)}</div>
         <div class="annotation-actions">
           <button type="button" class="annotation-action${helpfulActive ? ' active' : ''}" data-annotation-helpful="${escapeHtml(item.id)}" aria-pressed="${helpfulActive ? 'true' : 'false'}">有用${helpfulCount ? ` ${helpfulCount}` : ''}</button>
-          <button type="button" class="annotation-action" data-annotation-focus="${escapeHtml(item.id)}">定位原文</button>
+          <button type="button" class="annotation-action" data-annotation-focus="${escapeHtml(item.id)}">${focusLabel}</button>
           <button type="button" class="annotation-action" data-annotation-link="${escapeHtml(item.id)}">复制链接</button>
           <button type="button" class="annotation-action" data-annotation-copy="${escapeHtml(item.id)}">复制内容</button>
           ${item.canDelete ? `<button type="button" class="annotation-action annotation-action-danger" data-annotation-delete="${escapeHtml(item.id)}">撤回</button>` : ''}
@@ -3940,9 +3990,49 @@ function renderAnnotations() {
           </div>
         `}
       </article>`;
-  }).join('');
-  renderReaderAssetSummary();
+}
+
+function renderAnnotationActionList(container, visible, { side = false } = {}) {
+  if (!container) return;
+  if (!visible.length) {
+    container.innerHTML = '<div class="comments-empty">选中文章中的文字，就可以发布划线点评。</div>';
+    return;
+  }
+  container.innerHTML = visible.map(item => renderAnnotationItem(item, { side })).join('');
+}
+
+function renderAnnotations() {
+  const list = $('#annotations-list');
+  if (!list) return;
+  const annotations = state.annotations || [];
+  $('#annotations-count').textContent = annotations.length ? `${annotations.length} 条` : '暂无';
+  $('#context-annotation-count').textContent = formatCompactCount(annotations.length) || '0';
+  const rail = $('#reader-rail-annotation-count');
+  if (rail) rail.textContent = formatCompactCount(annotations.length) || '0';
+  const filter = ANNOTATION_SURFACES.includes(state.annotationFilter) ? state.annotationFilter : 'all';
+  const select = $('#annotation-surface-filter');
+  const sideSelect = $('#side-annotation-surface-filter');
+  if (select) select.value = filter;
+  if (sideSelect) sideSelect.value = filter;
+  const toggle = $('#annotation-discussed-toggle');
+  if (toggle) {
+    toggle.classList.toggle('active', Boolean(state.annotationOnlyDiscussed));
+    toggle.setAttribute('aria-pressed', state.annotationOnlyDiscussed ? 'true' : 'false');
+  }
   applyTextAnnotations();
+  const visible = visibleAnnotationsForReader();
+  $('#annotation-nav').innerHTML = visible.map(item => `
+    <button type="button" class="annotation-nav-btn" data-annotation-jump="${escapeHtml(item.id)}">
+      ${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')} · ${escapeHtml(plainSnippet(item.quote, 42))}
+    </button>
+  `).join('');
+  $('#annotation-side-title').textContent = state.activeEntry
+    ? (state.activeEntry.titleZh || state.activeEntry.title || '无标题')
+    : '未选择文章';
+  renderAnnotationActionList(list, visible);
+  renderAnnotationActionList($('#side-annotations-list'), visible, { side: true });
+  renderReaderAssetSummary();
+  applyAnnotationDiscussionFilter();
   highlightAnnotationFromRoute();
   settlePendingAssetJump('annotations');
 }
@@ -3956,15 +4046,19 @@ function highlightAnnotationFromRoute() {
     applyTextAnnotations();
   }
   const target = document.getElementById(`annotation-${annotationId}`);
+  const sideTarget = document.getElementById(`side-annotation-${annotationId}`);
   const mark = document.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(annotationId)}"]`);
-  if (!target && !mark) return;
+  if (!target && !sideTarget && !mark) return;
   state.pendingAnnotationId = '';
   const destination = mark || target;
-  destination.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setContextPanel('annotations', { expand: !isCompactViewport() });
+  destination?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   target?.classList.add('annotation-target');
+  sideTarget?.classList.add('annotation-target');
   mark?.classList.add('active');
   setTimeout(() => {
     target?.classList.remove('annotation-target');
+    sideTarget?.classList.remove('annotation-target');
     mark?.classList.remove('active');
   }, 2600);
 }
@@ -3974,11 +4068,16 @@ function jumpToAnnotation(annotationId) {
   if (!item) return;
   state.readerFocus = 'annotations';
   state.readerAssetId = annotationId;
+  setContextPanel('annotations', { expand: !isCompactViewport() });
   const tab = normalizeAnnotationSurface(item.surface);
   setReaderTab(tab, { syncUrl: true, replaceUrl: true });
   applyTextAnnotations();
   requestAnimationFrame(() => {
     const mark = document.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(annotationId)}"]`);
+    const sideTarget = document.getElementById(`side-annotation-${annotationId}`);
+    sideTarget?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    sideTarget?.classList.add('annotation-target');
+    setTimeout(() => sideTarget?.classList.remove('annotation-target'), 2200);
     if (mark) {
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
       mark.classList.add('active');
@@ -5593,8 +5692,12 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   state.pendingAnnotationId = annotationId || '';
   state.pendingChatMessageId = chatMessageId || '';
   renderReaderStatsUi();
-  if (requestedFocus === 'chat') setAgentCollapsed(false);
-  else if (isCompactViewport()) setAgentCollapsed(true);
+  if (requestedFocus === 'chat') {
+    setContextPanel('agent', { expand: true });
+  } else {
+    setContextPanel('annotations', { expand: !isCompactViewport() });
+    if (isCompactViewport()) setAgentCollapsed(true);
+  }
   state.fetchingOriginal = false;
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
@@ -6456,6 +6559,20 @@ async function testAiConnection() {
   }
 }
 
+function setContextPanel(panel = 'annotations', { persist = true, expand = false } = {}) {
+  const next = panel === 'agent' ? 'agent' : 'annotations';
+  state.contextPanel = next;
+  if (persist) storage.setItem('qm_context_panel', next);
+  $('#context-tab-annotations')?.classList.toggle('active', next === 'annotations');
+  $('#context-tab-agent')?.classList.toggle('active', next === 'agent');
+  $('#annotation-side-panel')?.classList.toggle('hidden', next !== 'annotations');
+  $('#agent-side-panel')?.classList.toggle('hidden', next !== 'agent');
+  $('#app')?.classList.toggle('context-agent-active', next === 'agent');
+  $('#app')?.classList.toggle('context-annotations-active', next === 'annotations');
+  if (expand) setAgentCollapsed(false);
+  renderAnnotations();
+}
+
 function setAgentCollapsed(collapsed) {
   state.agentCollapsed = collapsed;
   storage.setItem('qm_agent_collapsed', collapsed ? '1' : '0');
@@ -6658,7 +6775,10 @@ $('#reader-rail-like').onclick = () => setReaderReaction('like');
 $('#reader-rail-dislike').onclick = () => setReaderReaction('dislike');
 $('#reader-rail-star').onclick = () => $('#reader-star').click();
 $('#reader-rail-comment').onclick = () => scrollReaderTarget('#reader-comments', { offset: 72 });
-$('#reader-rail-annotation').onclick = () => scrollReaderTarget('#reader-annotations', { offset: 72 });
+$('#reader-rail-annotation').onclick = () => {
+  setContextPanel('annotations', { expand: !isCompactViewport() });
+  if (isCompactViewport()) scrollReaderTarget('#reader-annotations', { offset: 72 });
+};
 $('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
 $('#reader-rail-translate').onclick = () => handleReaderTab('translation');
 $('#reader-fetch-original').onclick = fetchOriginalContent;
@@ -6722,12 +6842,22 @@ $('#annotation-popover-input').onkeydown = (e) => {
     submitAnnotationDraft();
   }
 };
-$('#annotation-surface-filter').onchange = (e) => {
-  const value = e.target.value;
+function setAnnotationSurfaceFilter(value) {
   state.annotationFilter = value === 'all' || ANNOTATION_SURFACES.includes(value) ? value : 'all';
   storage.setItem('qm_annotation_filter', state.annotationFilter);
   renderAnnotations();
+}
+
+$('#annotation-surface-filter').onchange = (e) => {
+  setAnnotationSurfaceFilter(e.target.value);
 };
+$('#side-annotation-surface-filter').onchange = (e) => {
+  setAnnotationSurfaceFilter(e.target.value);
+};
+$$('[data-context-panel]').forEach(btn => {
+  btn.onclick = () => setContextPanel(btn.dataset.contextPanel, { expand: true });
+});
+$('#context-close').onclick = () => setAgentCollapsed(true);
 $('#annotation-discussed-toggle').onclick = () => {
   state.annotationOnlyDiscussed = !state.annotationOnlyDiscussed;
   storage.setItem('qm_annotation_only_discussed', state.annotationOnlyDiscussed ? '1' : '0');
@@ -6737,7 +6867,7 @@ $('#annotation-nav').onclick = (e) => {
   const btn = e.target.closest('[data-annotation-jump]');
   if (btn) jumpToAnnotation(btn.dataset.annotationJump);
 };
-$('#annotations-list').onclick = (e) => {
+function handleAnnotationListClick(e) {
   const contributor = e.target.closest('[data-contributor-id]');
   if (contributor) {
     openContributor(contributor.dataset.contributorId);
@@ -6768,20 +6898,35 @@ $('#annotations-list').onclick = (e) => {
     return;
   }
   const del = e.target.closest('[data-annotation-delete]');
-  if (del) deleteAnnotation(del.dataset.annotationDelete);
-};
-$('#annotations-list').onsubmit = (e) => {
+  if (del) {
+    deleteAnnotation(del.dataset.annotationDelete);
+    return;
+  }
+  const item = e.target.closest('[data-annotation-item]');
+  if (item && !e.target.closest('button,textarea,a,input,select')) {
+    jumpToAnnotation(item.dataset.annotationItem);
+  }
+}
+$('#annotations-list').onclick = handleAnnotationListClick;
+$('#side-annotations-list').onclick = handleAnnotationListClick;
+
+function handleAnnotationReplySubmit(e) {
   const form = e.target.closest('[data-annotation-reply-form]');
   if (!form) return;
   e.preventDefault();
   submitAnnotationReply(form.dataset.annotationReplyForm, form);
-};
-$('#annotations-list').oninput = (e) => {
+}
+$('#annotations-list').onsubmit = handleAnnotationReplySubmit;
+$('#side-annotations-list').onsubmit = handleAnnotationReplySubmit;
+
+function handleAnnotationReplyInput(e) {
   const input = e.target.closest('.annotation-reply-form textarea');
   if (!input) return;
   input.style.height = 'auto';
   input.style.height = `${Math.min(input.scrollHeight, 130)}px`;
-};
+}
+$('#annotations-list').oninput = handleAnnotationReplyInput;
+$('#side-annotations-list').oninput = handleAnnotationReplyInput;
 $('#reader').onclick = (e) => {
   const mark = e.target.closest('.text-annotation-mark');
   if (mark) {
@@ -6883,7 +7028,7 @@ $('#agent-input').onkeydown = (e) => {
   }
 };
 $('#agent-close').onclick = () => setAgentCollapsed(true);
-$('#agent-open').onclick = () => setAgentCollapsed(false);
+$('#agent-open').onclick = () => setContextPanel(state.contextPanel || 'annotations', { expand: true });
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#agent-profile-select').onchange = (e) => setAiProfileForPurpose('agent', e.target.value);
@@ -7109,6 +7254,7 @@ window.addEventListener('resize', () => {
   setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   setupListResizer();
   setAgentCollapsed(state.agentCollapsed);
+  setContextPanel(state.contextPanel, { persist: false, expand: false });
   $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
   try {
     await loadMe();

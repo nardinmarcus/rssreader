@@ -382,42 +382,71 @@
       </section>
     </section>
 
-    <!-- ===== Article agent ===== -->
-    <aside id="agent-pane">
-      <header class="agent-head">
-        <div>
-          <div class="agent-kicker">Article Agent</div>
-          <div id="agent-title" class="agent-title">未选择文章</div>
-          <div id="agent-profile" class="agent-profile">未配置模型</div>
-          <select id="agent-profile-select" class="ai-profile-select agent-profile-select" title="选择用于文章对话的模型" aria-label="选择用于文章对话的模型"></select>
-        </div>
-        <div class="agent-head-actions">
-          <button id="agent-copy-thread" class="icon-btn" title="复制当前对话">⧉</button>
-          <button id="agent-settings" class="icon-btn" title="AI 模型配置">⚿</button>
-          <button id="agent-close" class="icon-btn" title="关闭 AI 侧栏">→</button>
-        </div>
-      </header>
-      <div id="agent-messages" class="agent-messages"></div>
-      <div class="agent-prompts">
-        <button class="agent-prompt" data-prompt="用 5 条 bullet 总结这篇文章最值得关注的观点。">总结要点</button>
-        <button class="agent-prompt" data-prompt="这篇文章有哪些值得怀疑或需要验证的地方？">质疑观点</button>
-        <button class="agent-prompt" data-prompt="如果我是 AI 产品创作者，读完这篇文章下一步可以做什么？">行动建议</button>
-        <button class="agent-prompt" data-prompt="给这篇文章提炼 5 句适合转发引用的金句，保留上下文含义。">金句摘录</button>
-        <button class="agent-prompt" data-prompt="把文章里的关键事实、数据、案例列出来，并逐条说明它们分别证明了什么。">证据清单</button>
-        <button class="agent-prompt" data-prompt="这篇文章的论证依赖哪些前提？哪些前提一旦不成立，结论就会变弱？">前提拆解</button>
-        <button class="agent-prompt" data-prompt="帮我写一段适合发到 X / 即刻的中文分享文案，短一点但有观点。">分享文案</button>
-        <button class="agent-prompt" data-prompt="如果向阳乔木要基于这篇文章写一篇中文内容，最有传播潜力的切入角度有哪些？给 3 个。">选题角度</button>
+    <!-- ===== Article context ===== -->
+    <aside id="agent-pane" class="context-pane">
+      <div class="context-tabs" role="tablist" aria-label="文章侧栏">
+        <button id="context-tab-annotations" class="context-tab active" type="button" data-context-panel="annotations">
+          <span>划线讨论</span>
+          <strong id="context-annotation-count">0</strong>
+        </button>
+        <button id="context-tab-agent" class="context-tab" type="button" data-context-panel="agent">
+          <span>AI Agent</span>
+        </button>
+        <button id="context-close" class="icon-btn context-close" title="关闭侧栏" aria-label="关闭侧栏">→</button>
       </div>
-      <form id="agent-form" class="agent-form">
-        <textarea id="agent-input" rows="2" placeholder="问当前文章…" disabled></textarea>
-        <button id="agent-send" class="ghost-btn" type="submit" disabled>发送</button>
-      </form>
+
+      <section id="annotation-side-panel" class="context-panel annotation-side-panel">
+        <header class="annotation-side-head">
+          <div>
+            <div class="annotation-side-kicker">划线讨论</div>
+            <div id="annotation-side-title" class="annotation-side-title">未选择文章</div>
+          </div>
+          <select id="side-annotation-surface-filter" class="annotation-surface-filter" aria-label="筛选右侧划线点评">
+            <option value="all">全部</option>
+            <option value="original">原文</option>
+            <option value="rewrite">中文改写</option>
+            <option value="translation">中文翻译</option>
+          </select>
+        </header>
+        <div id="side-annotations-list" class="side-annotations-list"></div>
+      </section>
+
+      <section id="agent-side-panel" class="context-panel agent-side-panel hidden">
+        <header class="agent-head">
+          <div>
+            <div class="agent-kicker">Article Agent</div>
+            <div id="agent-title" class="agent-title">未选择文章</div>
+            <div id="agent-profile" class="agent-profile">未配置模型</div>
+            <select id="agent-profile-select" class="ai-profile-select agent-profile-select" title="选择用于文章对话的模型" aria-label="选择用于文章对话的模型"></select>
+          </div>
+          <div class="agent-head-actions">
+            <button id="agent-copy-thread" class="icon-btn" title="复制当前对话">⧉</button>
+            <button id="agent-settings" class="icon-btn" title="AI 模型配置">⚿</button>
+            <button id="agent-close" class="icon-btn" title="关闭 AI 侧栏">→</button>
+          </div>
+        </header>
+        <div id="agent-messages" class="agent-messages"></div>
+        <div class="agent-prompts">
+          <button class="agent-prompt" data-prompt="用 5 条 bullet 总结这篇文章最值得关注的观点。">总结要点</button>
+          <button class="agent-prompt" data-prompt="这篇文章有哪些值得怀疑或需要验证的地方？">质疑观点</button>
+          <button class="agent-prompt" data-prompt="如果我是 AI 产品创作者，读完这篇文章下一步可以做什么？">行动建议</button>
+          <button class="agent-prompt" data-prompt="给这篇文章提炼 5 句适合转发引用的金句，保留上下文含义。">金句摘录</button>
+          <button class="agent-prompt" data-prompt="把文章里的关键事实、数据、案例列出来，并逐条说明它们分别证明了什么。">证据清单</button>
+          <button class="agent-prompt" data-prompt="这篇文章的论证依赖哪些前提？哪些前提一旦不成立，结论就会变弱？">前提拆解</button>
+          <button class="agent-prompt" data-prompt="帮我写一段适合发到 X / 即刻的中文分享文案，短一点但有观点。">分享文案</button>
+          <button class="agent-prompt" data-prompt="如果向阳乔木要基于这篇文章写一篇中文内容，最有传播潜力的切入角度有哪些？给 3 个。">选题角度</button>
+        </div>
+        <form id="agent-form" class="agent-form">
+          <textarea id="agent-input" rows="2" placeholder="问当前文章…" disabled></textarea>
+          <button id="agent-send" class="ghost-btn" type="submit" disabled>发送</button>
+        </form>
+      </section>
     </aside>
   </div>
 
-  <button id="agent-open" class="agent-open hidden" title="打开 AI 对话" aria-label="打开 AI 对话">
+  <button id="agent-open" class="agent-open hidden" title="打开讨论与 AI 侧栏" aria-label="打开讨论与 AI 侧栏">
     <span class="agent-open-dot">AI</span>
-    <span>问 AI</span>
+    <span>讨论</span>
   </button>
 
   <!-- ===== Manage sources modal ===== -->
@@ -567,6 +596,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=116"></script>
+  <script src="/app.js?v=117"></script>
 </body>
 </html>
