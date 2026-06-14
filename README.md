@@ -26,7 +26,7 @@
 
 ```bash
 npm install
-npm start          # 默认端口 8080，可用 PORT=3000 npm start 覆盖
+npm start          # 默认监听 0.0.0.0:8080，可用 HOST=127.0.0.1 PORT=3000 npm start 覆盖
 ```
 
 启动后访问 `http://localhost:8080`。首次启动会并发抓取全部启用的源（约 1 分钟），之后结果缓存在 `data/cache.json`，重启即时加载，并每天北京时间 08:00 自动刷新。
@@ -72,6 +72,9 @@ npm start
 | `ADMIN_PASSWORD` | 空 | 管理员登录密码，重启时同步到管理员账号 |
 | `ADMIN_NAME` | `向阳乔木` | 管理员公开显示名 |
 | `COOKIE_SECURE` | 空 | 设为 `1` 时强制 session cookie 使用 Secure |
+| `HOST` | `0.0.0.0` | Node 监听地址；VPS systemd 使用 `127.0.0.1`，只允许 Nginx 反代访问 |
+| `PORT` | `8080` | Node 监听端口；VPS systemd 使用 `3088` |
+| `STARTUP_REFRESH_DELAY_MS` | `30000` | 启动后延迟多少毫秒再触发首次全量刷新；设为 `-1` 可禁用，VPS systemd 默认禁用，避免恢复服务时阻塞请求 |
 
 文章、翻译、乔木风格重写、点评、公开对话保存在 `data/qmreader.sqlite`。文章页展示每篇文章当前的公开翻译 / 重写缓存；登录用户重新生成全文翻译或重写时会同步保存为自己的公开贡献快照，供“我的资产”、贡献者页、公开资产目录、公开资产 RSS、贡献者 RSS 和 sitemap 读取。需要重新生成全文翻译或重写时可调用接口传 `{"force":true}`。
 
@@ -86,8 +89,10 @@ public/styles.css    # 中性产品主题（深/浅色）
 public/app.js        # 前端逻辑：侧栏/列表/阅读面板、已读/收藏、搜索、文章对话
 public/purify.min.js # DOMPurify（本地化，正文 HTML 消毒）
 data/                # 运行时生成：cache.json、state.json、qmreader.sqlite
+ops/qmreader.service # systemd 运行模板，不依赖 Docker
+scripts/             # VPS systemd 安装脚本
 Dockerfile           # Node 26 生产镜像
-docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
+docker-compose.yml   # 可选 Docker 部署，默认绑定 127.0.0.1:3088
 ```
 
 ## 添加 / 修改信息源
@@ -166,7 +171,32 @@ docker-compose.yml   # VPS 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/refresh` | 管理员刷新；body `{}` 刷新全部，`{"sourceId":"xx"}` 刷新单个 |
 | POST | `/api/sources/:id/toggle` | 管理员启用/禁用某个源（持久化到 data/state.json） |
 
-## Docker 部署
+## VPS systemd 部署（推荐）
+
+`rss.qiaomu.ai` 的生产路径是 `/opt/qiaomu-apps/qmreader`，Nginx 反代 `127.0.0.1:3088`。为了避免 Docker daemon 故障影响站点，推荐用宿主机 Node + systemd 运行：
+
+```bash
+rsync -az --delete --exclude node_modules --exclude .git --exclude data --exclude .env ./ myvps:/opt/qiaomu-apps/qmreader/
+ssh myvps 'cd /opt/qiaomu-apps/qmreader && bash scripts/install-systemd-service.sh'
+```
+
+默认会执行 `npm ci --omit=dev`，安装并启动 `/etc/systemd/system/qmreader.service`，服务监听 `HOST=127.0.0.1`、`PORT=3088`，并禁用启动时全量刷新，避免恢复服务时阻塞请求。每天 08:00 的定时刷新和后台管理里的手动刷新仍然保留。
+
+常用命令：
+
+```bash
+systemctl status qmreader
+journalctl -u qmreader -n 100 --no-pager
+systemctl restart qmreader
+```
+
+如果不安装 systemd，也可以直接运行：
+
+```bash
+HOST=127.0.0.1 PORT=3088 NODE_ENV=production npm start
+```
+
+## Docker 部署（可选）
 
 ```bash
 cp .env.example .env

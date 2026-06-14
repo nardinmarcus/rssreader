@@ -8,7 +8,9 @@ const store = require('./lib/store');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const HOST = process.env.HOST || '0.0.0.0';
 const DAILY_REFRESH_HOUR_SHANGHAI = 8;
+const STARTUP_REFRESH_DELAY_MS = parseInt(process.env.STARTUP_REFRESH_DELAY_MS || '30000', 10);
 const TITLE_TRANSLATION_LIMIT = parseInt(process.env.TITLE_TRANSLATION_LIMIT || '80', 10);
 const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_IDS || 'bensbites,readwise-wise,nlp-elvis')
   .split(',')
@@ -1928,6 +1930,19 @@ function scheduleDailyRefresh() {
   }, delay);
 }
 
+function scheduleStartupRefresh() {
+  if (Number.isFinite(STARTUP_REFRESH_DELAY_MS) && STARTUP_REFRESH_DELAY_MS < 0) {
+    console.log('Startup refresh disabled');
+    return;
+  }
+  const delay = Number.isFinite(STARTUP_REFRESH_DELAY_MS) ? Math.max(0, STARTUP_REFRESH_DELAY_MS) : 30000;
+  setTimeout(() => {
+    doRefreshAll().catch(error => {
+      console.error('Startup refresh failed:', error.message || error);
+    });
+  }, delay);
+}
+
 app.get('/api/sources', (req, res) => {
   res.json({
     sources: fetcher.getSourcesMeta(),
@@ -2467,10 +2482,10 @@ app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
   res.json({ id: src.id, enabled });
 });
 
-app.listen(PORT, () => {
-  console.log(`QMReader listening on http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`QMReader listening on http://${HOST}:${PORT}`);
   seedAdminFromEnv();
   fetcher.loadDisk();
-  doRefreshAll();
+  scheduleStartupRefresh();
   scheduleDailyRefresh();
 });
