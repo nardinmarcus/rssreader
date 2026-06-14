@@ -25,10 +25,12 @@ function readStoredNumber(key) {
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'rewrite', 'translation'];
-const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'comments', 'chat'];
+const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
 const DASHBOARD_TABS = ['profile', 'ai', 'contributions'];
-const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', comments: '人工点评', chat: '文章对话' };
+const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
+const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '中文改写', translation: '中文翻译' };
+const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
 const COMMENT_TEMPLATES = {
@@ -371,8 +373,15 @@ const state = {
   history: normalizeHistory(readJson('qm_history', '[]')),
   agentMessages: [],
   comments: [],
+  annotations: [],
+  annotationDraft: null,
+  annotationBusy: false,
+  annotationFilter: storage.getItem('qm_annotation_filter') || 'all',
+  annotationOnlyDiscussed: storage.getItem('qm_annotation_only_discussed') === '1',
+  pendingAnnotationId: '',
   myTranslations: [],
   myRewrites: [],
+  myAnnotations: [],
   myComments: [],
   myChatMessages: [],
   notifications: [],
@@ -381,7 +390,7 @@ const state = {
   dashboardTab: normalizeDashboardTab(storage.getItem('qm_dashboard_tab')),
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
-  contributor: { id: '', profile: null, translations: [], rewrites: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
+  contributor: { id: '', profile: null, translations: [], rewrites: [], annotations: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
   workspacePage: '',
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
@@ -433,15 +442,18 @@ function routeStateFromUrl() {
   const queryAssetFilter = ASSET_FILTER_TYPES.includes(params.get('asset')) ? params.get('asset') : null;
   const hash = decodeURIComponent(String(window.location.hash || '').replace(/^#/, ''));
   const queryCommentId = String(params.get('comment') || '').trim();
+  const queryAnnotationId = String(params.get('annotation') || '').trim();
   const queryChatMessageId = String(params.get('chat') || '').trim();
   const queryAssetId = String(params.get('assetId') || '').trim();
   const pathCommentId = articleRoute && articleRoute.focus === 'comments' ? articleRoute.itemId : '';
+  const pathAnnotationId = articleRoute && articleRoute.focus === 'annotations' ? articleRoute.itemId : '';
   const pathChatMessageId = articleRoute && articleRoute.focus === 'chat' ? articleRoute.itemId : '';
   const pathAssetId = articleRoute && ['translation', 'rewrite'].includes(articleRoute.focus) ? articleRoute.itemId : '';
   const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : (pathCommentId || queryCommentId);
+  const annotationId = hash.startsWith('annotation-') ? hash.slice('annotation-'.length).trim() : (pathAnnotationId || queryAnnotationId);
   const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : (pathChatMessageId || queryChatMessageId);
   const queryFocus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
-  const focus = commentId ? 'comments' : chatMessageId ? 'chat' : (articleRoute && articleRoute.focus ? articleRoute.focus : queryFocus);
+  const focus = commentId ? 'comments' : annotationId ? 'annotations' : chatMessageId ? 'chat' : (articleRoute && articleRoute.focus ? articleRoute.focus : queryFocus);
   return {
     entryId: articleRoute && articleRoute.id ? articleRoute.id : String(params.get('entry') || '').trim(),
     dashboard: dashboardPath,
@@ -458,9 +470,10 @@ function routeStateFromUrl() {
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     contributorSort: contributorsPath ? normalizeContributorSort(params.get('sort')) : 'latest',
-    focus: commentId ? 'comments' : chatMessageId ? 'chat' : focus,
+    focus: commentId ? 'comments' : annotationId ? 'annotations' : chatMessageId ? 'chat' : focus,
     assetId: pathAssetId || queryAssetId,
     commentId,
+    annotationId,
     chatMessageId,
     q: String(params.get('q') || '').trim(),
   };
@@ -598,6 +611,13 @@ function commentUrl(commentId, entry = state.activeEntry) {
   return url.href;
 }
 
+function annotationUrl(annotationId, entry = state.activeEntry) {
+  if (!entry || !annotationId) return '';
+  const url = readerUrlFor(entry, 'original', 'annotations', annotationId);
+  url.hash = `annotation-${encodeURIComponent(annotationId)}`;
+  return url.href;
+}
+
 function chatMessageUrl(messageId, entry = state.activeEntry) {
   if (!entry || !messageId) return '';
   const url = readerUrlFor(entry, 'original', 'chat', messageId);
@@ -608,6 +628,7 @@ function chatMessageUrl(messageId, entry = state.activeEntry) {
 function assetItemUrl(type, entry, itemId = '') {
   if ((type === 'translation' || type === 'rewrite') && itemId) return readerAssetUrl(type, entry, itemId);
   if (type === 'comments' && itemId) return commentUrl(itemId, entry);
+  if (type === 'annotations' && itemId) return annotationUrl(itemId, entry);
   if (type === 'chat' && itemId) return chatMessageUrl(itemId, entry);
   return readerAssetUrl(type, entry);
 }
@@ -697,16 +718,16 @@ function setWorkspacePage(page = '') {
   app.classList.toggle('reading', Boolean(state.activeEntry));
 }
 
-function syncReaderUrl({ replace = false, commentId = '', chatMessageId = '' } = {}) {
+function syncReaderUrl({ replace = false, commentId = '', annotationId = '', chatMessageId = '' } = {}) {
   const entry = state.activeEntry;
   if (!entry || !entry.id) return;
-  const focus = commentId ? 'comments' : chatMessageId ? 'chat' : state.readerFocus;
-  const itemId = commentId || chatMessageId || state.readerAssetId;
+  const focus = commentId ? 'comments' : annotationId ? 'annotations' : chatMessageId ? 'chat' : state.readerFocus;
+  const itemId = commentId || annotationId || chatMessageId || state.readerAssetId;
   const url = readerUrlFor(entry, state.readerTab, focus, itemId);
   document.title = readerRouteTitle(entry, focus);
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
-  history[method]({ entryId: entry.id, tab: state.readerTab, commentId, chatMessageId }, '', url);
+  history[method]({ entryId: entry.id, tab: state.readerTab, commentId, annotationId, chatMessageId }, '', url);
 }
 
 function syncListUrl({ replace = false } = {}) {
@@ -1264,6 +1285,7 @@ function renderReaderStatsUi() {
   const railDislike = $('#reader-rail-dislike');
   const railStar = $('#reader-rail-star');
   const railComment = $('#reader-rail-comment');
+  const railAnnotation = $('#reader-rail-annotation');
   const railRewrite = $('#reader-rail-rewrite');
   const railTranslate = $('#reader-rail-translate');
   if (railLike) {
@@ -1282,6 +1304,7 @@ function renderReaderStatsUi() {
     $('#reader-rail-star-count').textContent = favoriteText || '0';
   }
   if (railComment) $('#reader-rail-comment-count').textContent = formatCompactCount((state.comments || []).length) || '0';
+  if (railAnnotation) $('#reader-rail-annotation-count').textContent = formatCompactCount((state.annotations || []).length) || '0';
   if (railRewrite) railRewrite.classList.toggle('active', Boolean(state.rewrite));
   if (railTranslate) railTranslate.classList.toggle('active', Boolean(state.translation));
   const viewCount = $('#reader-view-count');
@@ -1421,6 +1444,7 @@ function assetCountForType(entry, type) {
     return assets[type] ? 1 : 0;
   }
   if (type === 'comments') return Number(assets.comments) || 0;
+  if (type === 'annotations') return Number(assets.annotations) || 0;
   if (type === 'chat') return Number(assets.chatMessages) || 0;
   return 0;
 }
@@ -1496,6 +1520,7 @@ function contributorSearchText(contributor) {
     `${contributor.helpfulAssets || 0} 受认可`,
     `${contributor.translationCount || 0} 中译`,
     `${contributor.rewriteCount || 0} 重写`,
+    `${contributor.annotationCount || 0} 划线`,
     `${contributor.commentCount || 0} 点评`,
     `${contributor.chatCount || 0} 对话`,
   ].filter(Boolean).join(' ');
@@ -1544,6 +1569,7 @@ function entryAssetItems(entry) {
   const items = [];
   if (assets.translation) items.push({ type: 'translation', label: '中译', title: '查看中文翻译' });
   if (assets.rewrite) items.push({ type: 'rewrite', label: '重写', title: '查看中文改写' });
+  if (assets.annotations) items.push({ type: 'annotations', label: `划线 ${assets.annotations}`, title: '查看划线点评' });
   if (assets.comments) items.push({ type: 'comments', label: `点评 ${assets.comments}`, title: '查看人工点评' });
   if (assets.chatMessages) items.push({ type: 'chat', label: `对话 ${assets.chatMessages}`, title: '查看文章对话' });
   return items;
@@ -1563,6 +1589,7 @@ function assetBadgesHtml(entry, { interactive = false, copyable = false } = {}) 
 const ASSET_TYPE_LABELS = {
   translation: '中译',
   rewrite: '重写',
+  annotations: '划线',
   comments: '点评',
   chat: '对话',
 };
@@ -1570,6 +1597,7 @@ const ASSET_TYPE_LABELS = {
 const ASSET_DIRECTORY_LABELS = {
   translation: '中文翻译',
   rewrite: '中文改写',
+  annotations: '划线点评',
   comments: '人工点评',
   chat: '文章对话',
 };
@@ -1581,6 +1609,7 @@ function assetDirectoryLabel(type) {
 const ASSET_FILTERS = {
   translation: { label: '中译', count: entry => assetCountForType(entry, 'translation'), title: '查看有中文翻译的文章' },
   rewrite: { label: '重写', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有中文改写的文章' },
+  annotations: { label: '划线', count: entry => assetCountForType(entry, 'annotations'), title: '查看有划线点评的文章' },
   comments: { label: '点评', count: entry => assetCountForType(entry, 'comments'), title: '查看有人工点评的文章' },
   chat: { label: '对话', count: entry => assetCountForType(entry, 'chat'), title: '查看有文章对话的文章' },
 };
@@ -1638,6 +1667,7 @@ function assetHelpfulScoreForType(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return Number(assets.translationHelpfulCount) || 0;
   if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) || 0;
+  if (type === 'annotations') return Number(assets.annotationHelpfulCount) || 0;
   if (type === 'comments') return Number(assets.commentHelpfulCount ?? assets.helpfulCount) || 0;
   if (type === 'chat') return Number(assets.chatHelpfulCount) || 0;
   return Number(assets.helpfulCount) || 0;
@@ -1647,10 +1677,12 @@ function assetHelpfulItemCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return helpfulAiAssetItemCount(assets, 'translation');
   if (type === 'rewrite') return helpfulAiAssetItemCount(assets, 'rewrite');
+  if (type === 'annotations') return Number(assets.helpfulAnnotations) || 0;
   if (type === 'comments') return Number(assets.helpfulComments) || 0;
   if (type === 'chat') return Number(assets.helpfulChats) || 0;
   return helpfulAiAssetItemCount(assets, 'translation')
     + helpfulAiAssetItemCount(assets, 'rewrite')
+    + (Number(assets.helpfulAnnotations) || 0)
     + (Number(assets.helpfulComments) || 0)
     + (Number(assets.helpfulChats) || 0);
 }
@@ -1753,6 +1785,13 @@ function assetPreviewForEntry(entry) {
   }
   if (
     state.assetSort === 'helpful'
+    && state.assetFilter === 'annotations'
+    && entry?.assets?.topHelpfulAnnotation
+  ) {
+    return entry.assets.topHelpfulAnnotation;
+  }
+  if (
+    state.assetSort === 'helpful'
     && state.assetFilter === 'comments'
     && entry?.assets?.topHelpfulComment
   ) {
@@ -1837,7 +1876,9 @@ function assetItemListHtml(entry) {
         ? assets.topHelpfulTranslation
         : state.assetFilter === 'rewrite'
           ? assets.topHelpfulRewrite
-          : assets.topHelpfulComment;
+          : state.assetFilter === 'annotations'
+            ? assets.topHelpfulAnnotation
+            : assets.topHelpfulComment;
     const byId = new Map();
     for (const item of [top, ...items]) {
       const key = item && item.id ? item.id : `${item && item.at}:${item && item.text}`;
@@ -1850,7 +1891,7 @@ function assetItemListHtml(entry) {
   if (!items.length) return '';
   const total = assetCountForType(entry, state.assetFilter);
   const label = ASSET_TYPE_LABELS[state.assetFilter] || '资产';
-  const more = total > items.length && ['comments', 'chat'].includes(state.assetFilter)
+  const more = total > items.length && ['annotations', 'comments', 'chat'].includes(state.assetFilter)
     ? `<button type="button" class="entry-asset-more" data-asset="${escapeHtml(state.assetFilter)}">查看全部 ${total} 条${escapeHtml(label)}</button>`
     : total > items.length
       ? `<span class="entry-asset-more">还有 ${total - items.length} 条${escapeHtml(label)}</span>`
@@ -2099,6 +2140,7 @@ function mergeAssets(entry, patch = {}) {
     translation: false,
     rewrite: false,
     comments: 0,
+    annotations: 0,
     chatMessages: 0,
     latestAt: 0,
     latestTypes: [],
@@ -2109,13 +2151,16 @@ function mergeAssets(entry, patch = {}) {
     rewriteCount: 0,
     helpfulCount: 0,
     commentHelpfulCount: 0,
+    annotationHelpfulCount: 0,
     chatHelpfulCount: 0,
     translationHelpfulCount: 0,
     rewriteHelpfulCount: 0,
     helpfulComments: 0,
+    helpfulAnnotations: 0,
     helpfulChats: 0,
     helpfulAssets: 0,
     topHelpfulComment: null,
+    topHelpfulAnnotation: null,
     topHelpfulChat: null,
     topHelpfulTranslation: null,
     topHelpfulRewrite: null,
@@ -2208,6 +2253,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   const rows = [];
   const translation = state.translation && state.translation.entryId === entry.id ? state.translation : null;
   const rewrite = state.rewrite && state.rewrite.entryId === entry.id ? state.rewrite : null;
+  const annotations = (state.annotations || []).filter(annotation => annotation.entryId === entry.id);
   const comments = (state.comments || []).filter(comment => comment.entryId === entry.id);
   const messages = (state.agentMessages || []).filter(message => !message.entryId || message.entryId === entry.id);
 
@@ -2242,6 +2288,19 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       label: readerAssetSummaryLabel(entry, 'comments', '人工点评'),
       value: latest ? assetMetaLine([`${assets.comments} 条`, latest.author, helpfulMeta, formatAssetTime(latest.updatedAt || latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'comments', [`${assets.comments} 条`]) || `${assets.comments} 条 · 正在加载详情`),
       preview: readerAssetPreview(entry, 'comments', latest && latest.body),
+    });
+  }
+  if (assets.annotations) {
+    const latest = [...annotations].sort((a, b) =>
+      Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)
+    )[0] || null;
+    const helpfulMeta = latest && Number(latest.helpfulCount || 0) > 0 ? `有用 ${Number(latest.helpfulCount || 0)}` : '';
+    const replyMeta = latest && Number(latest.replyCount || 0) > 0 ? `回复 ${Number(latest.replyCount || 0)}` : '';
+    rows.push({
+      type: 'annotations',
+      label: readerAssetSummaryLabel(entry, 'annotations', '划线点评'),
+      value: latest ? assetMetaLine([`${assets.annotations} 条`, latest.author, ANNOTATION_SURFACE_LABELS[latest.surface], helpfulMeta, replyMeta, formatAssetTime(latest.updatedAt || latest.createdAt)]) : (readerAssetPreviewMeta(entry, 'annotations', [`${assets.annotations} 条`]) || `${assets.annotations} 条 · 正在加载详情`),
+      preview: readerAssetPreview(entry, 'annotations', latest && `${latest.quote} ${latest.body}`),
     });
   }
   if (assets.chatMessages) {
@@ -2300,6 +2359,12 @@ function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = 
     state.readerFocus = 'comments';
     if (syncUrl) syncReaderUrl({ replace: replaceUrl });
     scrollReaderTarget('#reader-comments');
+    return;
+  }
+  if (type === 'annotations') {
+    state.readerFocus = 'annotations';
+    if (syncUrl) syncReaderUrl({ replace: replaceUrl });
+    scrollReaderTarget('#reader-annotations');
     return;
   }
   if (type === 'chat') {
@@ -2714,6 +2779,7 @@ function renderList() {
           focus,
           aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
           commentId: focus === 'comments' ? itemId : '',
+          annotationId: focus === 'annotations' ? itemId : '',
           chatMessageId: focus === 'chat' ? itemId : '',
         });
         return;
@@ -3033,6 +3099,7 @@ function renderOriginalContent(entry, content) {
   $('#reader-content').innerHTML = sanitize(content || fallback);
   $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
   renderReaderToc($('#reader-content'));
+  applyTextAnnotations();
   if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
 }
 
@@ -3044,6 +3111,7 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   $('#reader-translation').classList.toggle('hidden', next !== 'translation');
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
   updateReaderTocVisibility(next);
+  applyTextAnnotations();
   if (syncUrl) syncReaderUrl({ replace: replaceUrl });
 }
 
@@ -3266,6 +3334,7 @@ function renderTranslation(translation, { loading = false } = {}) {
         <div class="translation-target reader-content">${translationBlockTargetHtml(pair)}</div>
       </div>`).join('');
   $$('#translation-list a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  applyTextAnnotations();
   renderReaderAssetSummary();
   settlePendingAssetJump('translation');
 }
@@ -3324,6 +3393,7 @@ function renderRewrite(rewrite) {
   $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
   renderAssetHelpfulButton('rewrite', state.rewrite);
   content.innerHTML = renderMarkdownLite(rewrite.body);
+  applyTextAnnotations();
   renderReaderAssetSummary();
   settlePendingAssetJump('rewrite');
 }
@@ -3525,6 +3595,527 @@ async function fetchOriginalContent() {
   }
 }
 
+function normalizeAnnotationSurface(surface = '') {
+  return ANNOTATION_SURFACES.includes(surface) ? surface : 'original';
+}
+
+function annotationSurfaceRoot(surface = state.readerTab) {
+  const clean = normalizeAnnotationSurface(surface);
+  if (clean === 'rewrite') return $('#rewrite-content');
+  if (clean === 'translation') return $('#translation-list');
+  return $('#reader-content');
+}
+
+function annotationSurfaceFromNode(node) {
+  const el = node && (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement);
+  if (!el) return '';
+  if ($('#reader-content')?.contains(el)) return 'original';
+  if ($('#rewrite-content')?.contains(el)) return 'rewrite';
+  if ($('#translation-list')?.contains(el)) return 'translation';
+  return '';
+}
+
+function normalizeAnnotationText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizedRangeInText(text, quote) {
+  const target = normalizeAnnotationText(quote);
+  if (!target) return null;
+  const raw = String(text || '');
+  const directIndex = raw.indexOf(target);
+  if (directIndex >= 0) return { start: directIndex, end: directIndex + target.length };
+  let normalized = '';
+  const map = [];
+  let inSpace = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (/\s/.test(ch)) {
+      if (!inSpace && normalized) {
+        normalized += ' ';
+        map.push(i);
+      }
+      inSpace = true;
+      continue;
+    }
+    inSpace = false;
+    normalized += ch;
+    map.push(i);
+  }
+  normalized = normalized.trim();
+  const index = normalized.indexOf(target);
+  if (index < 0) return null;
+  const start = map[index] ?? 0;
+  const last = map[index + target.length - 1] ?? start;
+  return { start, end: last + 1 };
+}
+
+function clearAnnotationMarks(root) {
+  if (!root) return;
+  $$('.text-annotation-mark', root).forEach(mark => {
+    const text = document.createTextNode(mark.textContent || '');
+    mark.replaceWith(text);
+    text.parentNode?.normalize();
+  });
+  $$('.annotation-discussed-block,.annotation-free-block', root).forEach(el => {
+    el.classList.remove('annotation-discussed-block', 'annotation-free-block');
+  });
+  root.classList.remove('annotation-discussion-muted');
+}
+
+function annotationTextNodes(root) {
+  if (!root) return [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || !node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      if (parent.closest('.text-annotation-mark,script,style,textarea,button,select')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  return nodes;
+}
+
+function markAnnotationAnchor(annotation, root) {
+  const quote = normalizeAnnotationText(annotation.quote);
+  if (!root || !quote) return false;
+  const nodes = annotationTextNodes(root);
+  let normalized = '';
+  let inSpace = false;
+  const map = [];
+  nodes.forEach((node, nodeIndex) => {
+    const raw = node.nodeValue || '';
+    for (let offset = 0; offset < raw.length; offset += 1) {
+      const ch = raw[offset];
+      if (/\s/.test(ch)) {
+        if (!inSpace && normalized) {
+          normalized += ' ';
+          map.push({ nodeIndex, offset });
+        }
+        inSpace = true;
+        continue;
+      }
+      inSpace = false;
+      normalized += ch;
+      map.push({ nodeIndex, offset });
+    }
+  });
+  normalized = normalized.trim();
+  const startIndex = normalized.indexOf(quote);
+  if (startIndex < 0) return false;
+  const startMap = map[startIndex];
+  const endMap = map[startIndex + quote.length - 1];
+  if (!startMap || !endMap) return false;
+  const ranges = [];
+  for (let nodeIndex = startMap.nodeIndex; nodeIndex <= endMap.nodeIndex; nodeIndex += 1) {
+    const node = nodes[nodeIndex];
+    if (!node) continue;
+    const start = nodeIndex === startMap.nodeIndex ? startMap.offset : 0;
+    const end = nodeIndex === endMap.nodeIndex ? endMap.offset + 1 : (node.nodeValue || '').length;
+    if (end > start && node.nodeValue.slice(start, end).trim()) ranges.push({ node, start, end });
+  }
+  if (!ranges.length) return false;
+  for (const { node, start, end } of ranges.reverse()) {
+    const before = document.createTextNode(node.nodeValue.slice(0, start));
+    const selected = document.createElement('mark');
+    selected.className = 'text-annotation-mark';
+    selected.dataset.annotationId = annotation.id;
+    selected.textContent = node.nodeValue.slice(start, end);
+    selected.title = annotation.body ? normalizeAnnotationText(annotation.body).slice(0, 120) : '划线点评';
+    const after = document.createTextNode(node.nodeValue.slice(end));
+    node.replaceWith(before, selected, after);
+    const block = selected.closest('p,li,blockquote,h1,h2,h3,h4,.translation-target,.rewrite-content > div,.reader-content > div') || selected.parentElement;
+    block?.classList.add('annotation-discussed-block');
+  }
+  return true;
+}
+
+function applyAnnotationDiscussionFilter() {
+  for (const surface of ANNOTATION_SURFACES) {
+    const root = annotationSurfaceRoot(surface);
+    if (!root) continue;
+    const surfaceAnnotations = (state.annotations || []).filter(item => item.surface === surface);
+    const blocks = $$('p,li,blockquote,h1,h2,h3,h4,.translation-target', root)
+      .filter(block => !block.closest('.annotation-popover'));
+    blocks.forEach(block => {
+      if (block.querySelector('.text-annotation-mark')) block.classList.add('annotation-discussed-block');
+      else block.classList.add('annotation-free-block');
+    });
+    root.classList.toggle('annotation-discussion-muted', Boolean(state.annotationOnlyDiscussed && surfaceAnnotations.length));
+  }
+}
+
+function applyTextAnnotations() {
+  for (const surface of ANNOTATION_SURFACES) {
+    const root = annotationSurfaceRoot(surface);
+    if (!root) continue;
+    clearAnnotationMarks(root);
+    const surfaceAnnotations = (state.annotations || []).filter(item => item.surface === surface);
+    for (const annotation of surfaceAnnotations) {
+      annotation.anchorMissing = !markAnnotationAnchor(annotation, root);
+    }
+  }
+  applyAnnotationDiscussionFilter();
+}
+
+function selectionAnnotationContext() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !state.activeEntry) return null;
+  const quote = normalizeAnnotationText(selection.toString()).slice(0, 800);
+  if (quote.length < 2) return null;
+  const range = selection.getRangeAt(0);
+  const surface = annotationSurfaceFromNode(range.commonAncestorContainer);
+  if (!surface) return null;
+  const root = annotationSurfaceRoot(surface);
+  if (!root || !root.contains(range.commonAncestorContainer)) return null;
+  const rootText = normalizeAnnotationText(root.textContent || '');
+  const idx = rootText.indexOf(quote);
+  const prefix = idx >= 0 ? rootText.slice(Math.max(0, idx - 120), idx) : '';
+  const suffix = idx >= 0 ? rootText.slice(idx + quote.length, idx + quote.length + 120) : '';
+  const rect = range.getBoundingClientRect();
+  if (!rect || (!rect.width && !rect.height)) return null;
+  return { surface, quote, prefix, suffix, rect };
+}
+
+function hideAnnotationPopover() {
+  state.annotationDraft = null;
+  $('#annotation-popover')?.classList.add('hidden');
+}
+
+function showAnnotationPopover(context) {
+  const popover = $('#annotation-popover');
+  if (!popover || !context) return;
+  state.annotationDraft = {
+    surface: context.surface,
+    quote: context.quote,
+    prefix: context.prefix,
+    suffix: context.suffix,
+  };
+  $('#annotation-popover-quote').textContent = `${ANNOTATION_SURFACE_LABELS[context.surface]}：${context.quote}`;
+  const input = $('#annotation-popover-input');
+  input.value = '';
+  const width = Math.min(360, window.innerWidth - 28);
+  const left = Math.min(Math.max(14, context.rect.left), window.innerWidth - width - 14);
+  const top = Math.min(Math.max(14, context.rect.bottom + 10), window.innerHeight - 220);
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+  popover.classList.remove('hidden');
+  setTimeout(() => input.focus(), 0);
+}
+
+function maybeOpenAnnotationPopover() {
+  if ($('#annotation-popover')?.contains(document.activeElement)) return;
+  const context = selectionAnnotationContext();
+  if (context) showAnnotationPopover(context);
+}
+
+function annotationAssetPatch(annotations = state.annotations) {
+  const list = Array.isArray(annotations) ? annotations : [];
+  const assets = mergeAssets(state.activeEntry);
+  const latest = [...list].sort((a, b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0))[0] || null;
+  const topHelpful = [...list]
+    .filter(item => Number(item.helpfulCount || 0) > 0)
+    .sort((a, b) => (Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0)) || (Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0)))[0] || null;
+  const items = list.slice(0, 3).map(item => ({
+    type: 'annotations',
+    id: item.id,
+    role: item.surface,
+    author: item.author,
+    title: ANNOTATION_SURFACE_LABELS[item.surface] || '',
+    text: `${item.quote || ''} ${item.body || ''}`,
+    at: Number(item.updatedAt || item.createdAt || 0),
+    helpfulCount: Number(item.helpfulCount) || 0,
+  }));
+  const preview = latest ? items.find(item => item.id === latest.id) || {
+    type: 'annotations',
+    id: latest.id,
+    role: latest.surface,
+    author: latest.author,
+    title: ANNOTATION_SURFACE_LABELS[latest.surface] || '',
+    text: `${latest.quote || ''} ${latest.body || ''}`,
+    at: Number(latest.updatedAt || latest.createdAt || 0),
+    helpfulCount: Number(latest.helpfulCount) || 0,
+  } : null;
+  return {
+    annotations: list.length,
+    annotationHelpfulCount: list.reduce((sum, item) => sum + (Number(item.helpfulCount) || 0), 0),
+    helpfulAnnotations: list.filter(item => Number(item.helpfulCount || 0) > 0).length,
+    topHelpfulAnnotation: topHelpful ? {
+      type: 'annotations',
+      id: topHelpful.id,
+      role: topHelpful.surface,
+      author: topHelpful.author,
+      title: ANNOTATION_SURFACE_LABELS[topHelpful.surface] || '',
+      text: `${topHelpful.quote || ''} ${topHelpful.body || ''}`,
+      at: Number(topHelpful.updatedAt || topHelpful.createdAt || 0),
+      helpfulCount: Number(topHelpful.helpfulCount) || 0,
+    } : null,
+    helpfulCount: (Number(assets.translationHelpfulCount) || 0)
+      + (Number(assets.rewriteHelpfulCount) || 0)
+      + (Number(assets.commentHelpfulCount) || 0)
+      + (Number(assets.chatHelpfulCount) || 0)
+      + list.reduce((sum, item) => sum + (Number(item.helpfulCount) || 0), 0),
+    previews: { ...(assets.previews || {}), ...(preview ? { annotations: preview } : {}) },
+    items: { ...(assets.items || {}), annotations: items },
+  };
+}
+
+function renderAnnotations() {
+  const list = $('#annotations-list');
+  if (!list) return;
+  const annotations = state.annotations || [];
+  $('#annotations-count').textContent = annotations.length ? `${annotations.length} 条` : '暂无';
+  const rail = $('#reader-rail-annotation-count');
+  if (rail) rail.textContent = formatCompactCount(annotations.length) || '0';
+  const filter = ANNOTATION_SURFACES.includes(state.annotationFilter) ? state.annotationFilter : 'all';
+  const select = $('#annotation-surface-filter');
+  if (select) select.value = filter;
+  const toggle = $('#annotation-discussed-toggle');
+  if (toggle) {
+    toggle.classList.toggle('active', Boolean(state.annotationOnlyDiscussed));
+    toggle.setAttribute('aria-pressed', state.annotationOnlyDiscussed ? 'true' : 'false');
+  }
+  const visible = annotations
+    .filter(item => filter === 'all' || item.surface === filter)
+    .sort((a, b) => {
+      const helpfulDelta = Number(b.helpfulCount || 0) - Number(a.helpfulCount || 0);
+      if (helpfulDelta) return helpfulDelta;
+      return Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0);
+    });
+  $('#annotation-nav').innerHTML = visible.map(item => `
+    <button type="button" class="annotation-nav-btn" data-annotation-jump="${escapeHtml(item.id)}">
+      ${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')} · ${escapeHtml(plainSnippet(item.quote, 42))}
+    </button>
+  `).join('');
+  if (!visible.length) {
+    list.innerHTML = '<div class="comments-empty">选中文章中的文字，就可以发布划线点评。</div>';
+    renderReaderAssetSummary();
+    applyTextAnnotations();
+    return;
+  }
+  list.innerHTML = visible.map(item => {
+    const helpfulActive = Boolean(item.helpfulByMe);
+    const helpfulCount = Number(item.helpfulCount || 0);
+    const authorHtml = item.contributorId
+      ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(item.contributorId)}">${escapeHtml(item.contributorName || item.author)}</button>`
+      : escapeHtml(item.author);
+    const replies = (item.replies || []).map(reply => {
+      const replyAuthor = reply.contributorId
+        ? `<button type="button" class="contributor-inline" data-contributor-id="${escapeHtml(reply.contributorId)}">${escapeHtml(reply.contributorName || reply.author)}</button>`
+        : escapeHtml(reply.author);
+      return `
+        <div class="annotation-reply">
+          <div class="annotation-reply-meta">${replyAuthor} · ${formatAssetTime(reply.createdAt)}</div>
+          <div class="annotation-reply-body">${renderMarkdownLite(reply.body)}</div>
+        </div>`;
+    }).join('');
+    return `
+      <article id="annotation-${escapeHtml(item.id)}" class="annotation-item">
+        <div class="annotation-meta">
+          <span class="annotation-surface-badge">${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')}</span>
+          <span>${authorHtml} · ${formatAssetTime(item.createdAt)}</span>
+          ${Number(item.updatedAt || 0) > Number(item.createdAt || 0) ? `<span>更新 ${formatAssetTime(item.updatedAt)}</span>` : ''}
+        </div>
+        <div class="annotation-quote">${escapeHtml(item.quote)}</div>
+        ${item.anchorMissing ? '<div class="annotation-anchor-missing">这段文字暂时没有在当前内容中定位到，可能原文已更新。</div>' : ''}
+        <div class="annotation-body">${renderMarkdownLite(item.body)}</div>
+        <div class="annotation-actions">
+          <button type="button" class="annotation-action${helpfulActive ? ' active' : ''}" data-annotation-helpful="${escapeHtml(item.id)}" aria-pressed="${helpfulActive ? 'true' : 'false'}">有用${helpfulCount ? ` ${helpfulCount}` : ''}</button>
+          <button type="button" class="annotation-action" data-annotation-focus="${escapeHtml(item.id)}">定位原文</button>
+          <button type="button" class="annotation-action" data-annotation-link="${escapeHtml(item.id)}">复制链接</button>
+          <button type="button" class="annotation-action" data-annotation-copy="${escapeHtml(item.id)}">复制内容</button>
+          ${item.canDelete ? `<button type="button" class="annotation-action annotation-action-danger" data-annotation-delete="${escapeHtml(item.id)}">撤回</button>` : ''}
+        </div>
+        ${replies ? `<div class="annotation-replies">${replies}</div>` : ''}
+        ${state.me ? `
+          <form class="annotation-reply-form" data-annotation-reply-form="${escapeHtml(item.id)}">
+            <textarea rows="1" placeholder="回复这条划线点评…"></textarea>
+            <button class="ghost-btn" type="submit">回复</button>
+          </form>
+        ` : `
+          <div class="annotation-reply-actions">
+            <button type="button" class="annotation-action" data-annotation-login="1">登录后回复</button>
+          </div>
+        `}
+      </article>`;
+  }).join('');
+  renderReaderAssetSummary();
+  applyTextAnnotations();
+  highlightAnnotationFromRoute();
+  settlePendingAssetJump('annotations');
+}
+
+function highlightAnnotationFromRoute() {
+  const annotationId = state.pendingAnnotationId;
+  if (!annotationId) return;
+  const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
+  if (item && state.readerTab !== item.surface) {
+    setReaderTab(item.surface, { syncUrl: false });
+    applyTextAnnotations();
+  }
+  const target = document.getElementById(`annotation-${annotationId}`);
+  const mark = document.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(annotationId)}"]`);
+  if (!target && !mark) return;
+  state.pendingAnnotationId = '';
+  const destination = mark || target;
+  destination.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target?.classList.add('annotation-target');
+  mark?.classList.add('active');
+  setTimeout(() => {
+    target?.classList.remove('annotation-target');
+    mark?.classList.remove('active');
+  }, 2600);
+}
+
+function jumpToAnnotation(annotationId) {
+  const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
+  if (!item) return;
+  state.readerFocus = 'annotations';
+  state.readerAssetId = annotationId;
+  const tab = normalizeAnnotationSurface(item.surface);
+  setReaderTab(tab, { syncUrl: true, replaceUrl: true });
+  applyTextAnnotations();
+  requestAnimationFrame(() => {
+    const mark = document.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(annotationId)}"]`);
+    if (mark) {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      mark.classList.add('active');
+      setTimeout(() => mark.classList.remove('active'), 2200);
+      return;
+    }
+    scrollReaderTarget(`#annotation-${annotationId}`);
+  });
+}
+
+function copyAnnotation(annotationId) {
+  const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
+  if (!item) return toast('找不到这条划线点评');
+  copyText(`「${item.quote}」\n\n${item.body}`, '划线点评已复制');
+}
+
+function copyAnnotationLink(annotationId) {
+  const url = annotationUrl(annotationId);
+  if (!url) return toast('找不到这条划线点评链接');
+  copyText(url, '划线点评链接已复制');
+}
+
+async function loadAnnotations(entry) {
+  state.annotations = [];
+  renderAnnotations();
+  try {
+    const data = await api(`/api/entry/${entry.id}/annotations`);
+    if (state.activeEntry?.id !== entry.id) return;
+    state.annotations = data.annotations || [];
+    updateEntryAssets(entry.id, annotationAssetPatch(state.annotations), { rerenderList: false });
+    renderAnnotations();
+    renderList();
+  } catch {
+    renderAnnotations();
+  }
+}
+
+async function submitAnnotationDraft() {
+  const entry = state.activeEntry;
+  const draft = state.annotationDraft;
+  const body = $('#annotation-popover-input').value.trim();
+  if (!entry || !draft || !body) return;
+  if (!requireAuth('login')) return;
+  const btn = $('#annotation-popover-submit');
+  btn.disabled = true;
+  state.annotationBusy = true;
+  try {
+    const data = await api(`/api/entry/${entry.id}/annotations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...draft, body }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.annotations = data.annotations || [];
+    updateEntryAssets(entry.id, annotationAssetPatch(state.annotations));
+    hideAnnotationPopover();
+    window.getSelection()?.removeAllRanges();
+    renderAnnotations();
+    if (data.annotation?.id) jumpToAnnotation(data.annotation.id);
+    toast('划线点评已发布');
+  } catch (err) {
+    toast('划线点评失败: ' + err.message, 5000);
+  } finally {
+    state.annotationBusy = false;
+    btn.disabled = false;
+  }
+}
+
+async function submitAnnotationReply(annotationId, form) {
+  const entry = state.activeEntry;
+  const input = form && $('textarea', form);
+  const body = input ? input.value.trim() : '';
+  if (!entry || !annotationId || !body) return;
+  if (!requireAuth('login')) return;
+  const btn = $('button', form);
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api(`/api/entry/${entry.id}/annotations/${encodeURIComponent(annotationId)}/replies`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.annotations = data.annotations || [];
+    updateEntryAssets(entry.id, annotationAssetPatch(state.annotations));
+    renderAnnotations();
+    toast('回复已发布');
+  } catch (err) {
+    toast('回复失败: ' + err.message, 5000);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function toggleAnnotationHelpful(annotationId) {
+  const entry = state.activeEntry;
+  const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
+  if (!entry || !item) return;
+  if (!state.me) {
+    openAuth('login');
+    toast('登录后可以标记有用');
+    return;
+  }
+  const nextHelpful = !item.helpfulByMe;
+  try {
+    const data = await api(`/api/entry/${entry.id}/annotations/${encodeURIComponent(annotationId)}/helpful`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ helpful: nextHelpful }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.annotations = data.annotations || [];
+    updateEntryAssets(entry.id, annotationAssetPatch(state.annotations));
+    renderAnnotations();
+    toast(nextHelpful ? '已标记有用' : '已取消有用标记');
+  } catch (err) {
+    toast('反馈失败: ' + err.message, 5000);
+  }
+}
+
+async function deleteAnnotation(annotationId) {
+  const entry = state.activeEntry;
+  if (!entry || !annotationId) return;
+  if (!window.confirm('确定撤回这条划线点评吗？撤回后公开资产页和 RSS 中也会移除。')) return;
+  try {
+    const data = await api(`/api/entry/${entry.id}/annotations/${encodeURIComponent(annotationId)}`, { method: 'DELETE' });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.annotations = data.annotations || [];
+    updateEntryAssets(entry.id, annotationAssetPatch(state.annotations));
+    renderAnnotations();
+    renderList();
+    toast('划线点评已撤回');
+  } catch (err) {
+    toast('撤回划线点评失败: ' + err.message, 5000);
+  }
+}
+
 function renderComments() {
   const list = $('#comments-list');
   const comments = state.comments || [];
@@ -3659,6 +4250,7 @@ function myAssetUrl(type, item) {
   const entry = item.entry || { id: item.entryId };
   if (type === 'likes') return readerUrlFor(entry);
   if (type === 'translation' || type === 'rewrite') return readerAssetUrl(type, entry, item.id);
+  if (type === 'annotations') return annotationUrl(item.id, entry);
   if (type === 'chat') return chatMessageUrl(item.id, entry);
   return commentUrl(item.id, entry);
 }
@@ -3689,6 +4281,7 @@ function myAssetCounts() {
   return {
     translation: (state.myTranslations || []).length,
     rewrite: (state.myRewrites || []).length,
+    annotations: (state.myAnnotations || []).length,
     comments: (state.myComments || []).length,
     chat: (state.myChatMessages || []).length,
   };
@@ -3698,6 +4291,7 @@ function renderMyAssetTabs() {
   const counts = myAssetCounts();
   $('#my-translation-count').textContent = counts.translation;
   $('#my-rewrite-count').textContent = counts.rewrite;
+  $('#my-annotations-count').textContent = counts.annotations;
   $('#my-comments-count').textContent = counts.comments;
   $('#my-chat-count').textContent = counts.chat;
   $$('#my-dashboard-page [data-my-asset-tab]').forEach(btn => {
@@ -3910,6 +4504,14 @@ function renderMyAssets() {
       item.model,
       Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
       formatAssetTime(item.createdAt),
+    ].filter(Boolean).join(' · ') : type === 'annotations' ? [
+      sourceName(entry.sourceId),
+      ANNOTATION_SURFACE_LABELS[item.surface] || '原文',
+      Number(item.replyCount || 0) ? `回复 ${Number(item.replyCount)}` : '',
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+      Number(item.updatedAt || 0) > Number(item.createdAt || 0)
+        ? `更新 ${formatAssetTime(item.updatedAt)}`
+        : formatAssetTime(item.createdAt),
     ].filter(Boolean).join(' · ') : type === 'comments' ? [
       sourceName(entry.sourceId),
       Number(item.updatedAt || 0) > Number(item.createdAt || 0)
@@ -3958,14 +4560,16 @@ async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {
   renderMyAssetTabs();
   $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的资产…</div>';
   try {
-    const [translationData, rewriteData, commentData, chatData] = await Promise.all([
+    const [translationData, rewriteData, annotationData, commentData, chatData] = await Promise.all([
       api('/api/me/translations?limit=100'),
       api('/api/me/rewrites?limit=100'),
+      api('/api/me/annotations?limit=100'),
       api('/api/me/comments?limit=100'),
       api('/api/me/chat-messages?limit=100'),
     ]);
     state.myTranslations = translationData.translations || [];
     state.myRewrites = rewriteData.rewrites || [];
+    state.myAnnotations = annotationData.annotations || [];
     state.myComments = commentData.comments || [];
     state.myChatMessages = chatData.messages || [];
     renderMyAssets();
@@ -3990,6 +4594,8 @@ function myAssetItemsForTab(type) {
     ? state.myTranslations || []
     : type === 'rewrite'
     ? state.myRewrites || []
+    : type === 'annotations'
+    ? state.myAnnotations || []
     : type === 'chat'
     ? state.myChatMessages || []
     : state.myComments || [];
@@ -4004,6 +4610,7 @@ function userAssetDisplay(type, item) {
   if (type === 'likes') return { label: '点赞文章', body: item.summaryZh || item.summary || item.entry?.summaryZh || item.entry?.summary || '' };
   if (type === 'translation') return { label: '中文翻译', body: item.contentSnippet || item.summaryZh || '' };
   if (type === 'rewrite') return { label: '中文改写', body: item.bodySnippet || '' };
+  if (type === 'annotations') return { label: `划线 · ${ANNOTATION_SURFACE_LABELS[item.surface] || '原文'}`, body: `「${item.quoteSnippet || item.quote || ''}」\n${item.bodySnippet || item.body || ''}` };
   if (type === 'chat') return { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' };
   return commentDisplayParts(item.body || item.bodySnippet || '');
 }
@@ -4022,6 +4629,11 @@ function assetContentText(type, item, fullAsset = null) {
   const assetType = normalizeUserAssetTab(type);
   if (assetType === 'translation') return translationAssetText(fullAsset || item, item);
   if (assetType === 'rewrite') return String((fullAsset && fullAsset.body) || item.body || item.bodySnippet || '').trim();
+  if (assetType === 'annotations') {
+    const quote = String(item.quote || item.quoteSnippet || '').trim();
+    const body = String(item.body || item.bodySnippet || item.text || '').trim();
+    return [quote ? `「${quote}」` : '', body].filter(Boolean).join('\n\n');
+  }
   if (assetType === 'chat') {
     const label = item.role === 'assistant' ? '回答' : '提问';
     const content = String(item.content || item.contentSnippet || item.text || '').trim();
@@ -4070,6 +4682,8 @@ async function openMyAsset(itemId) {
   const type = normalizeUserAssetTab(state.myAssetTab);
   const ok = type === 'translation' || type === 'rewrite'
     ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
+    : type === 'annotations'
+    ? await openEntryById(entryId, { focus: 'annotations', annotationId: itemId, updateUrl: true, replaceUrl: false })
     : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
     : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
@@ -4115,6 +4729,8 @@ function contributorAssetItemsForCurrentTab() {
     ? state.contributor.translations || []
     : type === 'rewrite'
     ? state.contributor.rewrites || []
+    : type === 'annotations'
+    ? state.contributor.annotations || []
     : type === 'chat'
     ? state.contributor.messages || []
     : type === 'likes'
@@ -4126,11 +4742,13 @@ function contributorAssetItemsForCurrentTab() {
 function renderContributorTabs() {
   const translationCount = (state.contributor.translations || []).length;
   const rewriteCount = (state.contributor.rewrites || []).length;
+  const annotationCount = (state.contributor.annotations || []).length;
   const commentCount = (state.contributor.comments || []).length;
   const chatCount = (state.contributor.messages || []).length;
   const likesCount = (state.contributor.likedEntries || []).length;
   $('#contributor-translation-count').textContent = translationCount;
   $('#contributor-rewrite-count').textContent = rewriteCount;
+  $('#contributor-annotations-count').textContent = annotationCount;
   $('#contributor-comments-count').textContent = commentCount;
   $('#contributor-chat-count').textContent = chatCount;
   $('#contributor-likes-count').textContent = likesCount;
@@ -4223,7 +4841,7 @@ function renderContributorAssets() {
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的贡献主页` : '贡献主页';
   $('#contributor-subtitle').textContent = profile
-    ? `公开沉淀的翻译、重写、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
+    ? `公开沉淀的翻译、重写、划线点评、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
     : '正在读取公开资产…';
   renderContributorProfile();
   if (rssLink) {
@@ -4263,6 +4881,14 @@ function renderContributorAssets() {
       item.model,
       Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
       formatAssetTime(item.createdAt),
+    ].filter(Boolean).join(' · ') : type === 'annotations' ? [
+      sourceName(entry.sourceId),
+      ANNOTATION_SURFACE_LABELS[item.surface] || '原文',
+      Number(item.replyCount || 0) ? `回复 ${Number(item.replyCount)}` : '',
+      Number(item.helpfulCount || 0) ? `有用 ${Number(item.helpfulCount)}` : '',
+      Number(item.updatedAt || 0) > Number(item.createdAt || 0)
+        ? `更新 ${formatAssetTime(item.updatedAt)}`
+        : formatAssetTime(item.createdAt),
     ].filter(Boolean).join(' · ') : type === 'comments' ? [
       sourceName(entry.sourceId),
       Number(item.updatedAt || 0) > Number(item.createdAt || 0)
@@ -4302,7 +4928,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
   if (!id) return;
   const contributorAssetSort = normalizeContributorAssetSort(sort);
   const contributorAssetTab = normalizeUserAssetTab(tab);
-  state.contributor = { id, profile: null, translations: [], rewrites: [], comments: [], messages: [], likedEntries: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
+  state.contributor = { id, profile: null, translations: [], rewrites: [], annotations: [], comments: [], messages: [], likedEntries: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
   setWorkspacePage('contributor');
   renderContributorAssets();
   try {
@@ -4313,6 +4939,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
       profile: data.contributor || null,
       translations: data.translations || [],
       rewrites: data.rewrites || [],
+      annotations: data.annotations || [],
       comments: data.comments || [],
       messages: data.messages || [],
       likedEntries: data.likedEntries || [],
@@ -4377,6 +5004,8 @@ async function openContributorAsset(itemId) {
     ? await openEntryById(entryId, { updateUrl: true, replaceUrl: false })
     : type === 'translation' || type === 'rewrite'
     ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
+    : type === 'annotations'
+    ? await openEntryById(entryId, { focus: 'annotations', annotationId: itemId, updateUrl: true, replaceUrl: false })
     : type === 'chat'
     ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
     : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
@@ -4756,11 +5385,12 @@ function chatHelpfulAssetPatch(messages, entry = state.activeEntry) {
   const chatHelpfulCount = (messages || []).reduce((sum, message) => sum + (Number(message.helpfulCount) || 0), 0);
   const helpfulChats = (messages || []).filter(message => Number(message.helpfulCount || 0) > 0).length;
   const commentHelpfulCount = Number(assets.commentHelpfulCount ?? (Number(assets.helpfulCount || 0) - Number(assets.chatHelpfulCount || 0))) || 0;
+  const annotationHelpfulCount = Number(assets.annotationHelpfulCount) || 0;
   return {
     chatMessages: (messages || []).filter(message => message && message.id).length,
     chatHelpfulCount,
     helpfulChats,
-    helpfulCount: Math.max(0, commentHelpfulCount) + chatHelpfulCount,
+    helpfulCount: Math.max(0, commentHelpfulCount) + annotationHelpfulCount + chatHelpfulCount,
   };
 }
 
@@ -4912,11 +5542,15 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', commentId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
+async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
   setWorkspacePage('');
   state.activeEntry = e;
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
-  const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite') ? String(aiAssetId || '').trim() : '';
+  const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite')
+    ? String(aiAssetId || '').trim()
+    : requestedFocus === 'annotations'
+      ? String(annotationId || '').trim()
+      : '';
   const requestedTab = requestedFocus === 'translation'
     ? 'translation'
     : requestedFocus === 'rewrite'
@@ -4939,6 +5573,8 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   renderReaderStatsUi();
   $('#comment-input').value = '';
   state.editingCommentId = '';
+  state.annotations = [];
+  state.annotationDraft = null;
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
@@ -4952,8 +5588,9 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   state.readerAssetId = requestedAssetId;
   state.readerAssetsExpanded = false;
   state.readerTocAvailable = false;
-  state.pendingAssetJump = requestedFocus;
+  state.pendingAssetJump = requestedFocus === 'annotations' && annotationId ? null : requestedFocus;
   state.pendingCommentId = commentId || '';
+  state.pendingAnnotationId = annotationId || '';
   state.pendingChatMessageId = chatMessageId || '';
   renderReaderStatsUi();
   if (requestedFocus === 'chat') setAgentCollapsed(false);
@@ -4965,9 +5602,10 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   setReaderTab(requestedTab, { syncUrl: false });
   loadTranslation(e);
   loadRewrite(e);
+  loadAnnotations(e);
   loadComments(e);
   loadAgentMessages(e);
-  if (updateUrl) syncReaderUrl({ replace: replaceUrl, commentId, chatMessageId });
+  if (updateUrl) syncReaderUrl({ replace: replaceUrl, commentId, annotationId, chatMessageId });
 
   $('#reader-audio').innerHTML = e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '';
   $('#reader-pane').scrollTop = 0;
@@ -5000,6 +5638,8 @@ function closeReaderFromRoute() {
   state.activeEntry = null;
   state.agentMessages = [];
   state.comments = [];
+  state.annotations = [];
+  state.annotationDraft = null;
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
@@ -5015,6 +5655,7 @@ function closeReaderFromRoute() {
   state.readerTocAvailable = false;
   state.pendingAssetJump = null;
   state.pendingCommentId = '';
+  state.pendingAnnotationId = '';
   state.pendingChatMessageId = '';
   state.fetchingOriginal = false;
   state.readerTab = 'original';
@@ -5026,7 +5667,7 @@ function closeReaderFromRoute() {
   renderAgent();
 }
 
-async function openEntryById(entryId, { tab = 'original', focus = null, aiAssetId = '', commentId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
+async function openEntryById(entryId, { tab = 'original', focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
   let entry = state.entries.find(item => item.id === id);
@@ -5035,7 +5676,7 @@ async function openEntryById(entryId, { tab = 'original', focus = null, aiAssetI
     entry = data.entry;
   }
   if (!entry) return false;
-  await openEntry(entry, { tab, focus, aiAssetId, commentId, chatMessageId, updateUrl, replaceUrl });
+  await openEntry(entry, { tab, focus, aiAssetId, commentId, annotationId, chatMessageId, updateUrl, replaceUrl });
   return true;
 }
 
@@ -5107,7 +5748,7 @@ async function openEntryFromUrl() {
     return false;
   }
   try {
-    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, aiAssetId: route.assetId, commentId: route.commentId, chatMessageId: route.chatMessageId, updateUrl: false });
+    return await openEntryById(route.entryId, { tab: route.tab, focus: route.focus, aiAssetId: route.assetId, commentId: route.commentId, annotationId: route.annotationId, chatMessageId: route.chatMessageId, updateUrl: false });
   } catch (err) {
     toast('找不到这篇文章: ' + err.message, 4000);
     closeReaderFromRoute();
@@ -5127,6 +5768,8 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.activeEntry = null;
     state.agentMessages = [];
     state.comments = [];
+    state.annotations = [];
+    state.annotationDraft = null;
     state.translation = null;
     state.translationLoading = false;
     state.translationGenerating = false;
@@ -5141,6 +5784,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.readerAssetsExpanded = false;
     state.readerTocAvailable = false;
     state.pendingAssetJump = null;
+    state.pendingAnnotationId = '';
     state.fetchingOriginal = false;
     state.readerTab = 'original';
     $('#reader').classList.add('hidden');
@@ -6014,6 +6658,7 @@ $('#reader-rail-like').onclick = () => setReaderReaction('like');
 $('#reader-rail-dislike').onclick = () => setReaderReaction('dislike');
 $('#reader-rail-star').onclick = () => $('#reader-star').click();
 $('#reader-rail-comment').onclick = () => scrollReaderTarget('#reader-comments', { offset: 72 });
+$('#reader-rail-annotation').onclick = () => scrollReaderTarget('#reader-annotations', { offset: 72 });
 $('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
 $('#reader-rail-translate').onclick = () => handleReaderTab('translation');
 $('#reader-fetch-original').onclick = fetchOriginalContent;
@@ -6056,6 +6701,95 @@ $('#rewrite-copy').onclick = copyRewriteText;
 $$('.reader-tab').forEach(btn => {
   btn.onclick = () => handleReaderTab(btn.dataset.tab);
 });
+document.addEventListener('mouseup', (e) => {
+  if (e.target.closest('#annotation-popover, #agent-pane, #my-dashboard-page, #contributor-page')) return;
+  setTimeout(maybeOpenAnnotationPopover, 0);
+});
+document.addEventListener('selectionchange', () => {
+  if (!window.getSelection()?.isCollapsed) return;
+  if ($('#annotation-popover')?.contains(document.activeElement)) return;
+  hideAnnotationPopover();
+});
+$('#annotation-popover-cancel').onclick = hideAnnotationPopover;
+$('#annotation-popover-submit').onclick = submitAnnotationDraft;
+$('#annotation-popover-input').onkeydown = (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    hideAnnotationPopover();
+  }
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    submitAnnotationDraft();
+  }
+};
+$('#annotation-surface-filter').onchange = (e) => {
+  const value = e.target.value;
+  state.annotationFilter = value === 'all' || ANNOTATION_SURFACES.includes(value) ? value : 'all';
+  storage.setItem('qm_annotation_filter', state.annotationFilter);
+  renderAnnotations();
+};
+$('#annotation-discussed-toggle').onclick = () => {
+  state.annotationOnlyDiscussed = !state.annotationOnlyDiscussed;
+  storage.setItem('qm_annotation_only_discussed', state.annotationOnlyDiscussed ? '1' : '0');
+  renderAnnotations();
+};
+$('#annotation-nav').onclick = (e) => {
+  const btn = e.target.closest('[data-annotation-jump]');
+  if (btn) jumpToAnnotation(btn.dataset.annotationJump);
+};
+$('#annotations-list').onclick = (e) => {
+  const contributor = e.target.closest('[data-contributor-id]');
+  if (contributor) {
+    openContributor(contributor.dataset.contributorId);
+    return;
+  }
+  if (e.target.closest('[data-annotation-login]')) {
+    openAuth('login');
+    return;
+  }
+  const helpful = e.target.closest('[data-annotation-helpful]');
+  if (helpful) {
+    toggleAnnotationHelpful(helpful.dataset.annotationHelpful);
+    return;
+  }
+  const focus = e.target.closest('[data-annotation-focus]');
+  if (focus) {
+    jumpToAnnotation(focus.dataset.annotationFocus);
+    return;
+  }
+  const link = e.target.closest('[data-annotation-link]');
+  if (link) {
+    copyAnnotationLink(link.dataset.annotationLink);
+    return;
+  }
+  const copy = e.target.closest('[data-annotation-copy]');
+  if (copy) {
+    copyAnnotation(copy.dataset.annotationCopy);
+    return;
+  }
+  const del = e.target.closest('[data-annotation-delete]');
+  if (del) deleteAnnotation(del.dataset.annotationDelete);
+};
+$('#annotations-list').onsubmit = (e) => {
+  const form = e.target.closest('[data-annotation-reply-form]');
+  if (!form) return;
+  e.preventDefault();
+  submitAnnotationReply(form.dataset.annotationReplyForm, form);
+};
+$('#annotations-list').oninput = (e) => {
+  const input = e.target.closest('.annotation-reply-form textarea');
+  if (!input) return;
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 130)}px`;
+};
+$('#reader').onclick = (e) => {
+  const mark = e.target.closest('.text-annotation-mark');
+  if (mark) {
+    jumpToAnnotation(mark.dataset.annotationId);
+    return;
+  }
+  if (!e.target.closest('#annotation-popover')) hideAnnotationPopover();
+};
 $('#comment-form').onsubmit = (e) => {
   e.preventDefault();
   submitComment();

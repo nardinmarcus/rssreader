@@ -40,6 +40,10 @@ const ASSET_DIRECTORY_META = {
     label: '人工点评',
     description: 'QMReader 已沉淀人工点评的公开 RSS 文章目录。',
   },
+  annotations: {
+    label: '划线点评',
+    description: 'QMReader 已沉淀文章划线点评和段落讨论的公开 RSS 文章目录。',
+  },
   chat: {
     label: '文章对话',
     description: 'QMReader 已沉淀公开 AI 文章对话的 RSS 文章目录。',
@@ -268,6 +272,7 @@ function requestAssetItemId(req, focus = '') {
   if (articleRoute && articleRoute.focus === assetFocus && articleRoute.itemId) return articleRoute.itemId;
   if (assetFocus === 'translation' || assetFocus === 'rewrite') return String(req.query.assetId || '').trim();
   if (assetFocus === 'comments') return String(req.query.comment || '').trim();
+  if (assetFocus === 'annotations') return String(req.query.annotation || '').trim();
   if (assetFocus === 'chat') return String(req.query.chat || '').trim();
   return '';
 }
@@ -276,6 +281,7 @@ function requestAssetFocus(req) {
   const articleRoute = articleRouteFromRequest(req);
   if (articleRoute && articleRoute.focus) return articleRoute.focus;
   if (String(req.query.comment || '').trim()) return 'comments';
+  if (String(req.query.annotation || '').trim()) return 'annotations';
   if (String(req.query.chat || '').trim()) return 'chat';
   const focus = normalizeAssetDirectoryType(String(req.query.focus || ''));
   if (focus) return focus;
@@ -299,13 +305,13 @@ function assetDirectoryMeta(req) {
     if (q) {
       return {
         title: `${sortPrefix}公开资产搜索：${q} · QMReader`,
-        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、人工点评和文章对话。${sortDescription}${searchSuffix}`,
+        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、划线点评、人工点评和文章对话。${sortDescription}${searchSuffix}`,
       };
     }
     return {
       title: stats.assetCount ? `${sortPrefix}公开资产（${stats.assetCount} 条） · QMReader` : `${sortPrefix}公开资产 · QMReader`,
       description: stats.assetCount
-        ? `QMReader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、乔木风格重写、人工点评和文章对话。${sortDescription}${latestSuffix}`
+        ? `QMReader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、乔木风格重写、划线点评、人工点评和文章对话。${sortDescription}${latestSuffix}`
         : DEFAULT_DESCRIPTION,
     };
   }
@@ -345,8 +351,8 @@ function contributorDirectoryMeta(req = null) {
     contributors,
     title: contributors.length ? `${sortTitle}（${contributors.length} 人） · QMReader` : `${sortTitle} · QMReader`,
     description: contributors.length
-      ? `QMReader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、重写、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
-      : '浏览在 QMReader 沉淀过公开翻译、重写、点评和文章对话的贡献榜。',
+      ? `QMReader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、重写、划线点评、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : '浏览在 QMReader 沉淀过公开翻译、重写、划线点评、点评和文章对话的贡献榜。',
     latestAt,
   };
 }
@@ -367,17 +373,20 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   const translations = store.getUserTranslations(id, { limit: 200 });
   const rewrites = store.getUserRewrites(id, { limit: 200 });
   const comments = store.getUserComments(id, { limit: 200 });
+  const annotations = store.getUserAnnotations(id, { limit: 200 });
   const messages = store.getUserChatMessages(id, { limit: 200 });
   const translationCount = translations.length;
   const rewriteCount = rewrites.length;
   const commentCount = comments.length;
+  const annotationCount = annotations.length;
   const chatCount = messages.length;
-  const assetCount = translationCount + rewriteCount + commentCount + chatCount;
-  const typeCounts = { translation: translationCount, rewrite: rewriteCount, comments: commentCount, chat: chatCount };
+  const assetCount = translationCount + rewriteCount + annotationCount + commentCount + chatCount;
+  const typeCounts = { translation: translationCount, rewrite: rewriteCount, annotations: annotationCount, comments: commentCount, chat: chatCount };
   const visibleAssetCount = assetType ? typeCounts[assetType] || 0 : assetCount;
   const latestAt = Math.max(
     translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
     rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
+    annotations.reduce((latest, annotation) => Math.max(latest, Number(annotation.updatedAt || annotation.createdAt) || 0), 0),
     comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0),
     messages.reduce((latest, message) => Math.max(latest, Number(message.createdAt) || 0), 0),
   );
@@ -385,6 +394,8 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
     ? translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0)
     : assetType === 'rewrite'
     ? rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0)
+    : assetType === 'annotations'
+    ? annotations.reduce((latest, annotation) => Math.max(latest, Number(annotation.updatedAt || annotation.createdAt) || 0), 0)
     : assetType === 'comments'
     ? comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0)
     : assetType === 'chat'
@@ -403,16 +414,18 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   const description = typeMeta
     ? `${displayName} 在 QMReader 沉淀了 ${visibleAssetCount} 条${typeMeta.label}资产。${helpfulSentence}${sortSentence}${typeLatestAt ? `最新更新 ${formatShanghaiMinute(typeLatestAt)}。` : ''}`
     : assetCount
-      ? `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      ? `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${annotationCount} 条划线点评、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
       : `${displayName} 的 QMReader 个人主页。`;
   return {
     contributor: { ...contributor, displayName },
     translations,
     rewrites,
+    annotations,
     comments,
     messages,
     translationCount,
     rewriteCount,
+    annotationCount,
     commentCount,
     chatCount,
     assetCount,
@@ -455,6 +468,7 @@ function entryAssetCount(entry, type = '') {
   if (type === 'translation') return aiAssetCount(assets, 'translation');
   if (type === 'rewrite') return aiAssetCount(assets, 'rewrite');
   if (type === 'comments') return Number(assets.comments) || 0;
+  if (type === 'annotations') return Number(assets.annotations) || 0;
   if (type === 'chat') return Number(assets.chatMessages) || 0;
   return Object.keys(ASSET_DIRECTORY_META).reduce((sum, itemType) => sum + entryAssetCount(entry, itemType), 0);
 }
@@ -619,6 +633,14 @@ function contributorAssetStructuredItems(req, contributorPage) {
     helpfulCount: Number(comment.helpfulCount) || 0,
     entry: comment.entry,
   }));
+  const annotationItems = (contributorPage.annotations || []).map(annotation => ({
+    type: 'annotations',
+    id: annotation.id,
+    text: `${annotation.quote || annotation.quoteSnippet || ''}\n${annotation.bodySnippet || annotation.body || ''}`,
+    at: annotation.updatedAt || annotation.createdAt,
+    helpfulCount: Number(annotation.helpfulCount) || 0,
+    entry: annotation.entry,
+  }));
   const chatItems = (contributorPage.messages || []).map(message => ({
     type: 'chat',
     id: message.id,
@@ -627,7 +649,7 @@ function contributorAssetStructuredItems(req, contributorPage) {
     helpfulCount: Number(message.helpfulCount) || 0,
     entry: message.entry,
   }));
-  return [...translationItems, ...rewriteItems, ...commentItems, ...chatItems]
+  return [...translationItems, ...rewriteItems, ...annotationItems, ...commentItems, ...chatItems]
     .filter(item => item.entry && item.entry.id)
     .filter(item => !contributorPage.assetType || item.type === contributorPage.assetType)
     .sort((a, b) => {
@@ -772,7 +794,7 @@ function entryAssetStructuredPart(req, entry, focus) {
     author: structuredAuthor(preview.author || preview.model || 'QMReader'),
     isPartOf: entryPublicUrl(req, entry),
   };
-  if (type === 'comments') return { '@type': 'Comment', ...base };
+  if (type === 'comments' || type === 'annotations') return { '@type': 'Comment', ...base };
   if (type === 'chat') {
     const schemaType = preview.role === 'user' ? 'Question' : preview.role === 'assistant' ? 'Answer' : 'CreativeWork';
     return { '@type': schemaType, ...base };
@@ -818,6 +840,7 @@ function assetShareIdentity(focus = '', preview = null) {
   const author = clipText(preview.author || preview.model || '', 24);
   if (focus === 'translation') return author ? `${author}的中文翻译` : '中文翻译';
   if (focus === 'rewrite') return author ? `${author}的乔木重写` : '乔木风格重写';
+  if (focus === 'annotations') return author ? `${author}的划线点评` : '划线点评';
   if (focus === 'comments') return author ? `${author}的点评` : '人工点评';
   if (focus === 'chat') {
     const roleLabel = preview.role === 'user' ? '提问' : '回答';
@@ -849,6 +872,19 @@ function assetFeedPreviews(entry, type, previews = {}) {
       text: comment.body,
       at: comment.updatedAt || comment.createdAt,
       helpfulCount: Number(comment.helpfulCount) || 0,
+    }));
+  }
+  if (type === 'annotations') {
+    return store.getAnnotations(entry.id).map(annotation => ({
+      type: 'annotations',
+      id: annotation.id,
+      role: annotation.surface,
+      author: annotation.author,
+      model: '',
+      text: `${annotation.quote}\n${annotation.body}`,
+      at: annotation.updatedAt || annotation.createdAt,
+      helpfulCount: Number(annotation.helpfulCount) || 0,
+      replyCount: Number(annotation.replyCount) || 0,
     }));
   }
   if (type === 'chat') {
@@ -920,6 +956,21 @@ function exactAssetPreview(entry, focus, req) {
       at: comment.updatedAt || comment.createdAt,
     };
   }
+  if (focus === 'annotations') {
+    const annotation = store.getAnnotation(entry.id, requestAssetItemId(req, focus));
+    if (!annotation) return null;
+    return {
+      type: 'annotations',
+      id: annotation.id,
+      role: annotation.surface,
+      author: annotation.author,
+      model: '',
+      text: `${annotation.quote}\n${annotation.body}`,
+      at: annotation.updatedAt || annotation.createdAt,
+      helpfulCount: Number(annotation.helpfulCount) || 0,
+      replyCount: Number(annotation.replyCount) || 0,
+    };
+  }
   if (focus === 'chat') {
     const message = store.getChatMessage(entry.id, requestAssetItemId(req, focus));
     if (!message) return null;
@@ -939,13 +990,14 @@ function exactAssetPreview(entry, focus, req) {
 
 function hasPublicAssets(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
-  return Boolean(aiAssetCount(assets, 'translation') || aiAssetCount(assets, 'rewrite') || assets.comments || assets.chatMessages);
+  return Boolean(aiAssetCount(assets, 'translation') || aiAssetCount(assets, 'rewrite') || assets.annotations || assets.comments || assets.chatMessages);
 }
 
 function hasPublicAssetType(entry, type) {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return Boolean(aiAssetCount(assets, 'translation'));
   if (type === 'rewrite') return Boolean(aiAssetCount(assets, 'rewrite'));
+  if (type === 'annotations') return Boolean(assets.annotations);
   if (type === 'comments') return Boolean(assets.comments);
   if (type === 'chat') return Boolean(assets.chatMessages);
   return hasPublicAssets(entry);
@@ -1020,6 +1072,7 @@ function entryPublicPath(entry, focus = '', itemId = '', { includeHash = true } 
   if (assetFocus && safeItemId) {
     parts.push(encodePathSegment(safeItemId));
     if (includeHash && assetFocus === 'comments') hash = `#comment-${encodePathSegment(safeItemId)}`;
+    if (includeHash && assetFocus === 'annotations') hash = `#annotation-${encodePathSegment(safeItemId)}`;
     if (includeHash && assetFocus === 'chat') hash = `#chat-${encodePathSegment(safeItemId)}`;
   }
   return `${parts.join('/')}${hash}`;
@@ -1092,6 +1145,16 @@ function publicExactAssetSitemapUrls(req, entry, lastmod = '') {
     for (const comment of store.getComments(entry.id)) {
       urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'comments', comment, { includeHash: false }), {
         lastmod: assetItemLastModified(comment, commentsLastmod),
+        changefreq: 'monthly',
+        priority: '0.72',
+      }));
+    }
+  }
+  if (hasPublicAssetType(entry, 'annotations')) {
+    const annotationsLastmod = entryAssetTypeLastModified(entry, 'annotations', lastmod);
+    for (const annotation of store.getAnnotations(entry.id)) {
+      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'annotations', annotation, { includeHash: false }), {
+        lastmod: assetItemLastModified(annotation, annotationsLastmod),
         changefreq: 'monthly',
         priority: '0.72',
       }));
@@ -1231,6 +1294,29 @@ function contributorFeedItems(req, contributorPage) {
       guid: `qmreader:contributor:${contributorPage.contributor.id}:comments:${comment.id}`,
     };
   });
+  const annotations = (contributorPage.annotations || []).map(annotation => {
+    const preview = {
+      id: annotation.id,
+      role: annotation.surface,
+      author: annotation.contributorName || annotation.author || contributorPage.contributor.displayName || '读者',
+      model: '',
+      text: `${annotation.quote || annotation.quoteSnippet || ''}\n${annotation.body || annotation.bodySnippet || ''}`,
+      at: annotation.updatedAt || annotation.createdAt,
+      helpfulCount: Number(annotation.helpfulCount) || 0,
+    };
+    const entry = annotation.entry || {};
+    const helpfulCount = Number(preview.helpfulCount) || 0;
+    const baseDescription = assetPreviewDescription('annotations', preview);
+    return {
+      type: 'annotations',
+      title: assetFeedTitle(entry, 'annotations', preview),
+      link: entryAssetItemUrl(req, entry, 'annotations', preview),
+      description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
+      source: preview.author,
+      at: Number(preview.at) || 0,
+      guid: `qmreader:contributor:${contributorPage.contributor.id}:annotations:${annotation.id}`,
+    };
+  });
   const messages = (contributorPage.messages || []).map(message => {
     const preview = {
       id: message.id,
@@ -1254,7 +1340,7 @@ function contributorFeedItems(req, contributorPage) {
       guid: `qmreader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
     };
   });
-  return [...translations, ...rewrites, ...comments, ...messages]
+  return [...translations, ...rewrites, ...annotations, ...comments, ...messages]
     .filter(item => item.link && item.description)
     .sort((a, b) => b.at - a.at)
     .slice(0, 80);
@@ -1309,7 +1395,7 @@ function renderContributorFeed(req, contributorPage) {
   return renderRssChannel({
     title: `${displayName} 的公开资产 · QMReader`,
     link: contributorPageUrl(req, contributorPage.contributor.id),
-    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、重写、点评和文章对话。`,
+    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、重写、划线点评、点评和文章对话。`,
     selfUrl: contributorFeedUrl(req, contributorPage.contributor.id),
     items,
   });
@@ -1442,7 +1528,7 @@ function renderLlmsTxt(req) {
   return [
     '# QMReader',
     '',
-    'QMReader is a public Chinese RSS reading and knowledge asset site curated around article translation, Qiaomu-style rewrites, human comments, and article-context AI conversations.',
+    'QMReader is a public Chinese RSS reading and knowledge asset site curated around article translation, Qiaomu-style rewrites, inline text annotations, human comments, and article-context AI conversations.',
     '',
     'Primary language: zh-CN',
     `Canonical site: ${publicUrl(req, '/')}`,
@@ -1452,6 +1538,7 @@ function renderLlmsTxt(req) {
     `- All public assets: ${assetDirectoryUrl(req)}`,
     `- Chinese translations: ${assetDirectoryUrl(req, 'translation')}`,
     `- Qiaomu-style rewrites: ${assetDirectoryUrl(req, 'rewrite')}`,
+    `- Inline annotations: ${assetDirectoryUrl(req, 'annotations')}`,
     `- Human comments: ${assetDirectoryUrl(req, 'comments')}`,
     `- Article conversations: ${assetDirectoryUrl(req, 'chat')}`,
     `- Contributor leaderboard: ${publicUrl(req, '/contributors')}`,
@@ -1460,13 +1547,14 @@ function renderLlmsTxt(req) {
     `- All public assets: ${assetFeedUrl(req)}`,
     `- Chinese translations: ${assetFeedUrl(req, 'translation')}`,
     `- Qiaomu-style rewrites: ${assetFeedUrl(req, 'rewrite')}`,
+    `- Inline annotations: ${assetFeedUrl(req, 'annotations')}`,
     `- Human comments: ${assetFeedUrl(req, 'comments')}`,
     `- Article conversations: ${assetFeedUrl(req, 'chat')}`,
     '',
     'Citation guidance:',
     '- Prefer canonical /articles/<readable-slug>--<short-id> URLs over legacy ID-first or query-parameter URLs.',
     '- Prefer pages with public assets over raw RSS-only entries.',
-    '- Attribute human comments, translations, rewrites, and AI conversations to the displayed contributor or model metadata on the page.',
+    '- Attribute inline annotations, human comments, translations, rewrites, and AI conversations to the displayed contributor or model metadata on the page.',
     '',
     `Current public asset count: ${stats.assetCount || 0}`,
     `Covered article count: ${stats.entryCount || assetEntries.length}`,
@@ -2091,6 +2179,11 @@ app.get('/api/me/comments', requireLogin, (req, res) => {
   res.json({ comments: store.getUserComments(req.user.id, { limit }) });
 });
 
+app.get('/api/me/annotations', requireLogin, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  res.json({ annotations: store.getUserAnnotations(req.user.id, { limit }) });
+});
+
 app.get('/api/me/translations', requireLogin, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ translations: store.getUserTranslations(req.user.id, { limit }) });
@@ -2119,6 +2212,7 @@ app.get('/api/contributors/:id', (req, res) => {
   const translations = store.getUserTranslations(contributor.id, { limit });
   const rewrites = store.getUserRewrites(contributor.id, { limit });
   const comments = store.getUserComments(contributor.id, { limit });
+  const annotations = store.getUserAnnotations(contributor.id, { limit });
   const messages = store.getUserChatMessages(contributor.id, { limit });
   const likedEntries = store.getUserEntryReactions(contributor.id, { limit, reaction: 'like' });
   res.json({
@@ -2126,11 +2220,13 @@ app.get('/api/contributors/:id', (req, res) => {
     translations,
     rewrites,
     comments,
+    annotations,
     messages,
     likedEntries,
     counts: {
       translation: translations.length,
       rewrite: rewrites.length,
+      annotations: annotations.length,
       comments: comments.length,
       chat: messages.length,
       likes: likedEntries.length,
@@ -2437,6 +2533,101 @@ app.delete('/api/entry/:id/comments/:commentId', requireLogin, (req, res) => {
     res.json({ ok: true, comments: store.getComments(entry.id, req.user) });
   } catch (e) {
     sendError(res, e, 'delete comment failed');
+  }
+});
+
+app.get('/api/entry/:id/annotations', (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  res.json({ annotations: store.getAnnotations(entry.id, req.user) });
+});
+
+app.post('/api/entry/:id/annotations', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const body = String((req.body && req.body.body) || '').trim();
+    const quote = String((req.body && req.body.quote) || '').trim();
+    if (!body || !quote) return res.status(400).json({ error: 'annotation quote and body are required' });
+    const annotation = store.addAnnotation(entry.id, {
+      userId: req.user.id,
+      author: requestAuthor(req),
+      surface: req.body && req.body.surface,
+      assetId: req.body && req.body.assetId,
+      quote,
+      prefix: req.body && req.body.prefix,
+      suffix: req.body && req.body.suffix,
+      body,
+      contentHash: req.body && req.body.contentHash,
+    });
+    res.json({ annotation, annotations: store.getAnnotations(entry.id, req.user) });
+  } catch (e) {
+    sendError(res, e, 'annotation failed');
+  }
+});
+
+app.post('/api/entry/:id/annotations/:annotationId/replies', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const body = String((req.body && req.body.body) || '').trim();
+    if (!body) return res.status(400).json({ error: 'reply body is required' });
+    const annotation = store.addAnnotationReply(entry.id, req.params.annotationId, {
+      userId: req.user.id,
+      author: requestAuthor(req),
+      body,
+    });
+    if (!annotation) return res.status(404).json({ error: 'annotation not found' });
+    notifyTarget(store.getAnnotationNotificationTarget(entry.id, req.params.annotationId, '回复了'), req.user, {
+      type: 'annotation_reply',
+      objectType: 'annotation',
+      entryId: entry.id,
+      fallbackMessage: '有人回复了你的划线点评',
+    });
+    res.json({ annotation, annotations: store.getAnnotations(entry.id, req.user) });
+  } catch (e) {
+    sendError(res, e, 'annotation reply failed');
+  }
+});
+
+app.post('/api/entry/:id/annotations/:annotationId/helpful', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const helpful = req.body && typeof req.body.helpful === 'boolean'
+      ? req.body.helpful
+      : true;
+    const reaction = store.setAnnotationHelpful(entry.id, req.params.annotationId, req.user.id, helpful);
+    if (!reaction) return res.status(404).json({ error: 'annotation not found' });
+    if (helpful) {
+      notifyTarget(store.getAnnotationNotificationTarget(entry.id, req.params.annotationId, '觉得'), req.user, {
+        type: 'annotation_helpful',
+        objectType: 'annotation',
+        entryId: entry.id,
+        fallbackMessage: '有人觉得你的划线点评有用',
+      });
+    }
+    res.json({
+      reaction: {
+        helpfulCount: Number(reaction.helpful_count) || 0,
+        helpfulByMe: Boolean(reaction.helpful_by_me),
+      },
+      annotations: store.getAnnotations(entry.id, req.user),
+    });
+  } catch (e) {
+    sendError(res, e, 'annotation feedback failed');
+  }
+});
+
+app.delete('/api/entry/:id/annotations/:annotationId', requireLogin, (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const deleted = store.deleteAnnotation(entry.id, req.params.annotationId, req.user);
+    if (!deleted) return res.status(404).json({ error: 'annotation not found' });
+    res.json({ ok: true, annotations: store.getAnnotations(entry.id, req.user) });
+  } catch (e) {
+    sendError(res, e, 'delete annotation failed');
   }
 });
 

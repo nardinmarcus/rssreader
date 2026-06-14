@@ -61,6 +61,9 @@
           <button class="asset-stat asset-stat-rewrite" type="button" data-asset-filter="rewrite">
             <span>重写</span><strong id="asset-stat-rewrite">0</strong>
           </button>
+          <button class="asset-stat asset-stat-annotations" type="button" data-asset-filter="annotations">
+            <span>划线</span><strong id="asset-stat-annotations">0</strong>
+          </button>
           <button class="asset-stat asset-stat-comments" type="button" data-asset-filter="comments">
             <span>点评</span><strong id="asset-stat-comments">0</strong>
           </button>
@@ -141,6 +144,10 @@
             <span class="reader-signal-icon">评</span>
             <span id="reader-rail-comment-count" class="reader-signal-count">0</span>
           </button>
+          <button id="reader-rail-annotation" class="reader-signal-btn" type="button" title="查看划线点评" aria-label="查看划线点评">
+            <span class="reader-signal-icon">划</span>
+            <span id="reader-rail-annotation-count" class="reader-signal-count">0</span>
+          </button>
           <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="中文改写" aria-label="中文改写">
             <span class="reader-signal-icon">改</span>
           </button>
@@ -216,6 +223,23 @@
             <p>这篇文章还没有中文翻译。</p>
           </div>
         </section>
+        <section id="reader-annotations" class="reader-annotations">
+          <div class="reader-section-head">
+            <span>划线点评</span>
+            <div class="annotation-head-tools">
+              <span id="annotations-count"></span>
+              <select id="annotation-surface-filter" class="annotation-surface-filter" aria-label="筛选划线点评">
+                <option value="all">全部</option>
+                <option value="original">原文</option>
+                <option value="rewrite">中文改写</option>
+                <option value="translation">中文翻译</option>
+              </select>
+              <button id="annotation-discussed-toggle" class="ghost-btn" type="button" aria-pressed="false">只看讨论段落</button>
+            </div>
+          </div>
+          <div id="annotation-nav" class="annotation-nav"></div>
+          <div id="annotations-list" class="annotations-list"></div>
+        </section>
         <section id="reader-comments" class="reader-comments">
           <div class="reader-section-head">
             <span>人工点评</span>
@@ -243,6 +267,14 @@
             <button id="comment-send" class="ghost-btn" type="submit">发布</button>
           </form>
         </section>
+        <div id="annotation-popover" class="annotation-popover hidden" role="dialog" aria-label="划线点评">
+          <div class="annotation-popover-quote" id="annotation-popover-quote"></div>
+          <textarea id="annotation-popover-input" rows="3" placeholder="写下这段文字带来的想法…"></textarea>
+          <div class="annotation-popover-actions">
+            <button id="annotation-popover-cancel" class="ghost-btn" type="button">取消</button>
+            <button id="annotation-popover-submit" class="ghost-btn primary" type="button">发布划线点评</button>
+          </div>
+        </div>
       </article>
       <section id="my-dashboard-page" class="workspace-page dashboard-page hidden">
         <header class="workspace-page-head">
@@ -308,6 +340,7 @@
           <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
             <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
+            <button class="my-asset-tab" type="button" data-my-asset-tab="annotations">划线 <span id="my-annotations-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
           </div>
@@ -335,6 +368,7 @@
         <div class="my-asset-tabs" role="tablist" aria-label="贡献主页资产类型">
           <button class="my-asset-tab active" type="button" data-contributor-tab="translation">中译 <span id="contributor-translation-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">重写 <span id="contributor-rewrite-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-contributor-tab="annotations">划线 <span id="contributor-annotations-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="likes">点赞 <span id="contributor-likes-count">0</span></button>
@@ -533,6 +567,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=115"></script>
+  <script src="/app.js?v=116"></script>
 </body>
 </html>
