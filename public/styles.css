@@ -177,6 +177,20 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   color: var(--accent);
 }
 
+.sidebar-actions {
+  flex: none;
+  padding: 0 10px 10px;
+}
+.sidebar-submit-link {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+}
+.sidebar-submit-link .submit-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
 .asset-dashboard {
   margin: 0 10px 10px;
   padding: 9px;
@@ -527,6 +541,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: flex;
 }
 #app.sidebar-collapsed .views,
+#app.sidebar-collapsed .sidebar-actions,
 #app.sidebar-collapsed .sidebar-scroll {
   padding-left: 8px;
   padding-right: 8px;
@@ -561,6 +576,15 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   flex: none;
 }
 #app.sidebar-collapsed .account-card .account-text {
+  display: none;
+}
+#app.sidebar-collapsed .sidebar-submit-link {
+  width: 44px;
+  min-width: 0;
+  height: 36px;
+  padding: 0;
+}
+#app.sidebar-collapsed .sidebar-submit-link .submit-label {
   display: none;
 }
 #app.sidebar-collapsed #auth-open::before { content: '⎋'; font-size: 15px; }
@@ -630,6 +654,22 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .submit-link-open:hover {
   filter: brightness(0.94);
   box-shadow: 0 2px 8px var(--shadow);
+}
+.source-refresh-btn {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  font-size: 14px;
+  color: var(--text-1);
+}
+.source-refresh-btn:hover {
+  border-color: var(--text-2);
+}
+.source-refresh-btn.refreshing {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
 }
 #search {
   background: var(--bg-2); border: 1px solid var(--border);
@@ -3638,9 +3678,19 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .brand-logo { display: flex; }
   .views,
+  .sidebar-actions,
   .sidebar-scroll {
     padding-left: 8px;
     padding-right: 8px;
+  }
+  .sidebar-submit-link {
+    width: 44px;
+    height: 36px;
+    padding: 0;
+    min-width: 0;
+  }
+  .sidebar-submit-link .submit-label {
+    display: none;
   }
   .view-btn,
   .feed-item {
@@ -3825,9 +3875,19 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .brand-logo { display: flex; }
   .views,
+  .sidebar-actions,
   .sidebar-scroll {
     padding-left: 8px;
     padding-right: 8px;
+  }
+  .sidebar-submit-link {
+    width: 44px;
+    height: 36px;
+    padding: 0;
+    min-width: 0;
+  }
+  .sidebar-submit-link .submit-label {
+    display: none;
   }
   .view-btn,
   .feed-item {

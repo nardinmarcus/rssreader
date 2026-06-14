@@ -1133,6 +1133,7 @@ async function loadSources() {
   state.refreshProgress = data.progress || { done: 0, total: 0 };
   state.autoRewrite = data.autoRewrite || { running: false, last: null };
   if (!$('#manage-modal')?.classList.contains('hidden')) renderManageStatus();
+  renderSourceRefreshButton();
   return data;
 }
 async function loadEntries() {
@@ -2740,6 +2741,7 @@ function updateListTitle() {
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
   updateSearchPlaceholder();
+  renderSourceRefreshButton();
 }
 
 function updateSearchPlaceholder() {
@@ -2747,6 +2749,25 @@ function updateSearchPlaceholder() {
   if (!search) return;
   search.placeholder = state.view === 'contributors' ? '搜索贡献榜…' : state.view === 'assets' ? '搜索资产…' : '搜索文章…';
   if (search.value !== state.q) search.value = state.q;
+}
+
+function renderSourceRefreshButton() {
+  const btn = $('#source-refresh-btn');
+  if (!btn) return;
+  const source = state.filterSource ? sourceById(state.filterSource) : null;
+  const sourceRefreshing = Boolean(
+    source
+      && state.refreshing
+      && (!state.refreshProgress.sourceId || state.refreshProgress.sourceId === source.id)
+  );
+  btn.classList.toggle('hidden', !source);
+  btn.classList.toggle('refreshing', sourceRefreshing);
+  btn.disabled = sourceRefreshing;
+  btn.textContent = sourceRefreshing ? '…' : '↻';
+  if (source) {
+    btn.title = `${sourceRefreshing ? '正在检查' : '检查'} ${source.name} 更新`;
+    btn.setAttribute('aria-label', btn.title);
+  }
 }
 
 /* ---------- Reader ---------- */
@@ -5131,6 +5152,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
 }
 
 function selectSource(id) {
+  state.view = 'all';
   state.filterSource = state.filterSource === id ? null : id;
   state.filterCategory = null;
   state.assetFilter = null;
@@ -5141,6 +5163,7 @@ function selectSource(id) {
   reload();
 }
 function selectCategory(cat) {
+  state.view = 'all';
   state.filterCategory = state.filterCategory === cat ? null : cat;
   state.filterSource = null;
   state.assetFilter = null;
@@ -5246,6 +5269,38 @@ async function refreshAll() {
   } finally {
     btn.disabled = false;
     btn.textContent = '↻ 刷新全部';
+  }
+}
+
+async function refreshCurrentSource() {
+  const source = state.filterSource ? sourceById(state.filterSource) : null;
+  if (!source) return;
+  if (!requireAuth('login')) return;
+
+  const btn = $('#source-refresh-btn');
+  btn.disabled = true;
+  btn.classList.add('refreshing');
+  btn.textContent = '…';
+  try {
+    const result = await api('/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceId: source.id }),
+    });
+    state.refreshing = Boolean(result.running || result.started);
+    state.refreshProgress = result.progress || { done: 0, total: 1, sourceId: source.id };
+    renderSourceRefreshButton();
+    for (let i = 0; i < 80; i++) {
+      await new Promise(r => setTimeout(r, 1200));
+      const data = await loadSources();
+      if (!data.refreshing) break;
+    }
+    await reload({ keepReader: true });
+    toast(`${source.name} 已检查更新`);
+  } catch (e) {
+    toast('刷新失败: ' + e.message, 5000);
+  } finally {
+    renderSourceRefreshButton();
   }
 }
 
@@ -5906,6 +5961,7 @@ $('#entry-list').onclick = async (e) => {
   await openAssetActivityButton(btn);
 };
 $('#refresh-btn').onclick = refreshAll;
+$('#source-refresh-btn').onclick = refreshCurrentSource;
 $('#mark-read-btn').onclick = async () => {
   const ids = visibleEntries().map(e => e.id);
   ids.forEach(id => state.read.add(id));

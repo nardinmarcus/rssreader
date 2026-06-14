@@ -2522,17 +2522,23 @@ app.post('/api/auto-rewrite', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/refresh', requireAdmin, async (req, res) => {
+app.post('/api/refresh', requireLogin, async (req, res) => {
   const { sourceId } = req.body || {};
   if (sourceId) {
     const src = fetcher.getSourceById(sourceId);
     if (!src) return res.status(404).json({ error: 'source not found' });
+    if (!fetcher.isEnabled(src) && req.user.role !== 'admin') {
+      return res.status(403).json({ error: '这个信息源暂未启用' });
+    }
     const result = startBackgroundJob({
       kind: 'refresh',
       sourceId: src.id,
       sourceIds: AUTO_REWRITE_SOURCE_IDS.has(src.id) ? [src.id] : [],
     });
     return res.json({ started: result.started, running: result.running, job: result.job, progress: result.progress, autoRewrite: result.autoRewrite });
+  }
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: '需要管理员权限' });
   }
   const result = doRefreshAll();
   res.json({ started: result.started, running: result.running, job: result.job, progress: result.progress, autoRewrite: result.autoRewrite });

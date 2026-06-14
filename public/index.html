@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=114" />
+  <link rel="stylesheet" href="/styles.css?v=115" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -35,6 +35,13 @@
           <button class="view-btn secondary-view" data-view="history"><span class="view-ico">◷</span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
           <button class="view-btn secondary-view" data-view="assets"><span class="view-ico">◆</span><span class="view-label">资产</span><span class="count" id="count-assets"></span></button>
         </div>
+      </div>
+
+      <div class="sidebar-actions">
+        <button id="submit-link-open" class="submit-link-open sidebar-submit-link" type="button" title="提交链接" aria-label="提交链接">
+          <span class="submit-icon">＋</span>
+          <span class="submit-label">提交链接</span>
+        </button>
       </div>
 
       <div id="asset-dashboard" class="asset-dashboard hidden">
@@ -95,7 +102,7 @@
       <header class="pane-header">
         <div class="pane-title" id="list-title">全部</div>
         <div class="pane-actions">
-          <button id="submit-link-open" class="submit-link-open" type="button" title="提交链接" aria-label="提交链接"><span>＋</span> 提交</button>
+          <button id="source-refresh-btn" class="icon-btn source-refresh-btn hidden" type="button" title="检查当前信息源更新" aria-label="检查当前信息源更新">↻</button>
           <input id="search" type="search" placeholder="搜索文章…" />
           <button id="mark-read-btn" class="icon-btn" title="全部标为已读">✓</button>
         </div>
@@ -526,6 +533,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=114"></script>
+  <script src="/app.js?v=115"></script>
 </body>
 </html>
