@@ -29,7 +29,7 @@ npm install
 npm start          # 默认监听 0.0.0.0:8080，可用 HOST=127.0.0.1 PORT=3000 npm start 覆盖
 ```
 
-启动后访问 `http://localhost:8080`。首次启动会并发抓取全部启用的源（约 1 分钟），之后结果缓存在 `data/cache.json`，重启即时加载，并每天北京时间 08:00 自动刷新。
+启动后访问 `http://localhost:8080`。首次启动会按 `STARTUP_REFRESH_DELAY_MS` 配置决定是否后台抓取全部启用的源；之后结果缓存在 `data/cache.json`，重启即时加载，并每天北京时间 08:00 通过独立 worker 自动刷新。
 
 ## 账号与权限
 
@@ -81,16 +81,17 @@ npm start
 ## 目录结构
 
 ```
-server.js            # Express 入口：API 路由、静态托管、定时刷新
+server.js            # Express 入口：API 路由、静态托管、定时刷新调度
 lib/sources.js       # 信息源注册表（54 个源、分类、候选 feed 地址）
 lib/fetcher.js       # 抓取层：RSS 解析、多候选回退、sitemap 解析、磁盘缓存
+lib/background-jobs.js # 后台刷新、标题翻译、自动重写任务
 public/index.html    # 四栏布局骨架：源 / 列表 / 阅读器 / Article Agent
 public/styles.css    # 中性产品主题（深/浅色）
 public/app.js        # 前端逻辑：侧栏/列表/阅读面板、已读/收藏、搜索、文章对话
 public/purify.min.js # DOMPurify（本地化，正文 HTML 消毒）
 data/                # 运行时生成：cache.json、state.json、qmreader.sqlite
 ops/qmreader.service # systemd 运行模板，不依赖 Docker
-scripts/             # VPS systemd 安装脚本
+scripts/             # VPS systemd 安装脚本、独立刷新 worker
 Dockerfile           # Node 26 生产镜像
 docker-compose.yml   # 可选 Docker 部署，默认绑定 127.0.0.1:3088
 ```
@@ -170,6 +171,12 @@ docker-compose.yml   # 可选 Docker 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/translate-titles` | 管理员手动触发英文标题补翻译 |
 | POST | `/api/refresh` | 管理员刷新；body `{}` 刷新全部，`{"sourceId":"xx"}` 刷新单个 |
 | POST | `/api/sources/:id/toggle` | 管理员启用/禁用某个源（持久化到 data/state.json） |
+
+刷新、标题补翻译和自动重写由 `scripts/refresh-worker.js` 子进程执行，主 Web 进程只负责启动 worker、接收进度并在完成后重新载入缓存，因此手动刷新或每天 08:00 定时刷新不会阻塞阅读页/API 响应。需要在命令行手动跑全量刷新时可用：
+
+```bash
+npm run refresh:worker
+```
 
 ## VPS systemd 部署（推荐）
 
