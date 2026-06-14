@@ -50,7 +50,12 @@ app.set('trust proxy', 1);
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
-  req.user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE));
+  try {
+    req.user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE));
+  } catch (error) {
+    console.warn('Session lookup skipped:', error.message || error);
+    req.user = null;
+  }
   next();
 });
 
@@ -1823,7 +1828,7 @@ function backgroundJobState() {
 
 function reloadFetcherAfterWorker() {
   try {
-    fetcher.loadDisk();
+    fetcher.loadDisk({ upsert: false });
   } catch (error) {
     console.warn('Reload refreshed cache skipped:', error.message || error);
   }
