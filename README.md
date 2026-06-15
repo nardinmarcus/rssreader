@@ -82,7 +82,7 @@ npm start
 
 ```
 server.js            # Express 入口：API 路由、静态托管、定时刷新调度
-lib/sources.js       # 信息源注册表（54 个源、分类、候选 feed 地址）
+lib/sources.js       # 信息源注册表（61 个源、分类、候选 feed 地址）
 lib/fetcher.js       # 抓取层：RSS 解析、多候选回退、sitemap 解析、磁盘缓存
 lib/background-jobs.js # 后台刷新、标题翻译、自动重写任务
 public/index.html    # 四栏布局骨架：源 / 列表 / 阅读器 / Article Agent

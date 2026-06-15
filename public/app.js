@@ -33,6 +33,8 @@ const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '中文改写',
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
+const CONTEXT_PANE_MIN_WIDTH = 260;
+const CONTEXT_PANE_MAX_WIDTH = 620;
 const COMMENT_TEMPLATES = {
   insight: '观点：',
   question: '疑问：',
@@ -418,6 +420,7 @@ const state = {
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
   sidebarMoreOpen: storage.getItem('qm_sidebar_more_open') === '1',
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
+  contextPaneWidth: readStoredNumber('qm_context_pane_width'),
   me: null,
   authMode: 'login',
   aiProfiles: [],
@@ -6615,6 +6618,31 @@ function setEntryPaneWidth(width, { persist: shouldPersist = true } = {}) {
   }
 }
 
+function contextPaneWidthBounds() {
+  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  const max = Math.min(CONTEXT_PANE_MAX_WIDTH, Math.max(CONTEXT_PANE_MIN_WIDTH, Math.floor(viewport * 0.42)));
+  return { min: CONTEXT_PANE_MIN_WIDTH, max };
+}
+
+function clampContextPaneWidth(width) {
+  const n = Number(width);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const bounds = contextPaneWidthBounds();
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(n)));
+}
+
+function setContextPaneWidth(width, { persist: shouldPersist = true } = {}) {
+  const next = clampContextPaneWidth(width);
+  state.contextPaneWidth = next;
+  if (next) {
+    $('#app').style.setProperty('--agent-width', `${next}px`);
+    if (shouldPersist) storage.setItem('qm_context_pane_width', String(next));
+  } else {
+    $('#app').style.removeProperty('--agent-width');
+    if (shouldPersist) storage.removeItem('qm_context_pane_width');
+  }
+}
+
 function setupListResizer() {
   const resizer = $('#list-resizer');
   if (!resizer) return;
@@ -6650,6 +6678,44 @@ function setupListResizer() {
     if (e.key === 'End') setEntryPaneWidth(bounds.max);
     if (e.key === 'ArrowLeft') setEntryPaneWidth(current - 24);
     if (e.key === 'ArrowRight') setEntryPaneWidth(current + 24);
+  });
+}
+
+function setupContextResizer() {
+  const resizer = $('#context-resizer');
+  if (!resizer) return;
+  let dragging = false;
+  const resizeTo = (clientX) => {
+    const appRect = $('#app').getBoundingClientRect();
+    setContextPaneWidth(appRect.right - clientX);
+  };
+  resizer.addEventListener('pointerdown', (e) => {
+    if ((window.innerWidth || 0) <= 980 || state.agentCollapsed) return;
+    dragging = true;
+    $('#app').classList.add('is-context-resizing');
+    resizer.setPointerCapture?.(e.pointerId);
+    resizeTo(e.clientX);
+    e.preventDefault();
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    resizeTo(e.clientX);
+  });
+  window.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    $('#app').classList.remove('is-context-resizing');
+  });
+  resizer.addEventListener('dblclick', () => setContextPaneWidth(0));
+  resizer.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const bounds = contextPaneWidthBounds();
+    const current = state.contextPaneWidth || $('#agent-pane').getBoundingClientRect().width;
+    if (e.key === 'Home') setContextPaneWidth(bounds.min);
+    if (e.key === 'End') setContextPaneWidth(bounds.max);
+    if (e.key === 'ArrowLeft') setContextPaneWidth(current + 24);
+    if (e.key === 'ArrowRight') setContextPaneWidth(current - 24);
   });
 }
 
@@ -7242,6 +7308,7 @@ window.addEventListener('popstate', () => {
 
 window.addEventListener('resize', () => {
   if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
+  if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
 });
 
 /* ---------- Init ---------- */
@@ -7253,6 +7320,8 @@ window.addEventListener('resize', () => {
   setSidebarCollapsed(state.sidebarCollapsed);
   setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   setupListResizer();
+  setContextPaneWidth(state.contextPaneWidth, { persist: false });
+  setupContextResizer();
   setAgentCollapsed(state.agentCollapsed);
   setContextPanel(state.contextPanel, { persist: false, expand: false });
   $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
