@@ -365,6 +365,7 @@ const state = {
   q: '',
   refreshing: false,
   refreshProgress: { done: 0, total: 0 },
+  sourceRefreshStatusTimer: null,
   autoRewrite: { running: false, last: null },
   activeEntry: null,
   guestRead: new Set(readJson('fr_read', '[]')),
@@ -431,6 +432,8 @@ const state = {
   aiConfigReason: '',
   pendingAiAction: '',
   pendingAgentText: '',
+  pendingSubmitLink: null,
+  articleLinkMenuUrl: '',
   loadedAiScope: '',
 };
 
@@ -2527,14 +2530,22 @@ function requireAuth(mode = 'login') {
   return false;
 }
 
-function openSubmitLinkModal() {
-  if (!requireAuth('login')) return;
-  $('#submit-link-url').value = '';
-  $('#submit-link-note').value = '';
+function openSubmitLinkModal(prefill = {}) {
+  const next = {
+    url: String(prefill.url || '').trim(),
+    note: String(prefill.note || '').trim(),
+  };
+  if (!state.me) {
+    state.pendingSubmitLink = next.url ? next : null;
+    openAuth('login');
+    return;
+  }
+  $('#submit-link-url').value = next.url || '';
+  $('#submit-link-note').value = next.note || '';
   $('#submit-link-submit').disabled = false;
   $('#submit-link-submit').textContent = '提交';
   $('#submit-link-modal').classList.remove('hidden');
-  setTimeout(() => $('#submit-link-url').focus(), 30);
+  setTimeout(() => (next.url ? $('#submit-link-note') : $('#submit-link-url')).focus(), 30);
 }
 
 function closeSubmitLinkModal() {
@@ -2602,6 +2613,11 @@ async function submitAuth() {
     renderAiSettings();
     const route = routeStateFromUrl();
     if (route.dashboard) await openMyCommentsModal({ push: false, tab: route.dashboardTab });
+    if (state.pendingSubmitLink && state.pendingSubmitLink.url) {
+      const pending = state.pendingSubmitLink;
+      state.pendingSubmitLink = null;
+      openSubmitLinkModal(pending);
+    }
     toast(state.authMode === 'register' ? '注册成功' : '已登录');
   } catch (err) {
     toast(err.message, 5000);
@@ -2839,6 +2855,34 @@ function renderSourceRefreshButton() {
     btn.title = `${sourceRefreshing ? '正在检查' : '检查'} ${source.name} 更新`;
     btn.setAttribute('aria-label', btn.title);
   }
+}
+
+function setSourceRefreshStatus(message = '', kind = '', { timeout = 0 } = {}) {
+  const el = $('#source-refresh-status');
+  if (!el) return;
+  clearTimeout(state.sourceRefreshStatusTimer);
+  state.sourceRefreshStatusTimer = null;
+  el.textContent = message;
+  el.className = `source-refresh-status${message ? '' : ' hidden'}${kind ? ` ${kind}` : ''}`;
+  if (message && timeout) {
+    state.sourceRefreshStatusTimer = setTimeout(() => {
+      el.textContent = '';
+      el.className = 'source-refresh-status hidden';
+      state.sourceRefreshStatusTimer = null;
+    }, timeout);
+  }
+}
+
+async function sourceEntriesSnapshot(sourceId) {
+  if (!sourceId) return [];
+  const params = new URLSearchParams({ source: sourceId });
+  const data = await api('/api/entries?' + params.toString());
+  return Array.isArray(data.entries) ? data.entries : [];
+}
+
+function newEntryCount(beforeEntries = [], afterEntries = []) {
+  const beforeIds = new Set(beforeEntries.map(entry => entry && entry.id).filter(Boolean));
+  return afterEntries.filter(entry => entry && entry.id && !beforeIds.has(entry.id)).length;
 }
 
 /* ---------- Reader ---------- */
@@ -3106,6 +3150,66 @@ function renderOriginalContent(entry, content) {
   renderReaderToc($('#reader-content'));
   applyTextAnnotations();
   if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
+}
+
+function articleContentLinkUrl(anchor) {
+  if (!anchor || !anchor.closest('#reader-content, #rewrite-content, #translation-list')) return '';
+  const raw = String(anchor.getAttribute('href') || '').trim();
+  if (!raw || raw.startsWith('#')) return '';
+  try {
+    const url = new URL(raw, window.location.href);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function hideArticleLinkMenu() {
+  state.articleLinkMenuUrl = '';
+  const menu = $('#article-link-menu');
+  if (!menu) return;
+  menu.classList.add('hidden');
+}
+
+function showArticleLinkMenu(anchor, event) {
+  const url = articleContentLinkUrl(anchor);
+  if (!url) return false;
+  state.articleLinkMenuUrl = url;
+  const menu = $('#article-link-menu');
+  const label = $('#article-link-menu-url');
+  if (!menu || !label) return false;
+  label.textContent = compactUrlLabel(url);
+  menu.classList.remove('hidden');
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const margin = 10;
+  const preferredX = Number.isFinite(event.clientX) ? event.clientX : rect.left;
+  const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin);
+  let left = Math.min(Math.max(margin, preferredX), maxLeft);
+  let top = rect.bottom + 8;
+  if (top + menuRect.height > window.innerHeight - margin) top = rect.top - menuRect.height - 8;
+  if (top < margin) top = margin;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+  return true;
+}
+
+function submitArticleLinkToSite() {
+  const url = state.articleLinkMenuUrl;
+  hideArticleLinkMenu();
+  if (!url) return;
+  const title = state.activeEntry && (state.activeEntry.titleZh || state.activeEntry.title);
+  openSubmitLinkModal({
+    url,
+    note: title ? `来自《${title}》正文链接` : '',
+  });
+}
+
+function openArticleLinkInWindow() {
+  const url = state.articleLinkMenuUrl;
+  hideArticleLinkMenu();
+  if (!url) return;
+  window.open(url, '_blank', 'noopener');
 }
 
 function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
@@ -3398,6 +3502,7 @@ function renderRewrite(rewrite) {
   $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
   renderAssetHelpfulButton('rewrite', state.rewrite);
   content.innerHTML = renderMarkdownLite(rewrite.body);
+  $$('#rewrite-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
   applyTextAnnotations();
   renderReaderAssetSummary();
   settlePendingAssetJump('rewrite');
@@ -6031,7 +6136,10 @@ async function refreshCurrentSource() {
   btn.disabled = true;
   btn.classList.add('refreshing');
   btn.textContent = '…';
+  setSourceRefreshStatus('正在检查', 'loading');
+  toast(`正在检查 ${source.name} 更新…`, 2600);
   try {
+    const beforeEntries = await sourceEntriesSnapshot(source.id).catch(() => []);
     const result = await api('/api/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -6045,9 +6153,18 @@ async function refreshCurrentSource() {
       const data = await loadSources();
       if (!data.refreshing) break;
     }
+    const latestSource = sourceById(source.id);
+    if (latestSource && latestSource.status === 'error') {
+      throw new Error(latestSource.error || '信息源刷新失败');
+    }
+    const afterEntries = await sourceEntriesSnapshot(source.id).catch(() => []);
+    const added = newEntryCount(beforeEntries, afterEntries);
     await reload({ keepReader: true });
-    toast(`${source.name} 已检查更新`);
+    const doneMessage = added ? `${source.name} 新增 ${added} 篇` : `${source.name} 暂无更新`;
+    setSourceRefreshStatus(added ? `新增 ${added} 篇` : '暂无更新', added ? 'success' : 'muted', { timeout: 5200 });
+    toast(doneMessage);
   } catch (e) {
+    setSourceRefreshStatus('检查失败', 'error', { timeout: 5200 });
     toast('刷新失败: ' + e.message, 5000);
   } finally {
     renderSourceRefreshButton();
@@ -6789,6 +6906,16 @@ $('#entry-list').onclick = async (e) => {
 };
 $('#refresh-btn').onclick = refreshAll;
 $('#source-refresh-btn').onclick = refreshCurrentSource;
+$('#reader-pane').addEventListener('click', (e) => {
+  const anchor = e.target.closest('a');
+  if (!anchor || !anchor.closest('#reader-content, #rewrite-content, #translation-list')) return;
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+  if (!showArticleLinkMenu(anchor, e)) return;
+  e.preventDefault();
+  e.stopPropagation();
+});
+$('#article-link-open').onclick = openArticleLinkInWindow;
+$('#article-link-submit').onclick = submitArticleLinkToSite;
 $('#mark-read-btn').onclick = async () => {
   const ids = visibleEntries().map(e => e.id);
   ids.forEach(id => state.read.add(id));
@@ -7283,6 +7410,7 @@ window.addEventListener('error', (e) => {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.account-strip')) setAccountMenuOpen(false);
+  if (!e.target.closest('#article-link-menu')) hideArticleLinkMenu();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -7297,6 +7425,7 @@ document.addEventListener('keydown', (e) => {
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
     $('#submit-link-modal').classList.add('hidden');
+    hideArticleLinkMenu();
     if (state.workspacePage === 'dashboard') closeMyCommentsModal();
     else if (state.workspacePage === 'contributor') closeContributorModal();
   }
@@ -7307,9 +7436,11 @@ window.addEventListener('popstate', () => {
 });
 
 window.addEventListener('resize', () => {
+  hideArticleLinkMenu();
   if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
 });
+$('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: true });
 
 /* ---------- Init ---------- */
 (async function init() {
