@@ -1584,7 +1584,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .reader {
   max-width: 760px;
   margin: 0 auto;
-  padding: 42px 36px 88px;
+  padding: 34px 36px 88px;
 }
 .workspace-page {
   width: min(1040px, calc(100% - 56px));
@@ -1734,7 +1734,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12.5px; color: var(--accent); font-weight: 600;
   background: var(--accent-soft); border-radius: 999px;
-  padding: 4px 12px; margin-bottom: 14px;
+  padding: 4px 12px; margin-bottom: 12px;
 }
 .reader-source img { width: 14px; height: 14px; border-radius: 3px; }
 .reader-title-row {
@@ -1776,7 +1776,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--text-2);
   font-size: 12.5px;
 }
@@ -1797,15 +1797,26 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .reader-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
-  margin-top: 16px;
-  padding-bottom: 16px;
+  margin-top: 14px;
+  padding-bottom: 14px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
+.reader-toolbar-main,
+.reader-toolbar-admin {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.reader-toolbar-main { flex: 1 1 auto; }
+.reader-toolbar-admin { flex: 0 0 auto; justify-content: flex-end; }
 .reader-toolbar .ghost-btn { flex: none; }
 .reader-delete {
-  margin-left: auto;
+  min-width: 0;
   border-color: color-mix(in srgb, var(--semantic-red) 28%, var(--border));
   background: color-mix(in srgb, var(--semantic-red) 6%, var(--bg-1));
 }
@@ -1883,7 +1894,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   z-index: 5;
   display: flex;
   gap: 6px;
-  margin: 16px 0 18px;
+  margin: 14px 0 18px;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1964,7 +1975,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .reader-annotations,
 .reader-translation,
 #reader-rewrite-panel {
-  margin-top: 20px;
+  margin-top: 18px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-1);
@@ -3166,6 +3177,68 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-size: 12px;
   line-height: 1.5;
 }
+.confirm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: color-mix(in srgb, #000 34%, transparent);
+  backdrop-filter: blur(10px);
+}
+.confirm-card {
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-1);
+  color: var(--text-0);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--shadow) 70%, transparent);
+}
+.confirm-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 900;
+}
+.confirm-modal.danger .confirm-icon {
+  background: color-mix(in srgb, var(--semantic-red) 12%, var(--bg-2));
+  color: var(--semantic-red);
+}
+.confirm-copy { min-width: 0; }
+.confirm-copy h2 {
+  font-size: 16px;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+.confirm-copy p {
+  margin-top: 6px;
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-line;
+}
+.confirm-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+.confirm-modal.danger #confirm-ok {
+  border-color: color-mix(in srgb, var(--semantic-red) 38%, var(--border));
+  background: color-mix(in srgb, var(--semantic-red) 10%, var(--bg-2));
+  color: var(--semantic-red);
+}
 .my-comments-box {
   width: min(760px, 94vw);
 }
@@ -4244,6 +4317,13 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
   .reader h1 { font-size: 22px; }
   .reader-title-zh { font-size: 16px; }
+  .reader-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .reader-toolbar-admin {
+    justify-content: flex-start;
+  }
   .reader-section-head { align-items: flex-start; flex-direction: column; gap: 4px; }
   .reader-section-actions { justify-content: space-between; width: 100%; }
   .translation-pair { grid-template-columns: 1fr; }

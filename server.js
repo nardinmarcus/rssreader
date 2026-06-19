@@ -2407,6 +2407,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
       entry: prepared.fetched ? prepared.entry : undefined,
     });
   } catch (e) {
+    console.warn(`translation failed for ${entry.id}:`, e.message || e);
     sendError(res, e, 'translation failed');
   }
 });

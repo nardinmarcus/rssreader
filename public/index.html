@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=117" />
+  <link rel="stylesheet" href="/styles.css?v=121" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -172,12 +172,16 @@
           <div id="reader-assets" class="asset-badges reader-asset-badges hidden"></div>
           <div id="reader-asset-summary" class="reader-asset-summary hidden"></div>
           <div class="reader-toolbar">
-            <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
-            <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
-            <button id="reader-star" class="reader-action-pill" type="button" aria-label="收藏这篇文章"></button>
-            <button id="reader-like" class="reader-action-pill" type="button" aria-label="点赞这篇文章"></button>
-            <button id="reader-dislike" class="reader-action-pill" type="button" aria-label="点踩这篇文章"></button>
-            <button id="reader-delete" class="ghost-btn danger reader-delete hidden" type="button">删除页面</button>
+            <div class="reader-toolbar-main">
+              <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
+              <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
+              <button id="reader-star" class="reader-action-pill" type="button" aria-label="收藏这篇文章"></button>
+              <button id="reader-like" class="reader-action-pill" type="button" aria-label="点赞这篇文章"></button>
+              <button id="reader-dislike" class="reader-action-pill" type="button" aria-label="点踩这篇文章"></button>
+            </div>
+            <div class="reader-toolbar-admin">
+              <button id="reader-delete" class="ghost-btn danger reader-delete hidden" type="button">删除页面</button>
+            </div>
           </div>
         </header>
         <div id="reader-audio"></div>
@@ -214,6 +218,7 @@
             <span>中文翻译</span>
             <div class="reader-section-actions">
               <span id="translation-meta"></span>
+              <select id="translation-profile-select" class="ai-profile-select" title="选择用于中文翻译的模型" aria-label="选择用于中文翻译的模型"></select>
               <button id="translation-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
               <button id="translation-view-toggle" class="ghost-btn hidden" type="button" aria-pressed="false">对照</button>
               <button id="translation-copy" class="ghost-btn hidden" type="button">⧉ 复制译文</button>
@@ -603,9 +608,23 @@
     </div>
   </div>
 
+  <div id="confirm-modal" class="confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="confirm-card">
+      <div class="confirm-icon" id="confirm-icon">!</div>
+      <div class="confirm-copy">
+        <h2 id="confirm-title"></h2>
+        <p id="confirm-message"></p>
+      </div>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="ghost-btn" type="button">取消</button>
+        <button id="confirm-ok" class="ghost-btn primary" type="button">确定</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=120"></script>
+  <script src="/app.js?v=121"></script>
 </body>
 </html>
