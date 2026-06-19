@@ -2449,6 +2449,15 @@ function isAdmin() {
   return state.me && state.me.role === 'admin';
 }
 
+function renderAdminEntryControls() {
+  const btn = $('#reader-delete');
+  if (!btn) return;
+  const show = Boolean(isAdmin() && state.activeEntry && state.activeEntry.id);
+  btn.classList.toggle('hidden', !show);
+  btn.disabled = !show;
+  if (show) btn.title = '管理员：从前台隐藏这篇文章';
+}
+
 function renderAuthState() {
   const loggedIn = Boolean(state.me);
   $('#auth-open')?.classList.toggle('hidden', loggedIn);
@@ -2474,6 +2483,7 @@ function renderAuthState() {
   $('.sidebar-footer').classList.add('hidden');
   const adminActions = $('#profile-admin-actions');
   if (adminActions) adminActions.classList.toggle('hidden', !isAdmin());
+  renderAdminEntryControls();
   renderSidebarAiSettings();
   updateAgentControls();
 }
@@ -5771,6 +5781,7 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   const src = sourceById(e.sourceId);
   $('#reader-empty').classList.add('hidden');
   $('#reader').classList.remove('hidden');
+  renderAdminEntryControls();
   $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>`;
   renderTitle(e);
   document.title = readerRouteTitle(e, requestedFocus);
@@ -5872,6 +5883,7 @@ function closeReaderFromRoute() {
   state.readerTab = 'original';
   $('#reader').classList.add('hidden');
   $('#reader-empty').classList.remove('hidden');
+  renderAdminEntryControls();
   document.getElementById('app').classList.remove('reading');
   document.title = 'QMReader · RSS 阅读器';
   renderList();
@@ -6962,6 +6974,47 @@ async function setReaderReaction(reaction) {
     toast('反馈失败: ' + err.message, 5000);
   }
 }
+
+async function deleteCurrentEntry() {
+  const entry = state.activeEntry;
+  if (!entry || !isAdmin()) return;
+  const title = entry.titleZh || entry.title || '这篇文章';
+  const ok = window.confirm(`确认删除《${title}》？\n\n这会从前台列表、文章页、公开资产目录中隐藏该页面；已沉淀的翻译、点评、划线和对话数据不会被清空。`);
+  if (!ok) return;
+  const btn = $('#reader-delete');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '删除中…';
+  }
+  try {
+    await api(`/api/entry/${encodeURIComponent(entry.id)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'admin front-end delete' }),
+    });
+    state.entries = state.entries.filter(item => item.id !== entry.id);
+    contentCache.delete(entry.id);
+    state.read.delete(entry.id);
+    state.starred.delete(entry.id);
+    state.history.delete(entry.id);
+    persist();
+    await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+    closeReaderFromRoute();
+    updateListTitle();
+    renderList();
+    renderSidebar();
+    toast('页面已删除');
+  } catch (err) {
+    toast('删除失败: ' + err.message, 5000);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '删除页面';
+    }
+    renderAdminEntryControls();
+  }
+}
+
 $('#reader-like').onclick = () => setReaderReaction('like');
 $('#reader-dislike').onclick = () => setReaderReaction('dislike');
 $('#reader-rail-like').onclick = () => setReaderReaction('like');
@@ -6975,6 +7028,7 @@ $('#reader-rail-annotation').onclick = () => {
 $('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
 $('#reader-rail-translate').onclick = () => handleReaderTab('translation');
 $('#reader-fetch-original').onclick = fetchOriginalContent;
+$('#reader-delete').onclick = deleteCurrentEntry;
 $('#reader-copy-link').onclick = () => {
   copyReaderLink();
 };

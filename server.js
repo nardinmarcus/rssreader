@@ -2312,6 +2312,19 @@ app.get('/api/entry/:id', (req, res) => {
   res.json({ entry });
 });
 
+app.delete('/api/entry/:id', requireAdmin, (req, res) => {
+  try {
+    const result = fetcher.deleteEntry(req.params.id, {
+      userId: req.user && req.user.id,
+      reason: req.body && req.body.reason,
+    });
+    if (!result) return res.status(404).json({ error: 'entry not found' });
+    res.json({ ok: true, entryId: result.id, deletedAt: result.deletedAt || null, alreadyDeleted: Boolean(result.alreadyDeleted) });
+  } catch (e) {
+    sendError(res, e, 'delete entry failed');
+  }
+});
+
 app.post('/api/entry/:id/view', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });

@@ -1804,6 +1804,11 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 .reader-toolbar .ghost-btn { flex: none; }
+.reader-delete {
+  margin-left: auto;
+  border-color: color-mix(in srgb, var(--semantic-red) 28%, var(--border));
+  background: color-mix(in srgb, var(--semantic-red) 6%, var(--bg-1));
+}
 #reader-star.starred,
 #reader-like.active,
 #reader-dislike.active { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
