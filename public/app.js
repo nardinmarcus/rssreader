@@ -403,6 +403,7 @@ const state = {
   translationGenerating: false,
   translationCompare: false,
   pendingTranslationGenerate: false,
+  translationAiProfileId: '',
   rewrite: null,
   rewriteLoading: false,
   rewriteGenerating: false,
@@ -771,6 +772,59 @@ function toast(msg, ms = 2200) {
   t._timer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
+function showConfirmDialog({
+  title = '确认操作',
+  message = '',
+  confirmText = '确定',
+  cancelText = '取消',
+  danger = false,
+} = {}) {
+  return new Promise(resolve => {
+    const modal = $('#confirm-modal');
+    const titleEl = $('#confirm-title');
+    const messageEl = $('#confirm-message');
+    const iconEl = $('#confirm-icon');
+    const okBtn = $('#confirm-ok');
+    const cancelBtn = $('#confirm-cancel');
+    if (!modal || !titleEl || !messageEl || !okBtn || !cancelBtn) {
+      resolve(false);
+      return;
+    }
+    const previousFocus = document.activeElement;
+    let settled = false;
+    const close = value => {
+      if (settled) return;
+      settled = true;
+      modal.classList.add('hidden');
+      modal.classList.remove('danger');
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      modal.onclick = null;
+      document.removeEventListener('keydown', onKeydown);
+      if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+      resolve(value);
+    };
+    const onKeydown = event => {
+      if (event.key === 'Escape') close(false);
+      if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) close(true);
+    };
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    iconEl.textContent = danger ? '!' : '?';
+    okBtn.textContent = confirmText;
+    cancelBtn.textContent = cancelText;
+    modal.classList.toggle('danger', Boolean(danger));
+    modal.classList.remove('hidden');
+    okBtn.onclick = () => close(true);
+    cancelBtn.onclick = () => close(false);
+    modal.onclick = event => {
+      if (event.target === modal) close(false);
+    };
+    document.addEventListener('keydown', onKeydown);
+    setTimeout(() => okBtn.focus(), 20);
+  });
+}
+
 function domainOf(url) {
   try { return new URL(url).hostname; } catch { return ''; }
 }
@@ -1020,6 +1074,8 @@ function loadAiProfilesForScope() {
     : (profiles.find(profile => profile.isDefault) || profiles[0]).id;
   const rewriteId = storage.getItem(aiPurposeProfileKey('rewrite', scope));
   const agentId = storage.getItem(aiPurposeProfileKey('agent', scope));
+  const translationId = storage.getItem(aiPurposeProfileKey('translation', scope));
+  state.translationAiProfileId = profiles.some(profile => profile.id === translationId) ? translationId : state.activeAiProfileId;
   state.rewriteAiProfileId = profiles.some(profile => profile.id === rewriteId) ? rewriteId : state.activeAiProfileId;
   state.agentAiProfileId = profiles.some(profile => profile.id === agentId) ? agentId : state.activeAiProfileId;
   state.editingAiProfileId = state.activeAiProfileId;
@@ -1031,6 +1087,7 @@ function persistAiProfiles() {
   const scope = aiScope();
   storage.setItem(aiProfilesKey(scope), JSON.stringify(ensureSingleDefault(state.aiProfiles)));
   if (state.activeAiProfileId) storage.setItem(aiActiveProfileKey(scope), state.activeAiProfileId);
+  if (state.translationAiProfileId) storage.setItem(aiPurposeProfileKey('translation', scope), state.translationAiProfileId);
   if (state.rewriteAiProfileId) storage.setItem(aiPurposeProfileKey('rewrite', scope), state.rewriteAiProfileId);
   if (state.agentAiProfileId) storage.setItem(aiPurposeProfileKey('agent', scope), state.agentAiProfileId);
 }
@@ -1047,6 +1104,7 @@ function currentAiProfile() {
 }
 
 function aiProfileForPurpose(purpose = '') {
+  if (purpose === 'translation') return profileByIdOrDefault(state.translationAiProfileId || state.activeAiProfileId);
   if (purpose === 'rewrite') return profileByIdOrDefault(state.rewriteAiProfileId || state.activeAiProfileId);
   if (purpose === 'agent') return profileByIdOrDefault(state.agentAiProfileId || state.activeAiProfileId);
   return currentAiProfile();
@@ -1105,7 +1163,7 @@ function aiHeaders() {
 }
 
 function translationAiConfig() {
-  const config = currentAiConfig();
+  const config = aiConfigForPurpose('translation');
   if (hasUsableAiConfig(config)) return config;
   return {
     provider: 'deepseek',
@@ -4319,7 +4377,13 @@ async function toggleAnnotationHelpful(annotationId) {
 async function deleteAnnotation(annotationId) {
   const entry = state.activeEntry;
   if (!entry || !annotationId) return;
-  if (!window.confirm('确定撤回这条划线点评吗？撤回后公开资产页和 RSS 中也会移除。')) return;
+  const ok = await showConfirmDialog({
+    title: '撤回划线点评',
+    message: '撤回后，公开资产页和 RSS 中也会移除这条划线点评。',
+    confirmText: '撤回',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const data = await api(`/api/entry/${entry.id}/annotations/${encodeURIComponent(annotationId)}`, { method: 'DELETE' });
     if (state.activeEntry?.id !== entry.id) return;
@@ -5350,7 +5414,13 @@ async function toggleCommentHelpful(commentId) {
 async function deleteComment(commentId) {
   const entry = state.activeEntry;
   if (!entry || !commentId) return;
-  if (!window.confirm('确定撤回这条点评吗？撤回后公开资产页和 RSS 中也会移除。')) return;
+  const ok = await showConfirmDialog({
+    title: '撤回点评',
+    message: '撤回后，公开资产页和 RSS 中也会移除这条点评。',
+    confirmText: '撤回',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const data = await api(`/api/entry/${entry.id}/comments/${encodeURIComponent(commentId)}`, { method: 'DELETE' });
     if (state.activeEntry?.id !== entry.id) return;
@@ -5637,7 +5707,13 @@ async function toggleAgentHelpful(messageId) {
 async function deleteAgentMessage(messageId) {
   const entry = state.activeEntry;
   if (!entry || !messageId) return;
-  if (!window.confirm('确定撤回这条对话吗？撤回后公开资产页和 RSS 中也会移除。')) return;
+  const ok = await showConfirmDialog({
+    title: '撤回对话',
+    message: '撤回后，公开资产页和 RSS 中也会移除这条对话。',
+    confirmText: '撤回',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     const data = await api(`/api/entry/${entry.id}/chat/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
     if (state.activeEntry?.id !== entry.id) return;
@@ -6380,6 +6456,7 @@ function renderAiProfileSelect(selector, purpose) {
 }
 
 function renderAiProfileControls() {
+  renderAiProfileSelect('#translation-profile-select', 'translation');
   renderAiProfileSelect('#rewrite-profile-select', 'rewrite');
   renderAiProfileSelect('#agent-profile-select', 'agent');
 }
@@ -6387,6 +6464,7 @@ function renderAiProfileControls() {
 function setAiProfileForPurpose(purpose, profileId) {
   const profile = state.aiProfiles.find(item => item.id === profileId);
   if (!profile) return;
+  if (purpose === 'translation') state.translationAiProfileId = profile.id;
   if (purpose === 'rewrite') state.rewriteAiProfileId = profile.id;
   if (purpose === 'agent') state.agentAiProfileId = profile.id;
   persistAiProfiles();
@@ -6417,6 +6495,7 @@ function renderAiProfileList() {
     btn.onclick = () => {
       state.editingAiProfileId = profile.id;
       state.activeAiProfileId = profile.id;
+      if (state.aiConfigReason === 'translation') state.translationAiProfileId = profile.id;
       if (state.aiConfigReason === 'rewrite') state.rewriteAiProfileId = profile.id;
       if (state.aiConfigReason === 'agent') state.agentAiProfileId = profile.id;
       persistAiProfiles();
@@ -6558,13 +6637,15 @@ function saveAiProfileFromForm({ silent = false } = {}) {
   }
   state.aiProfiles = ensureSingleDefault(nextProfiles);
   state.activeAiProfileId = profile.id;
+  if (state.aiConfigReason === 'translation') state.translationAiProfileId = profile.id;
   if (state.aiConfigReason === 'rewrite') state.rewriteAiProfileId = profile.id;
   if (state.aiConfigReason === 'agent') state.agentAiProfileId = profile.id;
   state.editingAiProfileId = profile.id;
   persistAiProfiles();
   renderAiSettings();
   if (!silent) toast('AI 配置已保存');
-  if (hasUsableAiConfig(currentAiConfig()) && state.pendingAiAction) {
+  const reasonConfig = state.aiConfigReason ? aiConfigForPurpose(state.aiConfigReason) : currentAiConfig();
+  if (hasUsableAiConfig(reasonConfig) && state.pendingAiAction) {
     closeAiConfigModal();
     runPendingAiAction();
   }
@@ -6583,12 +6664,19 @@ function addAiProfile() {
   renderAiSettings();
 }
 
-function deleteAiProfile() {
+async function deleteAiProfile() {
   const profile = getEditingAiProfile();
   if (!profile || state.aiProfiles.length <= 1) return;
-  if (!window.confirm(`确定删除「${profile.name}」吗？`)) return;
+  const ok = await showConfirmDialog({
+    title: '删除 AI 配置',
+    message: `确定删除「${profile.name}」吗？使用这个配置的翻译、改写和对话会切回默认配置。`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   state.aiProfiles = ensureSingleDefault(state.aiProfiles.filter(item => item.id !== profile.id));
   state.activeAiProfileId = (state.aiProfiles.find(item => item.isDefault) || state.aiProfiles[0]).id;
+  if (!state.aiProfiles.some(item => item.id === state.translationAiProfileId)) state.translationAiProfileId = state.activeAiProfileId;
   if (!state.aiProfiles.some(item => item.id === state.rewriteAiProfileId)) state.rewriteAiProfileId = state.activeAiProfileId;
   if (!state.aiProfiles.some(item => item.id === state.agentAiProfileId)) state.agentAiProfileId = state.activeAiProfileId;
   state.editingAiProfileId = state.activeAiProfileId;
@@ -6979,7 +7067,12 @@ async function deleteCurrentEntry() {
   const entry = state.activeEntry;
   if (!entry || !isAdmin()) return;
   const title = entry.titleZh || entry.title || '这篇文章';
-  const ok = window.confirm(`确认删除《${title}》？\n\n这会从前台列表、文章页、公开资产目录中隐藏该页面；已沉淀的翻译、点评、划线和对话数据不会被清空。`);
+  const ok = await showConfirmDialog({
+    title: '删除页面',
+    message: `确认删除《${title}》？这会从前台列表、文章页、公开资产目录中隐藏该页面；已沉淀的翻译、点评、划线和对话数据不会被清空。`,
+    confirmText: '删除页面',
+    danger: true,
+  });
   if (!ok) return;
   const btn = $('#reader-delete');
   if (btn) {
@@ -7279,6 +7372,7 @@ $('#agent-open').onclick = () => setContextPanel(state.contextPanel || 'annotati
 $('#agent-copy-thread').onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
 $('#agent-profile-select').onchange = (e) => setAiProfileForPurpose('agent', e.target.value);
+$('#translation-profile-select').onchange = (e) => setAiProfileForPurpose('translation', e.target.value);
 $('#rewrite-profile-select').onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
 $('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
 $('#account-settings-open').onclick = (e) => {
