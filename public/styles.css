@@ -2293,9 +2293,16 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .annotation-popover-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
+}
+.annotation-popover-copy {
+  margin-right: auto;
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-1));
+  color: var(--text-0);
 }
 .comment-sort {
   display: inline-grid;
