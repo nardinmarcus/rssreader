@@ -3997,7 +3997,8 @@ function applyTextAnnotations() {
 function selectionAnnotationContext() {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !state.activeEntry) return null;
-  const quote = normalizeAnnotationText(selection.toString()).slice(0, 800);
+  const selectedText = String(selection.toString() || '').trim();
+  const quote = normalizeAnnotationText(selectedText).slice(0, 800);
   if (quote.length < 2) return null;
   const range = selection.getRangeAt(0);
   const surface = annotationSurfaceFromNode(range.commonAncestorContainer);
@@ -4011,7 +4012,7 @@ function selectionAnnotationContext() {
   const version = currentAnnotationVersion(surface);
   const rect = range.getBoundingClientRect();
   if (!rect || (!rect.width && !rect.height)) return null;
-  return { surface, quote, prefix, suffix, assetId: version.assetId, contentHash: version.contentHash, rect };
+  return { surface, quote, selectedText, prefix, suffix, assetId: version.assetId, contentHash: version.contentHash, rect };
 }
 
 function hideAnnotationPopover() {
@@ -4025,6 +4026,7 @@ function showAnnotationPopover(context) {
   state.annotationDraft = {
     surface: context.surface,
     quote: context.quote,
+    selectedText: context.selectedText || context.quote,
     prefix: context.prefix,
     suffix: context.suffix,
     assetId: context.assetId || '',
@@ -4040,6 +4042,16 @@ function showAnnotationPopover(context) {
   popover.style.top = `${top}px`;
   popover.classList.remove('hidden');
   setTimeout(() => input.focus(), 0);
+}
+
+function copyAnnotationSelection() {
+  const draft = state.annotationDraft;
+  const currentSelection = window.getSelection && !window.getSelection()?.isCollapsed
+    ? String(window.getSelection().toString() || '').trim()
+    : '';
+  const text = currentSelection || String(draft?.selectedText || draft?.quote || '').trim();
+  if (!text) return toast('没有可复制的选中文本');
+  copyText(text, '选中文本已复制');
 }
 
 function maybeOpenAnnotationPopover() {
@@ -4304,7 +4316,15 @@ async function submitAnnotationDraft() {
     const data = await api(`/api/entry/${entry.id}/annotations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...draft, body }),
+      body: JSON.stringify({
+        surface: draft.surface,
+        quote: draft.quote,
+        prefix: draft.prefix,
+        suffix: draft.suffix,
+        assetId: draft.assetId,
+        contentHash: draft.contentHash,
+        body,
+      }),
     });
     if (state.activeEntry?.id !== entry.id) return;
     state.annotations = data.annotations || [];
@@ -7171,6 +7191,7 @@ document.addEventListener('selectionchange', () => {
   hideAnnotationPopover();
 });
 $('#annotation-popover-cancel').onclick = hideAnnotationPopover;
+$('#annotation-popover-copy').onclick = copyAnnotationSelection;
 $('#annotation-popover-submit').onclick = submitAnnotationDraft;
 $('#annotation-popover-input').onkeydown = (e) => {
   if (e.key === 'Escape') {
