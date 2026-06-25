@@ -7,7 +7,7 @@
   <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=125" />
+  <link rel="stylesheet" href="/styles.css?v=126" />
 </head>
 <body data-theme="light">
   <div id="app">
@@ -90,6 +90,7 @@
         <div id="account-menu" class="account-menu hidden" role="menu" aria-label="账户菜单">
           <button id="account-menu-dashboard" type="button" role="menuitem">我的后台</button>
           <button id="account-menu-profile" type="button" role="menuitem">我的贡献</button>
+          <button id="account-menu-admin" class="hidden" type="button" role="menuitem">系统后台</button>
           <button id="account-menu-logout" type="button" role="menuitem">退出登录</button>
         </div>
       </div>
@@ -111,6 +112,12 @@
           <button id="mark-read-btn" class="icon-btn" title="全部标为已读">✓</button>
         </div>
       </header>
+      <div id="list-scope-bar" class="list-scope-bar" role="tablist" aria-label="文章列表模式">
+        <button class="list-scope-btn active" type="button" data-list-scope="latest">最新</button>
+        <button class="list-scope-btn" type="button" data-list-scope="hot">热门</button>
+        <button class="list-scope-btn" type="button" data-list-scope="unread">未读</button>
+        <button class="list-scope-btn" type="button" data-list-scope="assets">有资产</button>
+      </div>
       <div id="entry-pane-tabs" class="entry-pane-tabs hidden" role="tablist" aria-label="全部视图">
         <button class="entry-pane-tab active" type="button" data-home-tab="entries">文章列表 <span id="home-entry-count">0</span></button>
         <button class="entry-pane-tab" type="button" data-home-tab="assets">公开资产动态 <span id="home-asset-count">0</span></button>
@@ -388,6 +395,24 @@
         </div>
         <div id="contributor-list" class="my-comments-list"></div>
       </section>
+      <section id="admin-page" class="workspace-page admin-page hidden">
+        <header class="workspace-page-head">
+          <div>
+            <h1>系统后台</h1>
+            <p>管理员专用。刷新全站、管理订阅源和查看后台任务状态。</p>
+          </div>
+          <div class="admin-page-actions">
+            <button id="admin-back-dashboard" class="ghost-btn" type="button">个人后台</button>
+            <button id="admin-close" class="icon-btn" type="button" title="返回阅读器" aria-label="返回阅读器">←</button>
+          </div>
+        </header>
+        <section class="admin-control-strip">
+          <button id="admin-refresh-btn" class="ghost-btn primary" type="button">刷新全部</button>
+          <button id="admin-manage-modal-btn" class="ghost-btn" type="button">弹窗管理源</button>
+        </section>
+        <section id="admin-manage-status" class="manage-status"></section>
+        <section id="admin-manage-list" class="manage-list admin-manage-list"></section>
+      </section>
     </section>
 
     <div id="context-resizer" class="context-resizer" role="separator" aria-orientation="vertical" aria-label="调整文章和右侧栏宽度" tabindex="0"></div>
@@ -401,6 +426,9 @@
         </button>
         <button id="context-tab-agent" class="context-tab" type="button" data-context-panel="agent">
           <span>AI Agent</span>
+        </button>
+        <button id="context-tab-info" class="context-tab" type="button" data-context-panel="info">
+          <span>文章信息</span>
         </button>
         <button id="context-close" class="icon-btn context-close" title="关闭侧栏" aria-label="关闭侧栏">→</button>
       </div>
@@ -450,6 +478,15 @@
           <textarea id="agent-input" rows="2" placeholder="问当前文章…" disabled></textarea>
           <button id="agent-send" class="ghost-btn" type="submit" disabled>发送</button>
         </form>
+      </section>
+      <section id="article-info-panel" class="context-panel article-info-panel hidden">
+        <header class="article-info-head">
+          <div>
+            <div class="annotation-side-kicker">文章信息</div>
+            <div id="article-info-title" class="annotation-side-title">未选择文章</div>
+          </div>
+        </header>
+        <div id="article-info-body" class="article-info-body"></div>
       </section>
     </aside>
   </div>
@@ -626,6 +663,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=123"></script>
+  <script src="/app.js?v=124"></script>
 </body>
 </html>

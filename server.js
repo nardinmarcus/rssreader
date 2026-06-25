@@ -1675,6 +1675,11 @@ app.get('/contributors/:id', (req, res) => {
   res.type('html').send(renderIndex(req));
 });
 
+app.get(['/me', '/dashboard', '/admin'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(renderIndex(req));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
     if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
