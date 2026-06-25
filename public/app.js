@@ -4044,14 +4044,18 @@ function showAnnotationPopover(context) {
   setTimeout(() => input.focus(), 0);
 }
 
-function copyAnnotationSelection() {
+async function copyAnnotationSelection() {
   const draft = state.annotationDraft;
   const currentSelection = window.getSelection && !window.getSelection()?.isCollapsed
     ? String(window.getSelection().toString() || '').trim()
     : '';
   const text = currentSelection || String(draft?.selectedText || draft?.quote || '').trim();
   if (!text) return toast('没有可复制的选中文本');
-  copyText(text, '选中文本已复制');
+  const copied = await copyText(text, '选中文本已复制');
+  if (copied) {
+    hideAnnotationPopover();
+    window.getSelection()?.removeAllRanges();
+  }
 }
 
 function maybeOpenAnnotationPopover() {
