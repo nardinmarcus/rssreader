@@ -18,10 +18,14 @@ Local verification:
 
 Production deployment:
 
-- Pending. `https://rss.qiaomu.ai/` is online, but SSH to `myvps` timed out during banner exchange on 2026-06-25, so files were not synced yet.
-- Online probe confirmed production still serves the previous asset version, not `v=122`.
+- Backup: `/opt/qiaomu-apps/qmreader/backups/selection-copy-20260625T012518Z`
+- Deployed files: `public/app.js`, `public/index.html`, `public/styles.css`, and this ops note.
+- Runtime: standalone `qmreader` systemd service behind Nginx; static file sync only, no restart required.
+- Production verification confirmed `/app.js?v=122`, `/styles.css?v=122`, and `annotation-popover-copy` are served by `https://rss.qiaomu.ai/`.
+- Live Chrome smoke passed on `https://rss.qiaomu.ai/`: open an article, select reader text, confirm `复制选中` appears, click it, and see `选中文本已复制`.
+- Observed one Google favicon 404 for `igerman.cc`; no JavaScript errors from the selection-copy change.
 
 Rollback:
 
-- Restore `public/app.js`, `public/index.html`, and `public/styles.css` from the production backup.
-- Restart `qmreader` if needed.
+- Restore `public/app.js`, `public/index.html`, and `public/styles.css` from `/opt/qiaomu-apps/qmreader/backups/selection-copy-20260625T012518Z/`.
+- Restart `qmreader` only if static file serving behaves unexpectedly.
