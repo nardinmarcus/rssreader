@@ -56,5 +56,7 @@ if (process.send) {
     .filter(Boolean);
   run({ kind, sourceId, sourceIds }).then(result => {
     if (result) console.log(JSON.stringify(result, null, 2));
+  }).finally(() => {
+    setTimeout(() => process.exit(process.exitCode || 0), 20);
   });
 }
