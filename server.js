@@ -10,10 +10,20 @@ const store = require('./lib/store');
 const app = express();
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
+const MINUTE_MS = 60 * 1000;
+const HOUR_MS = 60 * MINUTE_MS;
 const DAILY_REFRESH_HOUR_SHANGHAI = 8;
 const STARTUP_REFRESH_DELAY_MS = parseInt(process.env.STARTUP_REFRESH_DELAY_MS || '30000', 10);
+const SOURCE_INTERACTION_REFRESH_COOLDOWN_MS = parseInt(process.env.SOURCE_INTERACTION_REFRESH_COOLDOWN_MS || `${5 * MINUTE_MS}`, 10);
+const FRESHNESS_SWEEP_INTERVAL_MS = parseInt(process.env.FRESHNESS_SWEEP_INTERVAL_MS || `${5 * MINUTE_MS}`, 10);
+const FRESHNESS_STARTUP_DELAY_MS = parseInt(process.env.FRESHNESS_STARTUP_DELAY_MS || `${2 * MINUTE_MS}`, 10);
+const FRESHNESS_SWEEP_BATCH_SIZE = parseInt(process.env.FRESHNESS_SWEEP_BATCH_SIZE || '3', 10);
+const FRESHNESS_SWEEP_MAX_COST = parseInt(process.env.FRESHNESS_SWEEP_MAX_COST || '6', 10);
+const NEWS_REFRESH_INTERVAL_MS = parseInt(process.env.NEWS_REFRESH_INTERVAL_MS || `${30 * MINUTE_MS}`, 10);
+const ARTICLE_REFRESH_INTERVAL_MS = parseInt(process.env.ARTICLE_REFRESH_INTERVAL_MS || `${2 * HOUR_MS}`, 10);
+const PODCAST_REFRESH_INTERVAL_MS = parseInt(process.env.PODCAST_REFRESH_INTERVAL_MS || `${6 * HOUR_MS}`, 10);
 const TITLE_TRANSLATION_LIMIT = parseInt(process.env.TITLE_TRANSLATION_LIMIT || '80', 10);
-const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_IDS || 'bensbites,readwise-wise,nlp-elvis')
+const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_IDS || '')
   .split(',')
   .map(id => id.trim())
   .filter(Boolean));
@@ -68,8 +78,15 @@ let refreshProgress = { done: 0, total: 0 };
 let refreshWorker = null;
 let refreshJob = null;
 let refreshLast = null;
+let aiWorker = null;
+let aiJob = null;
+let aiLast = null;
+const aiQueuedSourceIds = new Set();
 let autoRewriteRunning = false;
 let autoRewriteLast = null;
+const sourceInteractionRefreshAt = new Map();
+const faviconCache = new Map();
+const FAVICON_MAX_BYTES = 256 * 1024;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => HTML_ESCAPES[char]);
@@ -84,6 +101,57 @@ function safeJsonForHtml(value) {
     '\u2029': '\\u2029',
   };
   return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, char => escapes[char]);
+}
+
+function normalizeFaviconTarget(value) {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function fallbackFaviconSvg(target = '') {
+  const host = (() => {
+    try { return new URL(target).hostname; } catch { return ''; }
+  })();
+  const letter = (host.replace(/^www\./, '').trim()[0] || 'Q').toUpperCase();
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#f1f1ef"/><text x="32" y="39" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="28" font-weight="700" fill="#71716d">${escapeHtml(letter)}</text></svg>`;
+}
+
+function faviconCandidates(target, size) {
+  const encoded = encodeURIComponent(target);
+  return [
+    `https://www.google.com/s2/favicons?domain_url=${encoded}&sz=${size}`,
+    `${target}/favicon.ico`,
+    `${target}/favicon.svg`,
+    `${target}/apple-touch-icon.png`,
+    `${target}/apple-touch-icon-precomposed.png`,
+  ];
+}
+
+async function fetchFaviconCandidate(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch(url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'QMReader favicon proxy/1.0' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const type = String(response.headers.get('content-type') || '').toLowerCase();
+    if (!type.includes('image/') && !type.includes('octet-stream')) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > FAVICON_MAX_BYTES) return null;
+    return { buffer, type: type.split(';')[0] || 'image/png' };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function jsonLdScript(value) {
@@ -1629,6 +1697,34 @@ app.get('/favicon.ico', (req, res) => {
   res.redirect(302, '/favicon.svg');
 });
 
+app.get('/favicons', async (req, res) => {
+  const target = normalizeFaviconTarget(req.query.domain_url);
+  const size = Math.max(16, Math.min(parseInt(req.query.sz || '64', 10) || 64, 128));
+  if (!target) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.type('image/svg+xml').send(fallbackFaviconSvg(''));
+  }
+  const cacheKey = `${target}:${size}`;
+  const cached = faviconCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < 1000 * 60 * 60 * 24) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.type(cached.type).send(cached.buffer);
+    return;
+  }
+  for (const url of faviconCandidates(target, size)) {
+    const result = await fetchFaviconCandidate(url);
+    if (!result) continue;
+    faviconCache.set(cacheKey, { ...result, at: Date.now() });
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.type(result.type).send(result.buffer);
+    return;
+  }
+  const svg = Buffer.from(fallbackFaviconSvg(target));
+  faviconCache.set(cacheKey, { buffer: svg, type: 'image/svg+xml', at: Date.now() });
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.type('image/svg+xml').send(svg);
+});
+
 app.get('/sitemap.xml', (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=900');
   res.type('application/xml').send(renderSitemap(req));
@@ -1724,6 +1820,22 @@ function sendError(res, error, fallback = 'request failed') {
   res.status(status).json({ error: error.message || fallback });
 }
 
+function writeSse(res, payload) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function splitSseText(text) {
+  const clean = String(text || '');
+  if (!clean) return [];
+  const chunks = [];
+  for (let i = 0; i < clean.length; i += 44) chunks.push(clean.slice(i, i + 44));
+  return chunks;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function requireLogin(req, res, next) {
   if (req.user) return next();
   res.status(401).json({ error: '请先登录或注册账号' });
@@ -1762,11 +1874,20 @@ function plainText(value) {
 }
 
 function entryPlainText(entry) {
-  return plainText(entry && (entry.content || entry.summary));
+  const official = entry && entry.officialSiteContext;
+  return plainText([
+    entry && (entry.content || entry.summary),
+    official && official.title,
+    official && official.summary,
+    official && official.content,
+  ].filter(Boolean).join('\n\n'));
 }
 
 function shouldAutoFetchOriginal(entry) {
   if (!entry || !/^https?:\/\//i.test(entry.link || '')) return false;
+  if (entry.sourceId === 'hackernews') {
+    return !entry.originalFetchedAt && !/news\.ycombinator\.com\/item\?/i.test(entry.link || '');
+  }
   const contentText = plainText(entry.content);
   const summaryText = plainText(entry.summary);
   const textLength = (contentText || summaryText).length;
@@ -1775,7 +1896,31 @@ function shouldAutoFetchOriginal(entry) {
   return Boolean(summaryText && contentText.length <= summaryText.length + 25);
 }
 
-async function prepareEntryForAiAsset(entry, reason = 'AI asset') {
+async function prepareEntryForAiAsset(entry, reason = 'AI asset', { productHuntOfficialSite = true } = {}) {
+  if (productHuntOfficialSite && entry && entry.sourceId === 'producthunt') {
+    try {
+      const officialSiteContext = await fetcher.fetchProductHuntOfficialContext(entry);
+      if (officialSiteContext && entryPlainText({ content: officialSiteContext.content, summary: officialSiteContext.summary }).length >= 80) {
+        console.log(`${reason}: fetched Product Hunt official-site context for ${entry.id}`);
+        return {
+          entry: {
+            ...entry,
+            officialSiteContext,
+          },
+          fetched: true,
+          officialSiteFetched: true,
+        };
+      }
+    } catch (error) {
+      console.warn(`${reason}: Product Hunt official-site context skipped for ${entry.id}:`, error.message || error);
+      return {
+        entry,
+        fetched: false,
+        officialSiteFetched: false,
+        error: String(error.message || error).slice(0, 200),
+      };
+    }
+  }
   if (!shouldAutoFetchOriginal(entry)) return { entry, fetched: false };
   try {
     const updated = await fetcher.fetchEntryOriginal(entry);
@@ -1819,10 +1964,13 @@ function rewriteResponse(entry, viewer = null, assetId = '') {
   if (!rewrite) return null;
   const contentHash = deepseek.rewriteContentHash(entry);
   const reaction = store.getEntryAssetReaction(entry.id, 'rewrite', viewer, exactAssetId);
+  const stale = entry && entry.sourceId === 'producthunt'
+    ? false
+    : Boolean(rewrite.contentHash && rewrite.contentHash !== contentHash);
   return {
     ...rewrite,
     ...reaction,
-    stale: Boolean(rewrite.contentHash && rewrite.contentHash !== contentHash),
+    stale,
   };
 }
 
@@ -1850,20 +1998,20 @@ async function translateSubmittedTitle(entry) {
   }
 }
 
-function queueSubmittedContentTranslation(entry) {
+function queueSubmittedRewrite(entry) {
   if (!entry || !entry.id || !deepseek.getConfig().configured) return;
-  if (!deepseek.isLikelyEnglish(`${entry.title || ''}\n${plainText(entry.content || entry.summary || '').slice(0, 2000)}`)) return;
   setTimeout(async () => {
     try {
       const latest = fetcher.getEntryById(entry.id) || entry;
-      await deepseek.translateEntry(latest, {
+      const prepared = await prepareEntryForAiAsset(latest, 'Submitted link rewrite');
+      await deepseek.rewriteEntry(prepared.entry, {
         author: '向阳乔木',
-        temperature: 0.15,
-        maxTokens: 6000,
+        temperature: 0.6,
+        maxTokens: 9000,
       });
-      console.log(`Submitted link translated: ${entry.id}`);
+      console.log(`Submitted link rewritten: ${entry.id}`);
     } catch (error) {
-      console.warn(`Submit link content translation skipped for ${entry.id}:`, error.message || error);
+      console.warn(`Submit link rewrite skipped for ${entry.id}:`, error.message || error);
     }
   }, 0);
 }
@@ -1900,22 +2048,55 @@ function seedAdminFromEnv() {
 function normalizeBackgroundJob(job = {}) {
   const kind = String(job.kind || 'refresh').trim();
   const sourceId = String(job.sourceId || '').trim();
+  const reason = String(job.reason || '').trim();
   const sourceIds = Array.isArray(job.sourceIds)
     ? job.sourceIds.map(id => String(id || '').trim()).filter(Boolean)
-    : Array.from(AUTO_REWRITE_SOURCE_IDS);
+    : [];
   return {
     kind,
     sourceId,
     sourceIds,
+    reason,
+    fetchOnly: Boolean(job.fetchOnly),
     requestedAt: Date.now(),
   };
 }
 
+function defaultAutoRewriteSourceIds() {
+  if (AUTO_REWRITE_SOURCE_IDS.size) return Array.from(AUTO_REWRITE_SOURCE_IDS);
+  return fetcher.getSourcesMeta()
+    .filter(source => source && source.enabled)
+    .map(source => source.id)
+    .filter(Boolean);
+}
+
+function defaultRefreshSourceIds() {
+  return fetcher.getSourcesMeta()
+    .filter(source => {
+      const src = fetcher.getSourceById(source.id);
+      return source && source.enabled && src && !src.manual;
+    })
+    .map(source => source.id)
+    .filter(Boolean);
+}
+
 function backgroundJobState() {
   return {
-    running: Boolean(refreshWorker),
-    job: refreshJob,
+    running: Boolean(refreshWorker || aiWorker),
+    job: refreshJob || aiJob,
     last: refreshLast,
+    fetch: {
+      running: Boolean(refreshWorker),
+      job: refreshJob,
+      last: refreshLast,
+      progress: refreshProgress,
+    },
+    ai: {
+      running: Boolean(aiWorker),
+      job: aiJob,
+      last: aiLast,
+      queuedSourceIds: Array.from(aiQueuedSourceIds),
+    },
   };
 }
 
@@ -1927,35 +2108,87 @@ function reloadFetcherAfterWorker() {
   }
 }
 
-function finishBackgroundJob({ result = null, error = null, code = 0, signal = '' } = {}) {
+function autoRewriteSourceIdsFromRefresh(refresh, job = {}) {
+  if (!refresh || typeof refresh !== 'object') return [];
+  if (!Number(refresh.changedEntryCount || 0)) return [];
+  if (Array.isArray(refresh.changedSourceIds) && refresh.changedSourceIds.length) return refresh.changedSourceIds;
+  if (refresh.sourceId) return [refresh.sourceId];
+  if (Array.isArray(refresh.sourceIds) && refresh.sourceIds.length) return refresh.sourceIds;
+  if (job && job.sourceId) return [job.sourceId];
+  if (job && Array.isArray(job.sourceIds) && job.sourceIds.length) return job.sourceIds;
+  return [];
+}
+
+function queueAutoRewriteForRefresh(refresh, job = {}) {
+  const sourceIds = autoRewriteSourceIdsFromRefresh(refresh, job);
+  if (!sourceIds.length) return { started: false, skipped: 'no changed sources' };
+  return startAutoRewriteJob({
+    kind: 'auto-rewrite',
+    sourceIds,
+    reason: `after-${job.reason || 'refresh'}`,
+  });
+}
+
+function finishFetchJob({ result = null, error = null, code = 0, signal = '' } = {}) {
   const finishedAt = Date.now();
-  refreshLast = {
+  const finalLast = {
     ...(result || {}),
     job: refreshJob,
     finishedAt,
     error: error ? String(error.message || error).slice(0, 300) : (code ? `worker exited with code ${code}${signal ? ` (${signal})` : ''}` : ''),
   };
+  if (refreshLast && refreshLast.fetchedAt && !finalLast.error) {
+    refreshLast = {
+      ...refreshLast,
+      ...finalLast,
+      refresh: finalLast.refresh || refreshLast.refresh,
+      postProcessingQueued: refreshLast.postProcessingQueued,
+    };
+  } else {
+    refreshLast = finalLast;
+  }
   if (refreshing && refreshProgress.total && refreshProgress.done < refreshProgress.total && !refreshLast.error) {
     refreshProgress.done = refreshProgress.total;
   }
   if (refreshing) refreshing = false;
-  if (autoRewriteRunning) {
-    autoRewriteRunning = false;
-    if (!autoRewriteLast || autoRewriteLast.running) {
-      autoRewriteLast = {
-        ...(autoRewriteLast || {}),
-        running: false,
-        finishedAt,
-        error: refreshLast.error || '',
-      };
-    }
-  }
   refreshWorker = null;
   refreshJob = null;
   reloadFetcherAfterWorker();
 }
 
-function startBackgroundJob(job = {}) {
+function finishAiJob({ result = null, error = null, code = 0, signal = '' } = {}) {
+  const finishedAt = Date.now();
+  aiLast = {
+    ...(result || {}),
+    job: aiJob,
+    finishedAt,
+    error: error ? String(error.message || error).slice(0, 300) : (code ? `AI worker exited with code ${code}${signal ? ` (${signal})` : ''}` : ''),
+  };
+  autoRewriteRunning = false;
+  autoRewriteLast = {
+    ...(result && result.autoRewrite || autoRewriteLast || {}),
+    translated: result && result.translated || 0,
+    sourceIds: aiJob && aiJob.sourceIds || [],
+    startedAt: autoRewriteLast && autoRewriteLast.startedAt || aiJob && aiJob.startedAt || finishedAt,
+    finishedAt,
+    running: false,
+    error: aiLast.error || '',
+  };
+  aiWorker = null;
+  aiJob = null;
+  reloadFetcherAfterWorker();
+  if (aiQueuedSourceIds.size) {
+    const queued = Array.from(aiQueuedSourceIds);
+    aiQueuedSourceIds.clear();
+    setTimeout(() => startAutoRewriteJob({
+      kind: 'auto-rewrite',
+      sourceIds: queued,
+      reason: 'queued',
+    }), 0);
+  }
+}
+
+function startFetchJob(job = {}) {
   if (refreshWorker) {
     return {
       started: false,
@@ -1966,18 +2199,14 @@ function startBackgroundJob(job = {}) {
     };
   }
 
-  const normalized = normalizeBackgroundJob(job);
+  const normalized = { ...normalizeBackgroundJob(job), kind: 'refresh', fetchOnly: true };
   const startedAt = Date.now();
   refreshJob = { ...normalized, startedAt };
   refreshLast = null;
-  if (normalized.kind === 'refresh') {
-    refreshing = true;
-    refreshProgress = normalized.sourceId ? { done: 0, total: 1, sourceId: normalized.sourceId } : { done: 0, total: 0 };
-  }
-  if (normalized.kind === 'auto-rewrite') {
-    autoRewriteRunning = true;
-    autoRewriteLast = { sourceIds: normalized.sourceIds, startedAt, finishedAt: 0, running: true };
-  }
+  refreshing = true;
+  refreshProgress = normalized.sourceId
+    ? { done: 0, total: 1, sourceId: normalized.sourceId }
+    : { done: 0, total: normalized.sourceIds.length || 0, sourceId: '' };
 
   const worker = fork(REFRESH_WORKER_PATH, [], {
     cwd: __dirname,
@@ -2008,25 +2237,26 @@ function startBackgroundJob(job = {}) {
       };
       return;
     }
-    if (message.type === 'autoRewriteStart') {
-      autoRewriteRunning = true;
-      autoRewriteLast = {
-        sourceIds: message.sourceIds || [],
-        startedAt: message.startedAt || Date.now(),
-        finishedAt: 0,
-        running: true,
+    if (message.type === 'fetchDone') {
+      if (refreshing) {
+        if (refreshProgress.total && refreshProgress.done < refreshProgress.total) {
+          refreshProgress.done = refreshProgress.total;
+        }
+        refreshing = false;
+      }
+      reloadFetcherAfterWorker();
+      refreshLast = {
+        kind: 'refresh',
+        sourceId: refreshJob && refreshJob.sourceId || '',
+        refresh: message.refresh || null,
+        job: refreshJob,
+        fetchedAt: message.finishedAt || Date.now(),
+        postProcessing: false,
+        postProcessingQueued: false,
+        error: '',
       };
-      return;
-    }
-    if (message.type === 'autoRewriteDone') {
-      autoRewriteRunning = false;
-      autoRewriteLast = {
-        ...(message.autoRewrite || {}),
-        sourceIds: (autoRewriteLast && autoRewriteLast.sourceIds) || [],
-        startedAt: (autoRewriteLast && autoRewriteLast.startedAt) || startedAt,
-        finishedAt: message.finishedAt || Date.now(),
-        running: false,
-      };
+      const queued = queueAutoRewriteForRefresh(message.refresh, refreshJob);
+      refreshLast.postProcessingQueued = Boolean(queued.started || queued.running);
       return;
     }
     if (message.type === 'done') {
@@ -2043,7 +2273,7 @@ function startBackgroundJob(job = {}) {
   worker.on('exit', (code, signal) => {
     const failed = workerError || code;
     if (failed) console.warn('Refresh worker exited with error:', workerError && workerError.message ? workerError.message : code);
-    finishBackgroundJob({ result: workerResult, error: workerError, code, signal });
+    finishFetchJob({ result: workerResult, error: workerError, code, signal });
   });
   worker.send({ type: 'run', job: normalized });
 
@@ -2056,10 +2286,208 @@ function startBackgroundJob(job = {}) {
   };
 }
 
+function startAutoRewriteJob(job = {}) {
+  const normalized = { ...normalizeBackgroundJob(job), kind: 'auto-rewrite' };
+  const sourceIds = normalized.sourceIds.length ? normalized.sourceIds : defaultAutoRewriteSourceIds();
+  const uniqueSourceIds = [...new Set(sourceIds)];
+  if (!uniqueSourceIds.length) return { started: false, skipped: 'no sources configured' };
+  if (aiWorker) {
+    for (const id of uniqueSourceIds) aiQueuedSourceIds.add(id);
+    return {
+      started: false,
+      running: true,
+      queuedSourceIds: Array.from(aiQueuedSourceIds),
+      job: aiJob,
+      autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
+    };
+  }
+
+  const startedAt = Date.now();
+  aiJob = { ...normalized, sourceIds: uniqueSourceIds, startedAt };
+  aiLast = null;
+  autoRewriteRunning = true;
+  autoRewriteLast = { sourceIds: uniqueSourceIds, startedAt, finishedAt: 0, running: true };
+
+  const worker = fork(REFRESH_WORKER_PATH, [], {
+    cwd: __dirname,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  aiWorker = worker;
+  let workerResult = null;
+  let workerError = null;
+
+  worker.stdout.on('data', chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      console.log(`[ai-worker] ${line}`);
+    }
+  });
+  worker.stderr.on('data', chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      console.warn(`[ai-worker] ${line}`);
+    }
+  });
+  worker.on('message', message => {
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'autoRewriteStart') {
+      autoRewriteRunning = true;
+      autoRewriteLast = {
+        sourceIds: message.sourceIds || uniqueSourceIds,
+        startedAt: message.startedAt || startedAt,
+        finishedAt: 0,
+        running: true,
+      };
+      return;
+    }
+    if (message.type === 'autoRewriteDone') {
+      autoRewriteRunning = false;
+      autoRewriteLast = {
+        ...(message.autoRewrite || {}),
+        sourceIds: (autoRewriteLast && autoRewriteLast.sourceIds) || uniqueSourceIds,
+        startedAt: (autoRewriteLast && autoRewriteLast.startedAt) || startedAt,
+        finishedAt: message.finishedAt || Date.now(),
+        running: false,
+      };
+      return;
+    }
+    if (message.type === 'done') {
+      workerResult = message.result || {};
+      return;
+    }
+    if (message.type === 'error') {
+      workerError = message.error || { message: 'AI worker failed' };
+    }
+  });
+  worker.on('error', error => {
+    workerError = error;
+  });
+  worker.on('exit', (code, signal) => {
+    const failed = workerError || code;
+    if (failed) console.warn('AI worker exited with error:', workerError && workerError.message ? workerError.message : code);
+    finishAiJob({ result: workerResult, error: workerError, code, signal });
+  });
+  worker.send({ type: 'run', job: { ...normalized, sourceIds: uniqueSourceIds } });
+
+  return {
+    started: true,
+    running: true,
+    job: aiJob,
+    autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
+  };
+}
+
+function startBackgroundJob(job = {}) {
+  const normalized = normalizeBackgroundJob(job);
+  if (normalized.kind === 'auto-rewrite') return startAutoRewriteJob(normalized);
+  return startFetchJob(normalized);
+}
+
 function doRefreshAll() {
   return startBackgroundJob({
     kind: 'refresh',
-    sourceIds: Array.from(AUTO_REWRITE_SOURCE_IDS),
+    sourceIds: defaultRefreshSourceIds(),
+    reason: 'full-refresh',
+  });
+}
+
+function triggerSourceInteractionRefresh(sourceId, reason = 'interaction') {
+  const id = String(sourceId || '').trim();
+  if (!id) return { started: false, skipped: 'missing sourceId' };
+  const src = fetcher.getSourceById(id);
+  if (!src) return { started: false, skipped: 'source not found' };
+  if (src.manual) return { started: false, skipped: 'manual source' };
+  if (!fetcher.isEnabled(src)) return { started: false, skipped: 'source disabled' };
+  if (refreshWorker) {
+    return { started: false, running: true, skipped: 'refresh already running', job: refreshJob };
+  }
+  const cooldown = Number.isFinite(SOURCE_INTERACTION_REFRESH_COOLDOWN_MS)
+    ? Math.max(0, SOURCE_INTERACTION_REFRESH_COOLDOWN_MS)
+    : 15 * 60 * 1000;
+  const now = Date.now();
+  const last = sourceInteractionRefreshAt.get(id) || 0;
+  if (cooldown && now - last < cooldown) {
+    return { started: false, skipped: 'cooldown', nextAllowedAt: last + cooldown };
+  }
+  const result = startBackgroundJob({
+    kind: 'refresh',
+    sourceId: src.id,
+    sourceIds: [src.id],
+    reason,
+  });
+  if (result.started) sourceInteractionRefreshAt.set(id, now);
+  return result;
+}
+
+function sourceRefreshInterval(source) {
+  if (!source || source.manual) return 0;
+  if (Number.isFinite(source.refreshIntervalMs) && source.refreshIntervalMs > 0) {
+    return Math.max(60 * 1000, source.refreshIntervalMs);
+  }
+  if (source.category === 'news') return Math.max(5 * MINUTE_MS, NEWS_REFRESH_INTERVAL_MS || 0);
+  if (source.category === 'podcast') return Math.max(30 * MINUTE_MS, PODCAST_REFRESH_INTERVAL_MS || 0);
+  return Math.max(15 * MINUTE_MS, ARTICLE_REFRESH_INTERVAL_MS || 0);
+}
+
+function sourceRefreshPriority(source) {
+  if (source && Number.isFinite(source.refreshPriority) && source.refreshPriority > 0) return source.refreshPriority;
+  if (source && source.category === 'news') return 2;
+  if (source && source.category === 'podcast') return 0.8;
+  return 1.2;
+}
+
+function sourceRefreshCost(source) {
+  if (source && Number.isFinite(source.refreshCost) && source.refreshCost > 0) return source.refreshCost;
+  if (source && source.id === 'hackernews') return 3;
+  return 1;
+}
+
+function freshnessCandidates() {
+  const now = Date.now();
+  return fetcher.getSourcesMeta()
+    .map(meta => {
+      const source = fetcher.getSourceById(meta.id);
+      const interval = sourceRefreshInterval(source);
+      const fetchedAt = Number(meta.fetchedAt) || 0;
+      const age = fetchedAt ? now - fetchedAt : Infinity;
+      const overdueRatio = interval ? age / interval : 0;
+      const priority = sourceRefreshPriority(source);
+      const cost = sourceRefreshCost(source);
+      const starvationBoost = overdueRatio >= 2 ? Math.min(4, overdueRatio - 1) : 0;
+      const score = (overdueRatio * priority) + starvationBoost - (cost * 0.15);
+      return { meta, source, interval, age, overdueRatio, priority, cost, score };
+    })
+    .filter(item => (
+      item.source
+      && item.interval
+      && item.meta.enabled
+      && !item.source.manual
+      && item.age >= item.interval
+    ))
+    .sort((a, b) => (
+      b.score - a.score
+      || b.overdueRatio - a.overdueRatio
+      || b.age - a.age
+    ));
+}
+
+function triggerFreshnessRefresh() {
+  if (refreshWorker) return { started: false, running: true, skipped: 'refresh already running', job: refreshJob };
+  const candidates = freshnessCandidates();
+  const batchSize = Number.isFinite(FRESHNESS_SWEEP_BATCH_SIZE) && FRESHNESS_SWEEP_BATCH_SIZE > 0 ? FRESHNESS_SWEEP_BATCH_SIZE : 1;
+  const maxCost = Number.isFinite(FRESHNESS_SWEEP_MAX_COST) && FRESHNESS_SWEEP_MAX_COST > 0 ? FRESHNESS_SWEEP_MAX_COST : Infinity;
+  const selected = [];
+  let cost = 0;
+  for (const item of candidates) {
+    if (selected.length >= batchSize) break;
+    if (selected.length && cost + item.cost > maxCost) continue;
+    selected.push(item);
+    cost += item.cost;
+  }
+  if (!selected.length) return { started: false, skipped: 'no stale sources' };
+  return startBackgroundJob({
+    kind: 'refresh',
+    sourceIds: selected.map(item => item.source.id),
+    reason: 'freshness-sweep',
   });
 }
 
@@ -2101,6 +2529,19 @@ function scheduleStartupRefresh() {
   }, delay);
 }
 
+function scheduleFreshnessRefresh() {
+  if (!Number.isFinite(FRESHNESS_SWEEP_INTERVAL_MS) || FRESHNESS_SWEEP_INTERVAL_MS < 0) {
+    console.log('Freshness sweep disabled');
+    return;
+  }
+  const interval = Math.max(60 * 1000, FRESHNESS_SWEEP_INTERVAL_MS);
+  const delay = Number.isFinite(FRESHNESS_STARTUP_DELAY_MS) ? Math.max(0, FRESHNESS_STARTUP_DELAY_MS) : 2 * MINUTE_MS;
+  setTimeout(() => {
+    triggerFreshnessRefresh();
+    setInterval(triggerFreshnessRefresh, interval);
+  }, delay);
+}
+
 app.get('/api/sources', (req, res) => {
   res.json({
     sources: fetcher.getSourcesMeta(),
@@ -2109,6 +2550,15 @@ app.get('/api/sources', (req, res) => {
     autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
     backgroundJob: backgroundJobState(),
   });
+});
+
+app.post('/api/sources/:id/refresh-hint', (req, res) => {
+  try {
+    const refresh = triggerSourceInteractionRefresh(req.params.id, 'source-interaction');
+    res.json({ ok: true, refresh });
+  } catch (e) {
+    sendError(res, e, 'source refresh hint failed');
+  }
 });
 
 app.get('/api/me', (req, res) => {
@@ -2122,10 +2572,23 @@ app.patch('/api/me/profile', requireLogin, (req, res) => {
       bio: req.body && req.body.bio,
       avatarUrl: req.body && req.body.avatarUrl,
       links: req.body && req.body.links,
+      defaultReaderTab: req.body && req.body.defaultReaderTab,
     });
     res.json({ user });
   } catch (e) {
     sendError(res, e, 'profile update failed');
+  }
+});
+
+app.post('/api/me/password', requireLogin, (req, res) => {
+  try {
+    const user = store.updateUserPassword(req.user.id, {
+      currentPassword: req.body && req.body.currentPassword,
+      newPassword: req.body && req.body.newPassword,
+    });
+    res.json({ user });
+  } catch (e) {
+    sendError(res, e, 'password update failed');
   }
 });
 
@@ -2335,6 +2798,7 @@ app.post('/api/entry/:id/view', (req, res) => {
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     store.recordEntryView(entry.id);
+    triggerSourceInteractionRefresh(entry.sourceId, 'entry-view');
     res.json({ stats: store.getEntryStats([entry.id], req.user)[entry.id] });
   } catch (e) {
     sendError(res, e, 'record entry view failed');
@@ -2361,15 +2825,16 @@ app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/submit-link', requireLogin, async (req, res) => {
+app.post('/api/submit-link', async (req, res) => {
   const url = String((req.body && req.body.url) || '').trim();
   const note = String((req.body && req.body.note) || '').trim();
   if (!url) return res.status(400).json({ error: '请填写要提交的链接' });
   try {
-    const submitted = await fetcher.submitLink(url, req.user, { note });
+    const submitter = req.user || {};
+    const submitted = await fetcher.submitLink(url, submitter, { note });
     await translateSubmittedTitle(submitted);
-    queueSubmittedContentTranslation(submitted);
-    const entry = fetcher.getEntryById(submitted.id, req.user) || submitted;
+    queueSubmittedRewrite(submitted);
+    const entry = fetcher.getEntryById(submitted.id, req.user || null) || submitted;
     res.json({ entry });
   } catch (e) {
     sendError(res, e, 'submit link failed');
@@ -2397,7 +2862,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
-    const prepared = await prepareEntryForAiAsset(entry, 'Translation');
+    const prepared = await prepareEntryForAiAsset(entry, 'Translation', { productHuntOfficialSite: false });
     const result = await deepseek.translateEntry(prepared.entry, {
       ...requestAiConfig(req),
       author: requestAuthor(req),
@@ -2438,6 +2903,7 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
       ...result,
       rewrite: rewriteResponse(prepared.entry, req.user) || result.rewrite,
       originalFetched: prepared.fetched,
+      officialSiteFetched: Boolean(prepared.officialSiteFetched),
       originalFetchError: prepared.error || null,
       entry: prepared.fetched ? prepared.entry : undefined,
     });
@@ -2565,9 +3031,8 @@ app.post('/api/entry/:id/annotations', requireLogin, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
-    const body = String((req.body && req.body.body) || '').trim();
     const quote = String((req.body && req.body.quote) || '').trim();
-    if (!body || !quote) return res.status(400).json({ error: 'annotation quote and body are required' });
+    if (!quote) return res.status(400).json({ error: 'annotation quote is required' });
     const annotation = store.addAnnotation(entry.id, {
       userId: req.user.id,
       author: requestAuthor(req),
@@ -2576,7 +3041,7 @@ app.post('/api/entry/:id/annotations', requireLogin, (req, res) => {
       quote,
       prefix: req.body && req.body.prefix,
       suffix: req.body && req.body.suffix,
-      body,
+      body: req.body && req.body.body,
       contentHash: req.body && req.body.contentHash,
     });
     res.json({ annotation, annotations: store.getAnnotations(entry.id, req.user) });
@@ -2665,6 +3130,38 @@ app.post('/api/entry/:id/chat', requireLogin, async (req, res) => {
   }
 });
 
+app.post('/api/entry/:id/chat/stream', requireLogin, async (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  try {
+    const result = await deepseek.chatWithEntry(entry, req.body && req.body.messages, {
+      ...requestAiConfig(req),
+      author: requestAuthor(req),
+      userId: req.user.id,
+    });
+    const chunks = splitSseText(result.answer || result.assistantMessage?.content || '');
+    for (const chunk of chunks) {
+      writeSse(res, { type: 'delta', text: chunk });
+      await sleep(10);
+    }
+    writeSse(res, {
+      type: 'done',
+      messageId: result.assistantMessage && result.assistantMessage.id,
+      model: result.model,
+    });
+  } catch (e) {
+    writeSse(res, { type: 'error', error: e.message || 'chat failed' });
+  } finally {
+    res.end();
+  }
+});
+
 app.get('/api/entry/:id/chat', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
@@ -2724,7 +3221,7 @@ app.post('/api/translate-titles', requireAdmin, async (req, res) => {
 app.post('/api/auto-rewrite', requireAdmin, async (req, res) => {
   try {
     const requested = Array.isArray(req.body && req.body.sourceIds) ? req.body.sourceIds : [];
-    const sourceIds = requested.length ? requested : Array.from(AUTO_REWRITE_SOURCE_IDS);
+    const sourceIds = requested.length ? requested : defaultAutoRewriteSourceIds();
     const result = startBackgroundJob({ kind: 'auto-rewrite', sourceIds });
     res.json({ autoRewrite: result });
   } catch (e) {
@@ -2743,7 +3240,7 @@ app.post('/api/refresh', requireLogin, async (req, res) => {
     const result = startBackgroundJob({
       kind: 'refresh',
       sourceId: src.id,
-      sourceIds: AUTO_REWRITE_SOURCE_IDS.has(src.id) ? [src.id] : [],
+      sourceIds: [src.id],
     });
     return res.json({ started: result.started, running: result.running, job: result.job, progress: result.progress, autoRewrite: result.autoRewrite });
   }
@@ -2763,7 +3260,7 @@ app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
   if (enabled) startBackgroundJob({
     kind: 'refresh',
     sourceId: src.id,
-    sourceIds: AUTO_REWRITE_SOURCE_IDS.has(src.id) ? [src.id] : [],
+    sourceIds: [src.id],
   });
   res.json({ id: src.id, enabled });
 });
@@ -2774,4 +3271,5 @@ app.listen(PORT, HOST, () => {
   fetcher.loadDisk();
   scheduleStartupRefresh();
   scheduleDailyRefresh();
+  scheduleFreshnessRefresh();
 });

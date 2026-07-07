@@ -4,10 +4,23 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>QMReader · RSS 阅读器</title>
-  <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产" href="/assets.xml" />
+  <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产 RSS" href="https://rss.qiaomu.ai/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <link rel="shortcut icon" href="/favicon.ico" />
-  <link rel="stylesheet" href="/styles.css?v=126" />
+  <link rel="shortcut icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/vendor/persona/widget.css?v=1" />
+  <link rel="stylesheet" href="/styles.css?v=155" />
+  <meta name="description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
+  <link rel="canonical" href="https://rss.qiaomu.ai/" />
+  <meta property="og:site_name" content="QMReader" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="QMReader · RSS 阅读器" />
+  <meta property="og:description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
+  <meta property="og:url" content="https://rss.qiaomu.ai/" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="QMReader · RSS 阅读器" />
+  <meta name="twitter:description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"QMReader","url":"https://rss.qiaomu.ai/","description":"围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。"}</script>
+  <script defer src="https://umami.qiaomu.ai/script.js" data-website-id="79a3c342-fbc5-405b-9f41-6ce57a78c80d" data-domains="rss.qiaomu.ai"></script>
 </head>
 <body data-theme="light">
   <div id="app">
@@ -18,28 +31,22 @@
           <span class="brand-logo">Q</span>
           <span class="brand-name">QMReader</span>
         </button>
-        <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏">⇤</button>
-        <button id="theme-toggle" class="icon-btn" title="切换主题">◐</button>
+        <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏" aria-label="收起左侧栏"><span data-qm-icon="panel-left-close"></span></button>
+        <button id="theme-toggle" class="icon-btn" title="切换主题" aria-label="切换主题"><span data-qm-icon="sun-moon"></span></button>
       </div>
 
       <div class="views">
-        <button class="view-btn active" data-view="all"><span class="view-ico">▤</span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
-        <button class="view-btn" data-view="unread"><span class="view-ico">●</span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
-        <button class="view-btn" data-view="hot"><span class="view-ico">▲</span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
-        <button class="view-btn" data-view="contributors"><span class="view-ico">◇</span><span class="view-label">贡献榜</span><span class="count" id="count-contributors"></span></button>
-        <button id="nav-more-toggle" class="view-btn nav-more-toggle" type="button" aria-expanded="false">
-          <span class="view-ico">…</span><span class="view-label">更多</span><span class="count"></span>
-        </button>
-        <div id="nav-more-menu" class="nav-more-menu hidden">
-          <button class="view-btn secondary-view" data-view="starred"><span class="view-ico">★</span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
-          <button class="view-btn secondary-view" data-view="history"><span class="view-ico">◷</span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
-          <button class="view-btn secondary-view" data-view="assets"><span class="view-ico">◆</span><span class="view-label">资产</span><span class="count" id="count-assets"></span></button>
-        </div>
+        <button class="view-btn active" data-view="all"><span class="view-ico" data-qm-icon="newspaper"></span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
+        <button class="view-btn" data-view="unread"><span class="view-ico" data-qm-icon="circle-dot"></span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
+        <button class="view-btn" data-view="hot"><span class="view-ico" data-qm-icon="flame"></span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
+        <button class="view-btn" data-view="contributors"><span class="view-ico" data-qm-icon="users"></span><span class="view-label">贡献榜</span><span class="count" id="count-contributors"></span></button>
+        <button class="view-btn" data-view="starred"><span class="view-ico" data-qm-icon="star"></span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
+        <button class="view-btn" data-view="history"><span class="view-ico" data-qm-icon="history"></span><span class="view-label">历史</span><span class="count" id="count-history"></span></button>
       </div>
 
       <div class="sidebar-actions">
         <button id="submit-link-open" class="submit-link-open sidebar-submit-link" type="button" title="提交链接" aria-label="提交链接">
-          <span class="submit-icon">＋</span>
+          <span class="submit-icon" data-qm-icon="plus"></span>
           <span class="submit-label">提交链接</span>
         </button>
       </div>
@@ -85,19 +92,20 @@
         </button>
         <button id="account-info" class="account-card account-info hidden" type="button"></button>
         <button id="account-settings-open" class="icon-btn account-settings hidden" type="button" title="账户设置" aria-label="账户设置">
-          ⚙<b id="notification-count" class="hidden">0</b>
+          <span data-qm-icon="settings"></span><b id="notification-count" class="hidden">0</b>
         </button>
         <div id="account-menu" class="account-menu hidden" role="menu" aria-label="账户菜单">
           <button id="account-menu-dashboard" type="button" role="menuitem">我的后台</button>
           <button id="account-menu-profile" type="button" role="menuitem">我的贡献</button>
           <button id="account-menu-admin" class="hidden" type="button" role="menuitem">系统后台</button>
+          <button id="account-menu-password" type="button" role="menuitem">修改密码</button>
           <button id="account-menu-logout" type="button" role="menuitem">退出登录</button>
         </div>
       </div>
 
       <div class="sidebar-footer hidden">
-        <button id="refresh-btn" class="ghost-btn">↻ 刷新全部</button>
-        <button id="manage-btn" class="ghost-btn">⚙ 管理源</button>
+        <button id="refresh-btn" class="ghost-btn"><span data-qm-icon="refresh-cw"></span><span class="button-label">刷新全部</span></button>
+        <button id="manage-btn" class="ghost-btn"><span data-qm-icon="settings"></span><span class="button-label">管理源</span></button>
       </div>
     </aside>
 
@@ -106,17 +114,16 @@
       <header class="pane-header">
         <div class="pane-title" id="list-title">全部</div>
         <div class="pane-actions">
-          <button id="source-refresh-btn" class="icon-btn source-refresh-btn hidden" type="button" title="检查当前信息源更新" aria-label="检查当前信息源更新">↻</button>
+          <button id="source-refresh-btn" class="icon-btn source-refresh-btn hidden" type="button" title="检查当前信息源更新" aria-label="检查当前信息源更新"><span data-qm-icon="refresh-cw"></span></button>
           <span id="source-refresh-status" class="source-refresh-status hidden" role="status" aria-live="polite"></span>
           <input id="search" type="search" placeholder="搜索文章…" />
-          <button id="mark-read-btn" class="icon-btn" title="全部标为已读">✓</button>
+          <button id="mark-read-btn" class="icon-btn" title="全部标为已读" aria-label="全部标为已读"><span data-qm-icon="check-check"></span></button>
         </div>
       </header>
       <div id="list-scope-bar" class="list-scope-bar" role="tablist" aria-label="文章列表模式">
         <button class="list-scope-btn active" type="button" data-list-scope="latest">最新</button>
         <button class="list-scope-btn" type="button" data-list-scope="hot">热门</button>
         <button class="list-scope-btn" type="button" data-list-scope="unread">未读</button>
-        <button class="list-scope-btn" type="button" data-list-scope="assets">有资产</button>
       </div>
       <div id="entry-pane-tabs" class="entry-pane-tabs hidden" role="tablist" aria-label="全部视图">
         <button class="entry-pane-tab active" type="button" data-home-tab="entries">文章列表 <span id="home-entry-count">0</span></button>
@@ -127,6 +134,9 @@
     </section>
 
     <div id="list-resizer" class="pane-resizer" role="separator" aria-orientation="vertical" aria-label="调整文章列表宽度" tabindex="0"></div>
+    <button id="left-collapse-toggle" class="icon-btn left-collapse-toggle" type="button" title="收起左侧" aria-label="收起左侧" aria-pressed="false">
+      <span data-qm-icon="panel-left-close"></span>
+    </button>
 
     <!-- ===== Reader ===== -->
     <section id="reader-pane">
@@ -137,57 +147,87 @@
       <article id="reader" class="reader hidden">
         <nav id="reader-signal-rail" class="reader-signal-rail" aria-label="文章反馈">
           <button id="reader-rail-like" class="reader-signal-btn" type="button" title="点赞这篇文章" aria-label="点赞这篇文章">
-            <span class="reader-signal-icon">▲</span>
+            <span class="reader-signal-icon" data-qm-icon="thumbs-up"></span>
             <span id="reader-rail-like-count" class="reader-signal-count">0</span>
           </button>
-          <button id="reader-rail-dislike" class="reader-signal-btn" type="button" title="点踩这篇文章" aria-label="点踩这篇文章">
-            <span class="reader-signal-icon">▼</span>
-            <span id="reader-rail-dislike-count" class="reader-signal-count">0</span>
-          </button>
           <button id="reader-rail-star" class="reader-signal-btn" type="button" title="收藏这篇文章" aria-label="收藏这篇文章">
-            <span class="reader-signal-icon">★</span>
+            <span class="reader-signal-icon" data-qm-icon="star"></span>
             <span id="reader-rail-star-count" class="reader-signal-count">0</span>
           </button>
           <button id="reader-rail-comment" class="reader-signal-btn" type="button" title="查看点评" aria-label="查看点评">
-            <span class="reader-signal-icon">评</span>
+            <span class="reader-signal-icon" data-qm-icon="message-square-text"></span>
             <span id="reader-rail-comment-count" class="reader-signal-count">0</span>
           </button>
           <button id="reader-rail-annotation" class="reader-signal-btn" type="button" title="查看划线点评" aria-label="查看划线点评">
-            <span class="reader-signal-icon">划</span>
+            <span class="reader-signal-icon" data-qm-icon="highlighter"></span>
             <span id="reader-rail-annotation-count" class="reader-signal-count">0</span>
           </button>
           <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="中文改写" aria-label="中文改写">
-            <span class="reader-signal-icon">改</span>
+            <span class="reader-signal-icon" data-qm-icon="sparkles"></span>
           </button>
           <button id="reader-rail-translate" class="reader-signal-btn" type="button" title="中文翻译" aria-label="中文翻译">
-            <span class="reader-signal-icon">译</span>
+            <span class="reader-signal-icon" data-qm-icon="languages"></span>
           </button>
         </nav>
         <header class="reader-head">
-          <div class="reader-source" id="reader-source"></div>
+          <div class="reader-kicker-row">
+            <div class="reader-source" id="reader-source"></div>
+            <div class="reader-meta-row">
+              <div class="reader-meta" id="reader-meta"></div>
+              <span id="reader-view-count" class="reader-view-count"></span>
+            </div>
+          </div>
           <div class="reader-title-row">
             <div class="reader-title-copy">
-              <h1 id="reader-title"></h1>
-              <div id="reader-title-zh" class="reader-title-zh hidden"></div>
+              <h1 id="reader-title"><a id="reader-title-link" class="reader-title-link" target="_blank" rel="noopener"></a></h1>
+              <div id="reader-title-zh" class="reader-title-zh hidden"><a id="reader-title-original-link" class="reader-title-link" target="_blank" rel="noopener"></a></div>
             </div>
-            <a id="reader-open" class="reader-open-btn" target="_blank" rel="noopener">打开原文 ↗</a>
-          </div>
-          <div class="reader-meta-row">
-            <div class="reader-meta" id="reader-meta"></div>
-            <span id="reader-view-count" class="reader-view-count"></span>
           </div>
           <div id="reader-assets" class="asset-badges reader-asset-badges hidden"></div>
           <div id="reader-asset-summary" class="reader-asset-summary hidden"></div>
           <div class="reader-toolbar">
             <div class="reader-toolbar-main">
-              <button id="reader-fetch-original" class="ghost-btn" type="button">获取原文</button>
-              <button id="reader-copy-link" class="ghost-btn" type="button">⧉ 复制链接</button>
+              <button id="reader-copy-link" class="ghost-btn reader-toolbar-icon" type="button" title="复制文章内容" aria-label="复制文章内容"><span data-qm-icon="file-text"></span><span class="button-label">复制文章内容</span></button>
               <button id="reader-star" class="reader-action-pill" type="button" aria-label="收藏这篇文章"></button>
               <button id="reader-like" class="reader-action-pill" type="button" aria-label="点赞这篇文章"></button>
-              <button id="reader-dislike" class="reader-action-pill" type="button" aria-label="点踩这篇文章"></button>
+              <button id="reader-prefs-toggle" class="ghost-btn reader-prefs-toggle reader-toolbar-icon" type="button" title="字体设置" aria-label="字体设置" aria-expanded="false"><span data-qm-icon="sliders-horizontal"></span><span class="button-label">字体设置</span></button>
+              <button id="reader-immersive" class="ghost-btn reader-immersive-toggle reader-toolbar-icon" type="button" aria-pressed="false" title="沉浸阅读" aria-label="沉浸阅读"><span data-qm-icon="maximize-2"></span><span class="button-label">沉浸阅读</span></button>
             </div>
             <div class="reader-toolbar-admin">
-              <button id="reader-delete" class="ghost-btn danger reader-delete hidden" type="button">删除页面</button>
+              <button id="reader-delete" class="ghost-btn danger reader-delete reader-toolbar-icon hidden" type="button" title="删除页面" aria-label="删除页面"><span data-qm-icon="trash-2"></span><span class="button-label">删除页面</span></button>
+            </div>
+          </div>
+          <div id="reader-preferences" class="reader-preferences hidden" aria-label="字体设置">
+            <div class="reader-pref-head">
+              <strong>字体设置</strong>
+              <button id="reader-prefs-close" class="icon-btn" type="button" title="关闭字体设置" aria-label="关闭字体设置"><span data-qm-icon="x"></span></button>
+            </div>
+            <div class="reader-pref-grid">
+              <div class="reader-pref-group" role="group" aria-label="字号">
+                <button id="reader-font-size-down" class="reader-pref-icon" type="button" title="减小字号" aria-label="减小字号"><span data-qm-icon="a-arrow-down"></span></button>
+                <output id="reader-font-size-value" class="reader-pref-value">16.5</output>
+                <button id="reader-font-size-up" class="reader-pref-icon" type="button" title="增大字号" aria-label="增大字号"><span data-qm-icon="a-arrow-up"></span></button>
+              </div>
+              <label class="reader-pref-label">
+                <span>行高</span>
+                <input id="reader-line-height" type="range" min="1.65" max="2.05" step="0.05" />
+              </label>
+              <label class="reader-pref-label reader-pref-width">
+                <span>栏宽</span>
+                <input id="reader-measure" type="range" min="56" max="84" step="2" />
+              </label>
+              <label class="reader-pref-select-label">
+                <span>字体</span>
+                <select id="reader-font-family" aria-label="阅读字体">
+                  <option value="default">默认混排</option>
+                  <option value="pingfang">苹方黑体</option>
+                  <option value="song">宋体</option>
+                  <option value="kai">楷体</option>
+                  <option value="serif">衬线</option>
+                  <option value="mono">等宽</option>
+                  <option value="hei">系统黑体</option>
+                </select>
+              </label>
             </div>
           </div>
         </header>
@@ -195,32 +235,32 @@
         <div class="reader-tabs" role="tablist" aria-label="文章阅读模式">
           <button class="reader-tab active" type="button" data-tab="original">原文</button>
           <button class="reader-tab" type="button" data-tab="rewrite">中文改写</button>
-          <button class="reader-tab" type="button" data-tab="translation">中文翻译</button>
         </div>
         <details id="reader-toc" class="reader-toc hidden">
           <summary>目录</summary>
           <nav id="reader-toc-list" aria-label="文章目录"></nav>
         </details>
-        <section id="reader-original-panel" class="reader-tab-panel">
+        <section id="reader-original-panel" class="reader-tab-panel annotation-surface-panel" data-annotation-surface="original">
           <div id="reader-content" class="reader-content"></div>
+          <aside id="annotation-margin-original" class="annotation-margin" aria-label="原文划线讨论"></aside>
         </section>
-        <section id="reader-rewrite-panel" class="reader-tab-panel hidden">
+        <section id="reader-rewrite-panel" class="reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="rewrite">
           <div class="reader-section-head">
-            <span>中文改写</span>
+            <span id="rewrite-section-label">中文改写</span>
             <div class="reader-section-actions">
-              <span id="rewrite-meta"></span>
-              <select id="rewrite-profile-select" class="ai-profile-select" title="选择用于中文改写的模型" aria-label="选择用于中文改写的模型"></select>
               <button id="rewrite-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
-              <button id="rewrite-copy" class="ghost-btn hidden" type="button">⧉ 复制重写</button>
-              <button id="reader-rewrite" class="ghost-btn primary" type="button">生成中文改写</button>
+              <button id="rewrite-copy" class="icon-btn reader-section-icon hidden" type="button" title="复制中文改写" aria-label="复制中文改写"><span data-qm-icon="copy"></span></button>
+              <button id="reader-rewrite" class="ghost-btn primary reader-rewrite-action" type="button">生成</button>
             </div>
           </div>
+          <div id="rewrite-meta" class="asset-meta-line hidden"></div>
           <div id="rewrite-content" class="rewrite-content"></div>
           <div id="rewrite-empty" class="asset-empty hidden">
             <p>这篇文章还没有中文改写。</p>
           </div>
+          <aside id="annotation-margin-rewrite" class="annotation-margin" aria-label="中文改写划线讨论"></aside>
         </section>
-        <section id="reader-translation" class="reader-translation reader-tab-panel hidden">
+        <section id="reader-translation" class="reader-translation reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="translation">
           <div class="reader-section-head">
             <span>中文翻译</span>
             <div class="reader-section-actions">
@@ -228,7 +268,7 @@
               <select id="translation-profile-select" class="ai-profile-select" title="选择用于中文翻译的模型" aria-label="选择用于中文翻译的模型"></select>
               <button id="translation-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
               <button id="translation-view-toggle" class="ghost-btn hidden" type="button" aria-pressed="false">对照</button>
-              <button id="translation-copy" class="ghost-btn hidden" type="button">⧉ 复制译文</button>
+              <button id="translation-copy" class="ghost-btn hidden" type="button"><span data-qm-icon="copy"></span><span class="button-label">复制译文</span></button>
               <button id="reader-bilingual" class="ghost-btn primary" type="button">生成中文翻译</button>
             </div>
           </div>
@@ -236,6 +276,7 @@
           <div id="translation-empty" class="asset-empty hidden">
             <p>这篇文章还没有中文翻译。</p>
           </div>
+          <aside id="annotation-margin-translation" class="annotation-margin" aria-label="中文翻译划线讨论"></aside>
         </section>
         <section id="reader-annotations" class="reader-annotations">
           <div class="reader-section-head">
@@ -283,11 +324,11 @@
         </section>
         <div id="annotation-popover" class="annotation-popover hidden" role="dialog" aria-label="划线点评">
           <div class="annotation-popover-quote" id="annotation-popover-quote"></div>
-          <textarea id="annotation-popover-input" rows="3" placeholder="写下这段文字带来的想法…"></textarea>
+          <textarea id="annotation-popover-input" rows="3" placeholder="补充点评，可留空只划线…"></textarea>
           <div class="annotation-popover-actions">
             <button id="annotation-popover-copy" class="ghost-btn annotation-popover-copy" type="button">复制</button>
-            <button id="annotation-popover-cancel" class="ghost-btn" type="button">取消</button>
-            <button id="annotation-popover-submit" class="ghost-btn primary" type="button">发布划线点评</button>
+            <button id="annotation-popover-send-ai" class="ghost-btn" type="button">发给AI</button>
+            <button id="annotation-popover-submit" class="ghost-btn primary" type="button">划线/点评</button>
           </div>
         </div>
       </article>
@@ -300,7 +341,7 @@
           <div class="my-assets-header-actions">
             <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
             <a id="my-public-rss-link" class="ghost-btn my-public-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-            <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器">←</button>
+            <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
           </div>
         </header>
         <div class="dashboard-tabs" role="tablist" aria-label="个人后台">
@@ -324,6 +365,13 @@
                   <span>简介</span>
                   <textarea id="profile-bio" rows="2" maxlength="280" placeholder="一句话介绍你关注什么、擅长什么"></textarea>
                 </label>
+                <div class="profile-reader-setting">
+                  <span class="profile-setting-label">打开文章</span>
+                  <div class="profile-reader-tabs" role="radiogroup" aria-label="打开文章默认显示">
+                    <button class="profile-reader-tab active" type="button" role="radio" data-profile-reader-tab="rewrite" aria-checked="true">中文改写</button>
+                    <button class="profile-reader-tab" type="button" role="radio" data-profile-reader-tab="original" aria-checked="false">原文</button>
+                  </div>
+                </div>
                 <div class="profile-links-head">
                   <span>喜欢的链接</span>
                   <button id="profile-link-add" class="ghost-btn" type="button">添加链接</button>
@@ -376,7 +424,7 @@
           <div class="contributor-page-actions">
             <button id="contributor-follow" class="ghost-btn contributor-follow hidden" type="button">关注</button>
             <a id="contributor-rss-link" class="ghost-btn contributor-rss-link hidden" href="#" target="_blank" rel="noopener">RSS</a>
-            <button class="icon-btn" id="contributor-close" title="返回贡献榜" aria-label="返回贡献榜">←</button>
+            <button class="icon-btn" id="contributor-close" title="返回贡献榜" aria-label="返回贡献榜"><span data-qm-icon="arrow-left"></span></button>
           </div>
         </header>
         <section id="contributor-profile" class="contributor-profile hidden"></section>
@@ -403,7 +451,7 @@
           </div>
           <div class="admin-page-actions">
             <button id="admin-back-dashboard" class="ghost-btn" type="button">个人后台</button>
-            <button id="admin-close" class="icon-btn" type="button" title="返回阅读器" aria-label="返回阅读器">←</button>
+            <button id="admin-close" class="icon-btn" type="button" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
           </div>
         </header>
         <section class="admin-control-strip">
@@ -419,87 +467,63 @@
 
     <!-- ===== Article context ===== -->
     <aside id="agent-pane" class="context-pane">
-      <div class="context-tabs" role="tablist" aria-label="文章侧栏">
-        <button id="context-tab-annotations" class="context-tab active" type="button" data-context-panel="annotations">
-          <span>划线讨论</span>
+      <div class="context-tabs" aria-label="文章侧栏">
+        <button id="context-tab-agent" class="context-tab active" type="button" data-context-panel="agent" aria-pressed="true">
+          <span>AI 伴读</span>
+        </button>
+        <button id="context-tab-annotations" class="context-tab" type="button" data-context-panel="annotations" aria-pressed="false">
+          <span>划线评论</span>
           <strong id="context-annotation-count">0</strong>
         </button>
-        <button id="context-tab-agent" class="context-tab" type="button" data-context-panel="agent">
-          <span>AI Agent</span>
-        </button>
-        <button id="context-tab-info" class="context-tab" type="button" data-context-panel="info">
-          <span>文章信息</span>
-        </button>
-        <button id="context-close" class="icon-btn context-close" title="关闭侧栏" aria-label="关闭侧栏">→</button>
+        <button id="context-close" class="icon-btn context-close" title="收起右侧栏" aria-label="收起右侧栏"><span data-qm-icon="panel-right-close"></span></button>
       </div>
-
-      <section id="annotation-side-panel" class="context-panel annotation-side-panel">
-        <header class="annotation-side-head">
-          <div>
-            <div class="annotation-side-kicker">划线讨论</div>
-            <div id="annotation-side-title" class="annotation-side-title">未选择文章</div>
-          </div>
-          <select id="side-annotation-surface-filter" class="annotation-surface-filter" aria-label="筛选右侧划线点评">
-            <option value="all">全部</option>
-            <option value="original">原文</option>
-            <option value="rewrite">中文改写</option>
-            <option value="translation">中文翻译</option>
-          </select>
-        </header>
-        <div id="side-annotations-list" class="side-annotations-list"></div>
-      </section>
-
-      <section id="agent-side-panel" class="context-panel agent-side-panel hidden">
+      <section id="agent-side-panel" class="context-panel agent-side-panel">
         <header class="agent-head">
-          <div>
-            <div class="agent-kicker">Article Agent</div>
-            <div id="agent-title" class="agent-title">未选择文章</div>
-            <div id="agent-profile" class="agent-profile">未配置模型</div>
+          <div class="agent-head-main">
             <select id="agent-profile-select" class="ai-profile-select agent-profile-select" title="选择用于文章对话的模型" aria-label="选择用于文章对话的模型"></select>
           </div>
           <div class="agent-head-actions">
-            <button id="agent-copy-thread" class="icon-btn" title="复制当前对话">⧉</button>
-            <button id="agent-settings" class="icon-btn" title="AI 模型配置">⚿</button>
-            <button id="agent-close" class="icon-btn" title="关闭 AI 侧栏">→</button>
+            <button id="agent-settings" class="icon-btn" title="AI 模型配置" aria-label="AI 模型配置"><span data-qm-icon="settings"></span></button>
           </div>
         </header>
+        <div id="agent-context-strip" class="agent-context-strip"></div>
+        <div id="persona-agent-host" class="persona-agent-host" aria-label="AI 伴读对话"></div>
         <div id="agent-messages" class="agent-messages"></div>
-        <div class="agent-prompts">
-          <button class="agent-prompt" data-prompt="用 5 条 bullet 总结这篇文章最值得关注的观点。">总结要点</button>
-          <button class="agent-prompt" data-prompt="这篇文章有哪些值得怀疑或需要验证的地方？">质疑观点</button>
-          <button class="agent-prompt" data-prompt="如果我是 AI 产品创作者，读完这篇文章下一步可以做什么？">行动建议</button>
-          <button class="agent-prompt" data-prompt="给这篇文章提炼 5 句适合转发引用的金句，保留上下文含义。">金句摘录</button>
-          <button class="agent-prompt" data-prompt="把文章里的关键事实、数据、案例列出来，并逐条说明它们分别证明了什么。">证据清单</button>
-          <button class="agent-prompt" data-prompt="这篇文章的论证依赖哪些前提？哪些前提一旦不成立，结论就会变弱？">前提拆解</button>
-          <button class="agent-prompt" data-prompt="帮我写一段适合发到 X / 即刻的中文分享文案，短一点但有观点。">分享文案</button>
-          <button class="agent-prompt" data-prompt="如果向阳乔木要基于这篇文章写一篇中文内容，最有传播潜力的切入角度有哪些？给 3 个。">选题角度</button>
-        </div>
+        <div class="agent-prompts" aria-label="AI 阅读任务"></div>
         <form id="agent-form" class="agent-form">
-          <textarea id="agent-input" rows="2" placeholder="问当前文章…" disabled></textarea>
-          <button id="agent-send" class="ghost-btn" type="submit" disabled>发送</button>
+          <div id="agent-inline-context" class="agent-inline-context hidden"></div>
+          <div class="agent-composer">
+            <textarea id="agent-input" rows="2" placeholder="问当前文章…" disabled></textarea>
+            <div class="agent-composer-actions">
+              <span class="agent-composer-hint">基于当前文章</span>
+              <button id="agent-send" class="ghost-btn" type="submit" title="发送" aria-label="发送" disabled><span data-qm-icon="send"></span></button>
+            </div>
+          </div>
         </form>
       </section>
-      <section id="article-info-panel" class="context-panel article-info-panel hidden">
-        <header class="article-info-head">
+      <section id="annotation-side-panel" class="context-panel annotation-side-panel hidden">
+        <header class="annotation-side-head">
           <div>
-            <div class="annotation-side-kicker">文章信息</div>
-            <div id="article-info-title" class="annotation-side-title">未选择文章</div>
+            <div class="annotation-side-kicker">划线评论</div>
+            <div id="annotation-side-title" class="annotation-side-title">未选择文章</div>
           </div>
+          <button id="annotation-side-focus" class="icon-btn" type="button" title="跳到正文划线区" aria-label="跳到正文划线区"><span data-qm-icon="corner-down-left"></span></button>
         </header>
-        <div id="article-info-body" class="article-info-body"></div>
+        <div id="side-annotations-list" class="side-annotations-list"></div>
       </section>
     </aside>
   </div>
 
-  <button id="agent-open" class="agent-open hidden" title="打开讨论与 AI 侧栏" aria-label="打开讨论与 AI 侧栏">
-    <span class="agent-open-dot">AI</span>
-    <span>讨论</span>
-  </button>
+  <div id="context-open-rail" class="context-open-rail hidden" aria-label="展开文章侧栏">
+    <button id="agent-open" class="agent-open context-open-btn hidden" type="button" title="展开文章侧栏" aria-label="展开文章侧栏">
+      <span class="agent-open-dot" data-qm-icon="panel-right-open"></span>
+    </button>
+  </div>
 
   <!-- ===== Manage sources modal ===== -->
   <div id="manage-modal" class="modal hidden">
     <div class="modal-box">
-      <header><h2>管理订阅源</h2><button class="icon-btn" id="manage-close">✕</button></header>
+      <header><h2>管理订阅源</h2><button class="icon-btn" id="manage-close" aria-label="关闭管理订阅源"><span data-qm-icon="x"></span></button></header>
       <div id="manage-status" class="manage-status"></div>
       <div id="manage-list" class="manage-list"></div>
     </div>
@@ -507,7 +531,7 @@
 
   <div id="auth-modal" class="modal hidden">
     <div class="modal-box auth-box">
-      <header><h2 id="auth-title">登录</h2><button class="icon-btn" id="auth-close">✕</button></header>
+      <header><h2 id="auth-title">登录</h2><button class="icon-btn" id="auth-close" aria-label="关闭登录弹窗"><span data-qm-icon="x"></span></button></header>
       <form id="auth-form" class="auth-form">
         <div class="auth-tabs">
           <button type="button" class="auth-tab active" data-mode="login">登录</button>
@@ -521,14 +545,32 @@
     </div>
   </div>
 
+  <div id="change-password-modal" class="modal hidden">
+    <div class="modal-box auth-box">
+      <header>
+        <div>
+          <h2>修改密码</h2>
+          <p>需要先验证当前密码。</p>
+        </div>
+        <button id="change-password-close" class="icon-btn" type="button" aria-label="关闭修改密码"><span data-qm-icon="x"></span></button>
+      </header>
+      <form id="change-password-form" class="auth-form">
+        <input id="change-password-current" type="password" autocomplete="current-password" placeholder="当前密码" required />
+        <input id="change-password-new" type="password" autocomplete="new-password" placeholder="新密码（至少 8 位）" required />
+        <input id="change-password-confirm" type="password" autocomplete="new-password" placeholder="再次输入新密码" required />
+        <button id="change-password-submit" class="ghost-btn primary" type="submit">保存新密码</button>
+      </form>
+    </div>
+  </div>
+
   <div id="submit-link-modal" class="modal hidden">
     <div class="modal-box submit-link-box">
       <header>
         <div>
           <h2>提交链接</h2>
-          <p>进入读者提交源，支持点赞、点踩、点评和 AI 处理。</p>
+          <p>进入读者提交源，支持点赞、点评和 AI 处理。</p>
         </div>
-        <button id="submit-link-close" class="icon-btn">×</button>
+        <button id="submit-link-close" class="icon-btn" aria-label="关闭提交链接"><span data-qm-icon="x"></span></button>
       </header>
       <form id="submit-link-form" class="submit-link-form">
         <label>
@@ -549,7 +591,38 @@
   <div id="article-link-menu" class="article-link-menu hidden" role="menu" aria-label="链接操作">
     <div id="article-link-menu-url" class="article-link-menu-url"></div>
     <button id="article-link-open" type="button" role="menuitem">打开网页</button>
-    <button id="article-link-submit" type="button" role="menuitem">收录到网站</button>
+    <button id="article-link-submit" type="button" role="menuitem">收录到本站</button>
+  </div>
+
+  <div id="agent-prompt-modal" class="modal hidden">
+    <div class="modal-box agent-prompt-box">
+      <header>
+        <div>
+          <h2>常用提示词</h2>
+          <p>保存在当前浏览器。</p>
+        </div>
+        <button id="agent-prompt-close" class="icon-btn" type="button" title="关闭常用提示词" aria-label="关闭常用提示词"><span data-qm-icon="x"></span></button>
+      </header>
+      <form id="agent-prompt-form" class="agent-prompt-form">
+        <input id="agent-prompt-id" type="hidden" />
+        <label>
+          <span>名称</span>
+          <input id="agent-prompt-label" type="text" maxlength="24" placeholder="总结要点" required />
+        </label>
+        <label>
+          <span>提示词</span>
+          <textarea id="agent-prompt-content" rows="4" maxlength="2400" placeholder="写给 AI 的完整提示词" required></textarea>
+        </label>
+        <div class="agent-prompt-form-actions">
+          <button id="agent-prompt-new" class="ghost-btn" type="button">新建</button>
+          <button id="agent-prompt-save" class="ghost-btn primary" type="submit">添加</button>
+        </div>
+      </form>
+      <div class="agent-prompt-library-head">
+        <input id="agent-prompt-search" type="search" placeholder="搜索提示词" />
+      </div>
+      <div id="agent-prompt-list" class="agent-prompt-library-list"></div>
+    </div>
   </div>
 
   <div id="ai-config-modal" class="modal hidden">
@@ -559,7 +632,7 @@
           <h2>AI 模型配置</h2>
           <p>API Key 只保存在当前浏览器，用于你的翻译和文章对话调用。</p>
         </div>
-        <button class="icon-btn" id="ai-config-close">✕</button>
+        <button class="icon-btn" id="ai-config-close" aria-label="关闭 AI 模型配置"><span data-qm-icon="x"></span></button>
       </header>
       <div id="ai-config-modal-mount">
       <div class="ai-config-content">
@@ -612,7 +685,7 @@
             </label>
             <label>
               <span>模型</span>
-              <input id="ai-model" type="text" placeholder="deepseek-chat" required />
+              <input id="ai-model" type="text" placeholder="deepseek-v4-flash" required />
             </label>
             <div id="ai-quick-models" class="ai-quick-models"></div>
             <div class="ai-form-grid three">
@@ -648,7 +721,7 @@
 
   <div id="confirm-modal" class="confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
     <div class="confirm-card">
-      <div class="confirm-icon" id="confirm-icon">!</div>
+      <div class="confirm-icon" id="confirm-icon"><span data-qm-icon="circle-alert"></span></div>
       <div class="confirm-copy">
         <h2 id="confirm-title"></h2>
         <p id="confirm-message"></p>
@@ -663,6 +736,8 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="/purify.min.js"></script>
-  <script src="/app.js?v=124"></script>
+  <script src="/vendor/persona/index.global.js?v=1"></script>
+  <script src="/lucide-icons.js?v=2"></script>
+  <script src="/app.js?v=154"></script>
 </body>
 </html>
