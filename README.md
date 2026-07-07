@@ -7,6 +7,7 @@
 - 默认浅色阅读界面，桌面四栏：订阅源 / 文章列表 / 阅读器 / Article Agent
 - Google S2 favicon
 - 英文标题抓取后自动用 DeepSeek 翻译，列表展示中英双语
+- Hugging Face Papers 按论文源处理：原文页展示论文元信息、摘要和论文/PDF链接，中文改写入口切换为乔木风格论文解读
 - 单篇文章详情页支持原文 / 中文翻译 / 乔木风格重写三个 Tab，翻译和重写内容复用缓存，并支持读者“有用”反馈
 - 登录用户重新生成正文翻译或乔木风格重写时，会保留自己的公开贡献快照和稳定深链；同一篇文章的全局缓存被更新，也不会抹掉前一个用户的个人资产记录
 - 左侧提供独立的浏览记录视图；未登录用户使用浏览器本地记录，登录用户按账号记录最近打开过的文章，和收藏、已读状态互相独立
@@ -20,7 +21,7 @@
 - GEO 入口：`/llms.txt` 汇总站点定位、公开目录、RSS、sitemap 和最近公开资产，`robots.txt` 显式允许搜索类 AI crawler 并暴露 sitemap / llms 入口
 - 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条翻译 / 重写 / 点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
 - 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
-- 管理员登录后管理信息源和手动刷新；每天北京时间 08:00 自动刷新
+- 管理员登录后管理信息源和手动刷新；每天北京时间 08:00 自动全量刷新，并按信息源类型做轻量增量检查
 
 ## 快速开始
 
@@ -29,7 +30,7 @@ npm install
 npm start          # 默认监听 0.0.0.0:8080，可用 HOST=127.0.0.1 PORT=3000 npm start 覆盖
 ```
 
-启动后访问 `http://localhost:8080`。首次启动会按 `STARTUP_REFRESH_DELAY_MS` 配置决定是否后台抓取全部启用的源；之后结果缓存在 `data/cache.json`，重启即时加载，并每天北京时间 08:00 通过独立 worker 自动刷新。
+启动后访问 `http://localhost:8080`。首次启动会按 `STARTUP_REFRESH_DELAY_MS` 配置决定是否后台抓取全部启用的源；之后结果缓存在 `data/cache.json`，重启即时加载。生产默认每天北京时间 08:00 通过独立 worker 自动全量刷新，同时每隔几分钟检查一个过期源：资讯源默认 30 分钟、文章源默认 2 小时、播客源默认 6 小时。
 
 ## 账号与权限
 
@@ -66,8 +67,14 @@ npm start
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | 空 | DeepSeek API key |
-| `DEEPSEEK_MODEL` | `deepseek-chat` | 服务端标题自动翻译模型 |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 服务端标题自动翻译和默认中文改写模型 |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` | DeepSeek OpenAI-compatible API 地址 |
+| `FRESHNESS_SWEEP_INTERVAL_MS` | `300000` | 轻量增量检查轮询间隔；每次选择一个超过刷新间隔的启用源 |
+| `FRESHNESS_STARTUP_DELAY_MS` | `120000` | 服务启动多久后开始第一次轻量增量检查 |
+| `NEWS_REFRESH_INTERVAL_MS` | `1800000` | `news` 分类信息源的目标检查间隔 |
+| `ARTICLE_REFRESH_INTERVAL_MS` | `7200000` | `article` 分类信息源的目标检查间隔 |
+| `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | `podcast` 分类信息源的目标检查间隔 |
+| `SOURCE_INTERACTION_REFRESH_COOLDOWN_MS` | `300000` | 打开文章或切换频道触发后台源检查的同源冷却时间 |
 | `ADMIN_EMAIL` | 空 | 管理员登录邮箱 |
 | `ADMIN_PASSWORD` | 空 | 管理员登录密码，重启时同步到管理员账号 |
 | `ADMIN_NAME` | `向阳乔木` | 管理员公开显示名 |
@@ -172,7 +179,7 @@ docker-compose.yml   # 可选 Docker 部署，默认绑定 127.0.0.1:3088
 | POST | `/api/refresh` | 管理员刷新；body `{}` 刷新全部，`{"sourceId":"xx"}` 刷新单个 |
 | POST | `/api/sources/:id/toggle` | 管理员启用/禁用某个源（持久化到 data/state.json） |
 
-刷新、标题补翻译和自动重写由 `scripts/refresh-worker.js` 子进程执行，主 Web 进程只负责启动 worker、接收进度并在完成后重新载入缓存，因此手动刷新或每天 08:00 定时刷新不会阻塞阅读页/API 响应。需要在命令行手动跑全量刷新时可用：
+刷新、标题补翻译和自动重写由 `scripts/refresh-worker.js` 子进程执行。worker 抓取完成后会先通知主 Web 进程重新载入文章缓存，让新 RSS 条目先可见；标题补翻译和自动重写随后继续后台执行，不阻塞阅读页/API 响应。需要在命令行手动跑全量刷新时可用：
 
 ```bash
 npm run refresh:worker

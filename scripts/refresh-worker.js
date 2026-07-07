@@ -18,6 +18,9 @@ async function run(job = {}) {
       onProgress(done, total, sourceId) {
         send({ type: 'progress', done, total, sourceId });
       },
+      onFetchDone(refresh) {
+        send({ type: 'fetchDone', refresh, finishedAt: Date.now() });
+      },
       onAutoRewriteStart(sourceIds) {
         send({ type: 'autoRewriteStart', sourceIds, startedAt: Date.now() });
       },
