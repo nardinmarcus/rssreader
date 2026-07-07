@@ -17,6 +17,8 @@ const STARTUP_REFRESH_DELAY_MS = parseInt(process.env.STARTUP_REFRESH_DELAY_MS |
 const SOURCE_INTERACTION_REFRESH_COOLDOWN_MS = parseInt(process.env.SOURCE_INTERACTION_REFRESH_COOLDOWN_MS || `${5 * MINUTE_MS}`, 10);
 const FRESHNESS_SWEEP_INTERVAL_MS = parseInt(process.env.FRESHNESS_SWEEP_INTERVAL_MS || `${5 * MINUTE_MS}`, 10);
 const FRESHNESS_STARTUP_DELAY_MS = parseInt(process.env.FRESHNESS_STARTUP_DELAY_MS || `${2 * MINUTE_MS}`, 10);
+const FRESHNESS_SWEEP_BATCH_SIZE = parseInt(process.env.FRESHNESS_SWEEP_BATCH_SIZE || '3', 10);
+const FRESHNESS_SWEEP_MAX_COST = parseInt(process.env.FRESHNESS_SWEEP_MAX_COST || '6', 10);
 const NEWS_REFRESH_INTERVAL_MS = parseInt(process.env.NEWS_REFRESH_INTERVAL_MS || `${30 * MINUTE_MS}`, 10);
 const ARTICLE_REFRESH_INTERVAL_MS = parseInt(process.env.ARTICLE_REFRESH_INTERVAL_MS || `${2 * HOUR_MS}`, 10);
 const PODCAST_REFRESH_INTERVAL_MS = parseInt(process.env.PODCAST_REFRESH_INTERVAL_MS || `${6 * HOUR_MS}`, 10);
@@ -76,6 +78,10 @@ let refreshProgress = { done: 0, total: 0 };
 let refreshWorker = null;
 let refreshJob = null;
 let refreshLast = null;
+let aiWorker = null;
+let aiJob = null;
+let aiLast = null;
+const aiQueuedSourceIds = new Set();
 let autoRewriteRunning = false;
 let autoRewriteLast = null;
 const sourceInteractionRefreshAt = new Map();
@@ -2043,15 +2049,15 @@ function normalizeBackgroundJob(job = {}) {
   const kind = String(job.kind || 'refresh').trim();
   const sourceId = String(job.sourceId || '').trim();
   const reason = String(job.reason || '').trim();
-  const defaultSourceIds = defaultAutoRewriteSourceIds();
   const sourceIds = Array.isArray(job.sourceIds)
     ? job.sourceIds.map(id => String(id || '').trim()).filter(Boolean)
-    : defaultSourceIds;
+    : [];
   return {
     kind,
     sourceId,
     sourceIds,
     reason,
+    fetchOnly: Boolean(job.fetchOnly),
     requestedAt: Date.now(),
   };
 }
@@ -2064,11 +2070,33 @@ function defaultAutoRewriteSourceIds() {
     .filter(Boolean);
 }
 
+function defaultRefreshSourceIds() {
+  return fetcher.getSourcesMeta()
+    .filter(source => {
+      const src = fetcher.getSourceById(source.id);
+      return source && source.enabled && src && !src.manual;
+    })
+    .map(source => source.id)
+    .filter(Boolean);
+}
+
 function backgroundJobState() {
   return {
-    running: Boolean(refreshWorker),
-    job: refreshJob,
+    running: Boolean(refreshWorker || aiWorker),
+    job: refreshJob || aiJob,
     last: refreshLast,
+    fetch: {
+      running: Boolean(refreshWorker),
+      job: refreshJob,
+      last: refreshLast,
+      progress: refreshProgress,
+    },
+    ai: {
+      running: Boolean(aiWorker),
+      job: aiJob,
+      last: aiLast,
+      queuedSourceIds: Array.from(aiQueuedSourceIds),
+    },
   };
 }
 
@@ -2080,35 +2108,87 @@ function reloadFetcherAfterWorker() {
   }
 }
 
-function finishBackgroundJob({ result = null, error = null, code = 0, signal = '' } = {}) {
+function autoRewriteSourceIdsFromRefresh(refresh, job = {}) {
+  if (!refresh || typeof refresh !== 'object') return [];
+  if (!Number(refresh.changedEntryCount || 0)) return [];
+  if (Array.isArray(refresh.changedSourceIds) && refresh.changedSourceIds.length) return refresh.changedSourceIds;
+  if (refresh.sourceId) return [refresh.sourceId];
+  if (Array.isArray(refresh.sourceIds) && refresh.sourceIds.length) return refresh.sourceIds;
+  if (job && job.sourceId) return [job.sourceId];
+  if (job && Array.isArray(job.sourceIds) && job.sourceIds.length) return job.sourceIds;
+  return [];
+}
+
+function queueAutoRewriteForRefresh(refresh, job = {}) {
+  const sourceIds = autoRewriteSourceIdsFromRefresh(refresh, job);
+  if (!sourceIds.length) return { started: false, skipped: 'no changed sources' };
+  return startAutoRewriteJob({
+    kind: 'auto-rewrite',
+    sourceIds,
+    reason: `after-${job.reason || 'refresh'}`,
+  });
+}
+
+function finishFetchJob({ result = null, error = null, code = 0, signal = '' } = {}) {
   const finishedAt = Date.now();
-  refreshLast = {
+  const finalLast = {
     ...(result || {}),
     job: refreshJob,
     finishedAt,
     error: error ? String(error.message || error).slice(0, 300) : (code ? `worker exited with code ${code}${signal ? ` (${signal})` : ''}` : ''),
   };
+  if (refreshLast && refreshLast.fetchedAt && !finalLast.error) {
+    refreshLast = {
+      ...refreshLast,
+      ...finalLast,
+      refresh: finalLast.refresh || refreshLast.refresh,
+      postProcessingQueued: refreshLast.postProcessingQueued,
+    };
+  } else {
+    refreshLast = finalLast;
+  }
   if (refreshing && refreshProgress.total && refreshProgress.done < refreshProgress.total && !refreshLast.error) {
     refreshProgress.done = refreshProgress.total;
   }
   if (refreshing) refreshing = false;
-  if (autoRewriteRunning) {
-    autoRewriteRunning = false;
-    if (!autoRewriteLast || autoRewriteLast.running) {
-      autoRewriteLast = {
-        ...(autoRewriteLast || {}),
-        running: false,
-        finishedAt,
-        error: refreshLast.error || '',
-      };
-    }
-  }
   refreshWorker = null;
   refreshJob = null;
   reloadFetcherAfterWorker();
 }
 
-function startBackgroundJob(job = {}) {
+function finishAiJob({ result = null, error = null, code = 0, signal = '' } = {}) {
+  const finishedAt = Date.now();
+  aiLast = {
+    ...(result || {}),
+    job: aiJob,
+    finishedAt,
+    error: error ? String(error.message || error).slice(0, 300) : (code ? `AI worker exited with code ${code}${signal ? ` (${signal})` : ''}` : ''),
+  };
+  autoRewriteRunning = false;
+  autoRewriteLast = {
+    ...(result && result.autoRewrite || autoRewriteLast || {}),
+    translated: result && result.translated || 0,
+    sourceIds: aiJob && aiJob.sourceIds || [],
+    startedAt: autoRewriteLast && autoRewriteLast.startedAt || aiJob && aiJob.startedAt || finishedAt,
+    finishedAt,
+    running: false,
+    error: aiLast.error || '',
+  };
+  aiWorker = null;
+  aiJob = null;
+  reloadFetcherAfterWorker();
+  if (aiQueuedSourceIds.size) {
+    const queued = Array.from(aiQueuedSourceIds);
+    aiQueuedSourceIds.clear();
+    setTimeout(() => startAutoRewriteJob({
+      kind: 'auto-rewrite',
+      sourceIds: queued,
+      reason: 'queued',
+    }), 0);
+  }
+}
+
+function startFetchJob(job = {}) {
   if (refreshWorker) {
     return {
       started: false,
@@ -2119,18 +2199,14 @@ function startBackgroundJob(job = {}) {
     };
   }
 
-  const normalized = normalizeBackgroundJob(job);
+  const normalized = { ...normalizeBackgroundJob(job), kind: 'refresh', fetchOnly: true };
   const startedAt = Date.now();
   refreshJob = { ...normalized, startedAt };
   refreshLast = null;
-  if (normalized.kind === 'refresh') {
-    refreshing = true;
-    refreshProgress = normalized.sourceId ? { done: 0, total: 1, sourceId: normalized.sourceId } : { done: 0, total: 0 };
-  }
-  if (normalized.kind === 'auto-rewrite') {
-    autoRewriteRunning = true;
-    autoRewriteLast = { sourceIds: normalized.sourceIds, startedAt, finishedAt: 0, running: true };
-  }
+  refreshing = true;
+  refreshProgress = normalized.sourceId
+    ? { done: 0, total: 1, sourceId: normalized.sourceId }
+    : { done: 0, total: normalized.sourceIds.length || 0, sourceId: '' };
 
   const worker = fork(REFRESH_WORKER_PATH, [], {
     cwd: __dirname,
@@ -2175,30 +2251,12 @@ function startBackgroundJob(job = {}) {
         refresh: message.refresh || null,
         job: refreshJob,
         fetchedAt: message.finishedAt || Date.now(),
-        postProcessing: true,
+        postProcessing: false,
+        postProcessingQueued: false,
         error: '',
       };
-      return;
-    }
-    if (message.type === 'autoRewriteStart') {
-      autoRewriteRunning = true;
-      autoRewriteLast = {
-        sourceIds: message.sourceIds || [],
-        startedAt: message.startedAt || Date.now(),
-        finishedAt: 0,
-        running: true,
-      };
-      return;
-    }
-    if (message.type === 'autoRewriteDone') {
-      autoRewriteRunning = false;
-      autoRewriteLast = {
-        ...(message.autoRewrite || {}),
-        sourceIds: (autoRewriteLast && autoRewriteLast.sourceIds) || [],
-        startedAt: (autoRewriteLast && autoRewriteLast.startedAt) || startedAt,
-        finishedAt: message.finishedAt || Date.now(),
-        running: false,
-      };
+      const queued = queueAutoRewriteForRefresh(message.refresh, refreshJob);
+      refreshLast.postProcessingQueued = Boolean(queued.started || queued.running);
       return;
     }
     if (message.type === 'done') {
@@ -2215,7 +2273,7 @@ function startBackgroundJob(job = {}) {
   worker.on('exit', (code, signal) => {
     const failed = workerError || code;
     if (failed) console.warn('Refresh worker exited with error:', workerError && workerError.message ? workerError.message : code);
-    finishBackgroundJob({ result: workerResult, error: workerError, code, signal });
+    finishFetchJob({ result: workerResult, error: workerError, code, signal });
   });
   worker.send({ type: 'run', job: normalized });
 
@@ -2228,10 +2286,107 @@ function startBackgroundJob(job = {}) {
   };
 }
 
+function startAutoRewriteJob(job = {}) {
+  const normalized = { ...normalizeBackgroundJob(job), kind: 'auto-rewrite' };
+  const sourceIds = normalized.sourceIds.length ? normalized.sourceIds : defaultAutoRewriteSourceIds();
+  const uniqueSourceIds = [...new Set(sourceIds)];
+  if (!uniqueSourceIds.length) return { started: false, skipped: 'no sources configured' };
+  if (aiWorker) {
+    for (const id of uniqueSourceIds) aiQueuedSourceIds.add(id);
+    return {
+      started: false,
+      running: true,
+      queuedSourceIds: Array.from(aiQueuedSourceIds),
+      job: aiJob,
+      autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
+    };
+  }
+
+  const startedAt = Date.now();
+  aiJob = { ...normalized, sourceIds: uniqueSourceIds, startedAt };
+  aiLast = null;
+  autoRewriteRunning = true;
+  autoRewriteLast = { sourceIds: uniqueSourceIds, startedAt, finishedAt: 0, running: true };
+
+  const worker = fork(REFRESH_WORKER_PATH, [], {
+    cwd: __dirname,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  aiWorker = worker;
+  let workerResult = null;
+  let workerError = null;
+
+  worker.stdout.on('data', chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      console.log(`[ai-worker] ${line}`);
+    }
+  });
+  worker.stderr.on('data', chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      console.warn(`[ai-worker] ${line}`);
+    }
+  });
+  worker.on('message', message => {
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'autoRewriteStart') {
+      autoRewriteRunning = true;
+      autoRewriteLast = {
+        sourceIds: message.sourceIds || uniqueSourceIds,
+        startedAt: message.startedAt || startedAt,
+        finishedAt: 0,
+        running: true,
+      };
+      return;
+    }
+    if (message.type === 'autoRewriteDone') {
+      autoRewriteRunning = false;
+      autoRewriteLast = {
+        ...(message.autoRewrite || {}),
+        sourceIds: (autoRewriteLast && autoRewriteLast.sourceIds) || uniqueSourceIds,
+        startedAt: (autoRewriteLast && autoRewriteLast.startedAt) || startedAt,
+        finishedAt: message.finishedAt || Date.now(),
+        running: false,
+      };
+      return;
+    }
+    if (message.type === 'done') {
+      workerResult = message.result || {};
+      return;
+    }
+    if (message.type === 'error') {
+      workerError = message.error || { message: 'AI worker failed' };
+    }
+  });
+  worker.on('error', error => {
+    workerError = error;
+  });
+  worker.on('exit', (code, signal) => {
+    const failed = workerError || code;
+    if (failed) console.warn('AI worker exited with error:', workerError && workerError.message ? workerError.message : code);
+    finishAiJob({ result: workerResult, error: workerError, code, signal });
+  });
+  worker.send({ type: 'run', job: { ...normalized, sourceIds: uniqueSourceIds } });
+
+  return {
+    started: true,
+    running: true,
+    job: aiJob,
+    autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
+  };
+}
+
+function startBackgroundJob(job = {}) {
+  const normalized = normalizeBackgroundJob(job);
+  if (normalized.kind === 'auto-rewrite') return startAutoRewriteJob(normalized);
+  return startFetchJob(normalized);
+}
+
 function doRefreshAll() {
   return startBackgroundJob({
     kind: 'refresh',
-    sourceIds: defaultAutoRewriteSourceIds(),
+    sourceIds: defaultRefreshSourceIds(),
+    reason: 'full-refresh',
   });
 }
 
@@ -2265,21 +2420,41 @@ function triggerSourceInteractionRefresh(sourceId, reason = 'interaction') {
 
 function sourceRefreshInterval(source) {
   if (!source || source.manual) return 0;
+  if (Number.isFinite(source.refreshIntervalMs) && source.refreshIntervalMs > 0) {
+    return Math.max(60 * 1000, source.refreshIntervalMs);
+  }
   if (source.category === 'news') return Math.max(5 * MINUTE_MS, NEWS_REFRESH_INTERVAL_MS || 0);
   if (source.category === 'podcast') return Math.max(30 * MINUTE_MS, PODCAST_REFRESH_INTERVAL_MS || 0);
   return Math.max(15 * MINUTE_MS, ARTICLE_REFRESH_INTERVAL_MS || 0);
 }
 
+function sourceRefreshPriority(source) {
+  if (source && Number.isFinite(source.refreshPriority) && source.refreshPriority > 0) return source.refreshPriority;
+  if (source && source.category === 'news') return 2;
+  if (source && source.category === 'podcast') return 0.8;
+  return 1.2;
+}
+
+function sourceRefreshCost(source) {
+  if (source && Number.isFinite(source.refreshCost) && source.refreshCost > 0) return source.refreshCost;
+  if (source && source.id === 'hackernews') return 3;
+  return 1;
+}
+
 function freshnessCandidates() {
   const now = Date.now();
-  const categoryRank = { news: 0, article: 1, podcast: 2 };
   return fetcher.getSourcesMeta()
     .map(meta => {
       const source = fetcher.getSourceById(meta.id);
       const interval = sourceRefreshInterval(source);
       const fetchedAt = Number(meta.fetchedAt) || 0;
       const age = fetchedAt ? now - fetchedAt : Infinity;
-      return { meta, source, interval, age };
+      const overdueRatio = interval ? age / interval : 0;
+      const priority = sourceRefreshPriority(source);
+      const cost = sourceRefreshCost(source);
+      const starvationBoost = overdueRatio >= 2 ? Math.min(4, overdueRatio - 1) : 0;
+      const score = (overdueRatio * priority) + starvationBoost - (cost * 0.15);
+      return { meta, source, interval, age, overdueRatio, priority, cost, score };
     })
     .filter(item => (
       item.source
@@ -2289,19 +2464,29 @@ function freshnessCandidates() {
       && item.age >= item.interval
     ))
     .sort((a, b) => (
-      (categoryRank[a.source.category] ?? 9) - (categoryRank[b.source.category] ?? 9)
-      || (b.age / b.interval) - (a.age / a.interval)
+      b.score - a.score
+      || b.overdueRatio - a.overdueRatio
+      || b.age - a.age
     ));
 }
 
 function triggerFreshnessRefresh() {
   if (refreshWorker) return { started: false, running: true, skipped: 'refresh already running', job: refreshJob };
-  const next = freshnessCandidates()[0];
-  if (!next) return { started: false, skipped: 'no stale sources' };
+  const candidates = freshnessCandidates();
+  const batchSize = Number.isFinite(FRESHNESS_SWEEP_BATCH_SIZE) && FRESHNESS_SWEEP_BATCH_SIZE > 0 ? FRESHNESS_SWEEP_BATCH_SIZE : 1;
+  const maxCost = Number.isFinite(FRESHNESS_SWEEP_MAX_COST) && FRESHNESS_SWEEP_MAX_COST > 0 ? FRESHNESS_SWEEP_MAX_COST : Infinity;
+  const selected = [];
+  let cost = 0;
+  for (const item of candidates) {
+    if (selected.length >= batchSize) break;
+    if (selected.length && cost + item.cost > maxCost) continue;
+    selected.push(item);
+    cost += item.cost;
+  }
+  if (!selected.length) return { started: false, skipped: 'no stale sources' };
   return startBackgroundJob({
     kind: 'refresh',
-    sourceId: next.source.id,
-    sourceIds: [next.source.id],
+    sourceIds: selected.map(item => item.source.id),
     reason: 'freshness-sweep',
   });
 }
