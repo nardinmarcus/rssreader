@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "icons:generate": "node scripts/generate-lucide-icons.js",
     "refresh:worker": "node scripts/refresh-worker.js --kind=refresh"
   },
   "dependencies": {
@@ -13,5 +14,8 @@
     "compression": "^1.8.1",
     "express": "^4.19.2",
     "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {
+    "lucide": "^1.22.0"
   }
 }
