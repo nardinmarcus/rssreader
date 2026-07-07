@@ -6,9 +6,11 @@
 
 QMReader is a self-hosted RSS reading workbench that turns feeds into bilingual titles, rewrites, comments, and reusable public reading assets.
 
-[在线体验](https://rss.qiaomu.ai) · [快速开始](#快速开始) · [部署](#部署) · [API](#api) · [License](#license)
+[在线体验](https://rss.qiaomu.ai) · [产品巡游](#产品巡游) · [快速开始](#快速开始) · [部署](#部署) · [API](#api) · [License](#license)
 
-**已验证:** 2026-07-07，`node --check server.js lib/background-jobs.js lib/sources.js scripts/refresh-worker.js public/app.js`，公开站点 `https://rss.qiaomu.ai/api/sources` 返回 61 个信息源。
+![QMReader 正式站首页：信息源、文章列表、阅读器和 AI 伴读工作区](docs/assets/qmreader-home.png)
+
+**已验证:** 2026-07-07，`node --check server.js lib/background-jobs.js lib/sources.js scripts/refresh-worker.js public/app.js`，公开站点 `https://rss.qiaomu.ai/api/sources` 返回 61 个信息源；README 截图来自正式站点 `rss.qiaomu.ai` 当前 UI。
 
 ## 这是什么
 
@@ -22,16 +24,58 @@ QMReader 是向阳乔木自用的 RSS 阅读器。它不是一个通用新闻门
 
 生产站点运行在 [rss.qiaomu.ai](https://rss.qiaomu.ai)，代码可以自托管。站点服务端需要自己的 DeepSeek 或 OpenAI-compatible API key；示例配置只包含空值，不包含任何真实密钥。
 
+## 为什么值得用
+
+常见 RSS 阅读器只解决“订阅和打开”。QMReader 解决的是另一个问题：每天技术内容太多，读完之后很难留下可复用资产。
+
+它把阅读过程拆成几个可沉淀的动作：
+
+- **先快后慢:** 新 RSS 条目先进入列表，AI 翻译和改写慢慢补齐。
+- **先读后加工:** 原文、中文翻译、乔木风格改写并排存在同一篇文章下。
+- **先个人后公开:** 登录用户的翻译、改写、点评、对话可以变成公开资产，后续被搜索、RSS、贡献者页复用。
+- **先站点后自托管:** 你可以直接看正式站，也可以拿代码部署自己的阅读工作台。
+
+## 产品巡游
+
+### 首页和文章列表
+
+左侧是信息源与阅读视图，中央是可搜索、可按最新/热门/未读切换的文章列表，右侧保留当前文章上下文的 AI 伴读区。未选择文章时，界面保持轻量，不把 AI 对话或调试状态推到阅读前面。
+
+![QMReader 信息源与文章列表](docs/assets/qmreader-article-list.png)
+
+### 阅读器、中文改写和 AI 伴读
+
+文章详情页把原文、中文改写、中文翻译、划线点评、人工点评和 AI 伴读放在同一条阅读链路中。下面这张图来自正式站点的真实文章深链，左边仍保留列表上下文，中间展示中文改写，右边是 Article Agent。
+
+![QMReader 文章详情、中文改写和 AI 伴读](docs/assets/qmreader-reader-rewrite.png)
+
+### 公开资产
+
+QMReader 会把可复用内容做成公开资产，而不是只留在个人会话里：
+
+- 翻译和改写有稳定深链。
+- 人工点评、划线点评、文章对话可被单条引用。
+- `/assets`、`/assets.xml`、`/assets/rewrite.xml` 等目录和 RSS 让后续读者订阅资产流。
+- `/contributors/:id` 和 `/contributors/:id.xml` 展示某个贡献者沉淀过的公开内容，不暴露邮箱。
+
+### 管理和刷新
+
+后台刷新分成 fetch worker 和 AI worker。fetch worker 只负责把最新 RSS 先抓回来并落盘，AI worker 再按有新条目的源补标题翻译和自动改写。这样即使 DeepSeek 或其他模型变慢，读者也可以先看到新文章。
+
 ## 核心能力
 
 | 能力 | 用户得到什么 |
 |---|---|
 | 多源 RSS 抓取 | 聚合 RSSHub、直接 RSS、sitemap、Hacker News、Product Hunt、GitHub Trending、Hugging Face Papers 等技术源 |
-| 快速刷新 | RSS fetch 先落盘并通知 Web 进程，标题翻译和自动改写后置到 AI worker |
-| 双语阅读 | 英文标题自动补中文，正文可生成中译版 |
+| 首页工作台 | 源列表、文章列表、阅读器、Article Agent 四区同屏，适合连续阅读和快速切换上下文 |
+| 文章列表 | 支持最新、热门、未读、搜索、源筛选、收藏、历史和贡献榜视图 |
+| 双语阅读 | 英文标题自动补中文，正文可生成中文译文，并保留原文上下文 |
 | 乔木风格改写 | 对文章、论文、Hacker News 讨论、Product Hunt 官网材料做中文改写 |
-| 公开阅读资产 | 翻译、改写、点评、对话都有稳定深链、贡献者页和 RSS |
-| 登录资产管理 | 登录用户可找回自己的翻译、改写、点评、对话和公开资产页 |
+| Hacker News 增强 | 使用 HNRSS 组合高价值 HN feed，并把讨论摘录和作者回复纳入阅读材料 |
+| 公开阅读资产 | 翻译、改写、点评、划线、对话都有稳定深链、贡献者页和 RSS |
+| 贡献者体系 | 公开贡献者页按资产、改写、点评、对话和有用反馈聚合，不暴露邮箱 |
+| AI 伴读 | 当前文章右侧可做总结要点、结构拆解、事实清单、待验证点等上下文对话 |
+| 快速刷新 | RSS fetch 先落盘并通知 Web 进程，标题翻译和自动改写后置到 AI worker |
 | 安全的用户 AI 配置 | 用户 API key 存在浏览器 localStorage，不写入服务器数据库 |
 | 自托管部署 | 支持 Node + systemd，也支持 Docker Compose；SQLite 存储运行数据 |
 
@@ -272,6 +316,8 @@ MIT License. See [LICENSE](LICENSE).
 
 QMReader is a self-hosted RSS reading workbench by Qiaomu. It combines feed aggregation, bilingual title translation, Chinese article rewriting, public comments, and article-context AI conversations into one quiet reader interface.
 
+![QMReader live homepage: sources, article list, reader, and article agent](docs/assets/qmreader-home.png)
+
 ## What You Get
 
 - RSSHub, direct RSS, sitemap, Hacker News, Product Hunt, GitHub Trending, Hugging Face Papers, and other technical sources.
@@ -279,6 +325,37 @@ QMReader is a self-hosted RSS reading workbench by Qiaomu. It combines feed aggr
 - Public reading assets: translations, rewrites, comments, chats, contributor pages, RSS feeds, and stable deep links.
 - A static frontend served by Express, with SQLite for runtime data.
 - Server-side DeepSeek/OpenAI-compatible support, plus user-provided browser-side AI profiles.
+
+## Product Tour
+
+### Source And Article List
+
+The default workspace keeps source navigation, search, latest/hot/unread list modes, the reader pane, and the article agent visible at the same time.
+
+![QMReader source and article list](docs/assets/qmreader-article-list.png)
+
+### Reader, Chinese Rewrite, And Article Agent
+
+The reader keeps the original article, Chinese rewrite, translation, annotations, comments, and article-context AI chat under the same entry.
+
+![QMReader reader with Chinese rewrite and article agent](docs/assets/qmreader-reader-rewrite.png)
+
+### Public Assets
+
+Translations, rewrites, comments, annotations, and article chats can become public reading assets with stable links, contributor pages, sitemap entries, and RSS feeds.
+
+## Feature Map
+
+| Feature | Result |
+|---|---|
+| Multi-source feed fetching | Aggregate RSSHub routes, direct feeds, sitemap pages, Hacker News, Product Hunt, GitHub Trending, and more |
+| Reader workbench | Keep source list, article list, reader, and Article Agent in one screen |
+| Bilingual reading | Translate English titles and generate Chinese article translations |
+| Qiaomu-style rewrites | Rewrite articles, papers, HN discussion material, and Product Hunt product context into readable Chinese |
+| Public reading assets | Turn translations, rewrites, comments, annotations, and chats into stable public links and RSS |
+| Split refresh pipeline | Show new RSS entries first, then run AI title translation/rewrite in a separate worker |
+| User AI profiles | Store user-provided API keys in browser localStorage instead of the server database |
+| Self-hosting | Run with Node/systemd or Docker Compose; store runtime data in SQLite |
 
 ## Try It
 
