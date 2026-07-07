@@ -1,200 +1,192 @@
 # QMReader
 
-中性、克制的在线 RSS 阅读器，整合 RSSHub 与直接 RSS 源，并沉淀公开的双语翻译、人工点评和当前文章上下文 AI 对话资产。
+**中文** | [English](#english)
 
-## 功能
+把 RSS 阅读、双语翻译、乔木风格改写、人工点评和文章上下文 AI 对话放在一个自托管阅读工作台里。
 
-- 默认浅色阅读界面，桌面四栏：订阅源 / 文章列表 / 阅读器 / Article Agent
-- Google S2 favicon
-- 英文标题抓取后自动用 DeepSeek 翻译，列表展示中英双语
-- Hugging Face Papers 按论文源处理：原文页展示论文元信息、摘要和论文/PDF链接，中文改写入口切换为乔木风格论文解读
-- 单篇文章详情页支持原文 / 中文翻译 / 乔木风格重写三个 Tab，翻译和重写内容复用缓存，并支持读者“有用”反馈
-- 登录用户重新生成正文翻译或乔木风格重写时，会保留自己的公开贡献快照和稳定深链；同一篇文章的全局缓存被更新，也不会抹掉前一个用户的个人资产记录
-- 左侧提供独立的浏览记录视图；未登录用户使用浏览器本地记录，登录用户按账号记录最近打开过的文章，和收藏、已读状态互相独立
-- 人工点评公开保存，支持结构化点评模板、类型标签、单条点评链接、读者“有用”反馈、有用/最新排序，以及本人/管理员编辑和撤回，便于后来访问者浏览和复用
-- 当前文章上下文 AI 对话公开保存，右侧 Agent 可关闭/打开，单条对话展示时间/模型并可复制深链引用；本人和管理员可撤回单条对话
-- 账号级“我的资产”列表可找回自己沉淀过的公开翻译、乔木风格重写、点评和文章对话，支持按最新或读者“有用”反馈排序，并跳回对应文章位置；登录用户可直接复制资产内容、打开或复制自己的公开资产页，也可打开或复制个人公开资产 RSS
-- 公开贡献者页 `/contributors/:id` 可浏览某个用户沉淀过的公开翻译、乔木风格重写、点评和文章对话，不暴露邮箱；贡献者个人资产可按类型和最新/“有用”反馈排序，支持 `/contributors/:id?type=chat&sort=helpful` 这类可分享深链，弹层内可一键复制资产内容和当前视图链接，贡献者目录支持按最新、有用反馈和资产数量排序，并显示该贡献者获得的“有用”反馈汇总，提供个人公开资产 RSS：`/contributors/:id.xml`
-- 公开资产视图可按最新沉淀或读者“有用”反馈排序，侧栏公开资产仪表盘提供“有用优先”快捷入口；也可通过 `/assets`、`/assets?sort=helpful`、`/assets/comments` 等网页目录访问，支持按中译 / 重写 / 点评 / 对话筛选，也可搜索资产预览内容并复制当前资产页链接；列表会按条数统计登录用户留下的翻译/重写快照，并预览最近几条中译、重写、点评和对话或高有用条目，单条预览支持直接复制内容或深链，点击可直达具体资产
-- 公开资产提供 RSS 订阅流：`/assets.xml` 以及 `/assets/translation.xml`、`/assets/rewrite.xml`、`/assets/comments.xml`、`/assets/chat.xml`；追加 `?sort=helpful` 可订阅有用排序版本，翻译/重写按用户 AI 快照逐条进入订阅流，并带作者、模型和有用次数，点评和对话同样按单条资产进入订阅流
-- 文章和资产使用可读的 canonical URL：`/articles/:id/:slug`、`/articles/:id/:slug/translation/:assetId`、`/articles/:id/:slug/comments/:commentId`；旧 `?entry=` 深链继续兼容，但 sitemap、RSS、分享和结构化数据优先输出新 URL；无公开资产的纯 RSS 文章默认 `noindex,follow`
-- GEO 入口：`/llms.txt` 汇总站点定位、公开目录、RSS、sitemap 和最近公开资产，`robots.txt` 显式允许搜索类 AI crawler 并暴露 sitemap / llms 入口
-- 文章和公开资产深链带动态 title / description / Open Graph 元信息；单条翻译 / 重写 / 点评 / 对话链接会展示作者或模型身份，sitemap 包含单条入口，便于社交分享和搜索收录
-- 注册用户可在浏览器本地配置自己的 AI provider / API key / Base URL / 模型，不会写入服务器
-- 管理员登录后管理信息源和手动刷新；每天北京时间 08:00 自动全量刷新，并按信息源类型做轻量增量检查
+QMReader is a self-hosted RSS reading workbench that turns feeds into bilingual titles, rewrites, comments, and reusable public reading assets.
+
+[在线体验](https://rss.qiaomu.ai) · [快速开始](#快速开始) · [部署](#部署) · [API](#api) · [License](#license)
+
+**已验证:** 2026-07-07，`node --check server.js lib/background-jobs.js lib/sources.js scripts/refresh-worker.js public/app.js`，公开站点 `https://rss.qiaomu.ai/api/sources` 返回 61 个信息源。
+
+## 这是什么
+
+QMReader 是向阳乔木自用的 RSS 阅读器。它不是一个通用新闻门户，而是面向技术内容阅读、AI 辅助消化和公开知识资产沉淀的工作台：
+
+- 订阅 RSSHub、直接 RSS、sitemap 和少量定制抓取源。
+- 抓取后自动补英文标题中文翻译。
+- 支持把文章翻译、改写成乔木风格中文稿，并保存为可分享的公开资产。
+- 支持人工点评、文章上下文 AI 对话、贡献者页、公开资产目录和 RSS。
+- 刷新机制把“快速 RSS 抓取”和“慢速 AI 改写”拆开，让新条目先出现，AI 后台补齐。
+
+生产站点运行在 [rss.qiaomu.ai](https://rss.qiaomu.ai)，代码可以自托管。站点服务端需要自己的 DeepSeek 或 OpenAI-compatible API key；示例配置只包含空值，不包含任何真实密钥。
+
+## 核心能力
+
+| 能力 | 用户得到什么 |
+|---|---|
+| 多源 RSS 抓取 | 聚合 RSSHub、直接 RSS、sitemap、Hacker News、Product Hunt、GitHub Trending、Hugging Face Papers 等技术源 |
+| 快速刷新 | RSS fetch 先落盘并通知 Web 进程，标题翻译和自动改写后置到 AI worker |
+| 双语阅读 | 英文标题自动补中文，正文可生成中译版 |
+| 乔木风格改写 | 对文章、论文、Hacker News 讨论、Product Hunt 官网材料做中文改写 |
+| 公开阅读资产 | 翻译、改写、点评、对话都有稳定深链、贡献者页和 RSS |
+| 登录资产管理 | 登录用户可找回自己的翻译、改写、点评、对话和公开资产页 |
+| 安全的用户 AI 配置 | 用户 API key 存在浏览器 localStorage，不写入服务器数据库 |
+| 自托管部署 | 支持 Node + systemd，也支持 Docker Compose；SQLite 存储运行数据 |
 
 ## 快速开始
 
 ```bash
 npm install
-npm start          # 默认监听 0.0.0.0:8080，可用 HOST=127.0.0.1 PORT=3000 npm start 覆盖
-```
-
-启动后访问 `http://localhost:8080`。首次启动会按 `STARTUP_REFRESH_DELAY_MS` 配置决定是否后台抓取全部启用的源；之后结果缓存在 `data/cache.json`，重启即时加载。生产默认每天北京时间 08:00 通过独立 worker 自动全量刷新，同时每隔几分钟检查一个过期源：资讯源默认 30 分钟、文章源默认 2 小时、播客源默认 6 小时。
-
-## 账号与权限
-
-- 公开游客：浏览文章、已保存的双语翻译、乔木风格重写、人工点评和文章对话
-- 注册用户：发布人工点评、生成并保存正文双语翻译和乔木风格重写、围绕当前文章与 AI 对话
-- 管理员：手动刷新、启用/禁用信息源、触发标题补翻译
-- 管理员通过环境变量 seed；如果 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 变化，重启后会同步更新管理员密码
-- 未登录时已读、收藏和浏览记录只保存在当前浏览器；登录后已读、收藏和浏览记录按账号保存到 SQLite，不同账号互相隔离
-
-```bash
 cp .env.example .env
-# 填入 ADMIN_EMAIL / ADMIN_PASSWORD 后启动
 npm start
 ```
 
-注册只校验邮箱格式和密码长度（8 到 128 位），不做邮件验证码。
+默认监听 `http://localhost:8080`。如果只想本地监听：
 
-## AI 配置与翻译
+```bash
+HOST=127.0.0.1 PORT=3000 npm start
+```
 
-阅读器内置服务端 DeepSeek 调用，用于抓取后自动补翻译英文标题。站长密钥只在 Node 服务端读取，不会下发到浏览器。
+首次启动会按 `STARTUP_REFRESH_DELAY_MS` 决定是否触发全量刷新。运行数据写入 `data/`，包括 RSS 缓存、SQLite 数据库、截图和日志；这些文件默认被 `.gitignore` 排除。
 
-注册用户可以从左侧账号区的 `AI 设置` 或右侧 Article Agent 设置中配置自己的 AI 服务，支持多个 Profile、默认配置、服务商模板、快捷模型、获取模型列表和连接测试。配置按登录账号分区保存在浏览器 localStorage：
+## 配置
 
-- 国内大模型：DeepSeek、Kimi、智谱、阿里百炼、火山方舟
-- 国内聚合：硅基流动、AiHubMix
-- 海外大模型：OpenAI、xAI Grok、Cloudflare Workers AI
-- 海外聚合：OpenRouter、Groq、Together
-- 自定义：任意 OpenAI-compatible Chat Completions 服务
-
-生成正文双语翻译或乔木风格重写时，如果当前用户没有配置可用 Profile，后端会使用站点服务端 DeepSeek Key 生成并缓存公开资产；如果用户配置了自己的 Profile，则优先使用用户自己的 key。文章对话、测试连接和获取模型列表使用用户自己的 API key。用户的 API key 只随请求发送到本站后端代理调用，不会落库。Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址。
-
-可选配置：
+`.env.example` 只给变量名和公开默认值，不包含真实密钥。常用变量：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | 空 | DeepSeek API key |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 服务端标题自动翻译和默认中文改写模型 |
+| `DEEPSEEK_API_KEY` | 空 | 服务端 DeepSeek API key，用于标题翻译和默认改写 |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 服务端默认标题翻译和中文改写模型 |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com/v1` | DeepSeek OpenAI-compatible API 地址 |
-| `FRESHNESS_SWEEP_INTERVAL_MS` | `300000` | 轻量增量检查轮询间隔；每次选择一个超过刷新间隔的启用源 |
-| `FRESHNESS_STARTUP_DELAY_MS` | `120000` | 服务启动多久后开始第一次轻量增量检查 |
-| `NEWS_REFRESH_INTERVAL_MS` | `1800000` | `news` 分类信息源的目标检查间隔 |
-| `ARTICLE_REFRESH_INTERVAL_MS` | `7200000` | `article` 分类信息源的目标检查间隔 |
-| `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | `podcast` 分类信息源的目标检查间隔 |
-| `SOURCE_INTERACTION_REFRESH_COOLDOWN_MS` | `300000` | 打开文章或切换频道触发后台源检查的同源冷却时间 |
+| `AI_PROVIDER` | `deepseek` | 备用服务端 provider 名称 |
+| `AI_API_KEY` | 空 | 非 DeepSeek provider 的服务端 key |
+| `AI_BASE_URL` | 空 | 非 DeepSeek provider 的 OpenAI/Anthropic-compatible base URL |
+| `AI_MODEL` | 空 | 非 DeepSeek provider 的模型名 |
 | `ADMIN_EMAIL` | 空 | 管理员登录邮箱 |
-| `ADMIN_PASSWORD` | 空 | 管理员登录密码，重启时同步到管理员账号 |
+| `ADMIN_PASSWORD` | 空 | 管理员登录密码，重启时会同步更新 |
 | `ADMIN_NAME` | `向阳乔木` | 管理员公开显示名 |
 | `COOKIE_SECURE` | 空 | 设为 `1` 时强制 session cookie 使用 Secure |
-| `HOST` | `0.0.0.0` | Node 监听地址；VPS systemd 使用 `127.0.0.1`，只允许 Nginx 反代访问 |
-| `PORT` | `8080` | Node 监听端口；VPS systemd 使用 `3088` |
-| `STARTUP_REFRESH_DELAY_MS` | `30000` | 启动后延迟多少毫秒再触发首次全量刷新；设为 `-1` 可禁用，VPS systemd 默认禁用，避免恢复服务时阻塞请求 |
+| `HOST` | `0.0.0.0` | Node 监听地址 |
+| `PORT` | `8080` | Node 监听端口 |
+| `STARTUP_REFRESH_DELAY_MS` | `30000` | 启动后延迟多少毫秒触发首次全量刷新；`-1` 表示禁用 |
+| `FRESHNESS_SWEEP_INTERVAL_MS` | `300000` | 轻量增量检查轮询间隔 |
+| `FRESHNESS_STARTUP_DELAY_MS` | `120000` | 启动多久后开始第一次轻量增量检查 |
+| `FRESHNESS_SWEEP_BATCH_SIZE` | `3` | 每次 freshness sweep 最多刷新几个过期源 |
+| `FRESHNESS_SWEEP_MAX_COST` | `6` | 每次 freshness sweep 的源成本上限 |
+| `NEWS_REFRESH_INTERVAL_MS` | `1800000` | `news` 分类源默认检查间隔 |
+| `ARTICLE_REFRESH_INTERVAL_MS` | `7200000` | `article` 分类源默认检查间隔 |
+| `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | `podcast` 分类源默认检查间隔 |
+| `SOURCE_INTERACTION_REFRESH_COOLDOWN_MS` | `300000` | 打开文章或切换频道触发后台刷新时的同源冷却时间 |
+| `TITLE_TRANSLATION_LIMIT` | `80` | 单轮标题翻译上限 |
+| `AUTO_REWRITE_SOURCE_IDS` | 空 | 限定自动改写源；空值表示启用源中可改写的内容 |
+| `AUTO_REWRITE_LIMIT_PER_SOURCE` | `3` | 每个源默认自动改写条数 |
+| `AUTO_REWRITE_LIMIT_HACKERNEWS` | `10` | Hacker News 自动改写条数 |
+| `AUTO_REWRITE_MODEL` | `deepseek-v4-flash` | 自动改写模型 |
+| `UMAMI_WEBSITE_ID` | 空 | 可选 Umami 站点 ID |
+| `UMAMI_SRC` | `https://umami.qiaomu.ai/script.js` | 可选 Umami 脚本地址 |
 
-文章、翻译、乔木风格重写、点评、公开对话保存在 `data/qmreader.sqlite`。文章页展示每篇文章当前的公开翻译 / 重写缓存；登录用户重新生成全文翻译或重写时会同步保存为自己的公开贡献快照，供“我的资产”、贡献者页、公开资产目录、公开资产 RSS、贡献者 RSS 和 sitemap 读取。需要重新生成全文翻译或重写时可调用接口传 `{"force":true}`。
+## 账号与权限
 
-## 目录结构
+| 角色 | 权限 |
+|---|---|
+| 游客 | 浏览文章、公开翻译、公开改写、公开点评和公开文章对话 |
+| 注册用户 | 发布点评，生成并保存翻译/改写，围绕当前文章对话，管理自己的公开资产 |
+| 管理员 | 手动刷新、启用/禁用信息源、触发标题补翻译、管理源状态 |
 
+注册只校验邮箱格式和密码长度，不做邮件验证码。管理员账号通过环境变量 seed。
+
+## AI 与隐私边界
+
+- 服务端 key 只从 `.env` / `.env.local` / 环境变量读取，不会下发到浏览器。
+- 用户在页面里配置的 AI provider/API key 保存在浏览器 localStorage，不写入 SQLite。
+- 文章对话、模型列表和连接测试会把用户 key 随请求发送到本站后端代理调用。
+- Base URL 必须是公开 `https://` 地址，服务端会拒绝本机和内网地址，降低 SSRF 风险。
+- 运行数据在 `data/qmreader.sqlite` 和 `data/cache.json`，默认不提交到 Git。
+- 公开贡献内容会显示在资产页、贡献者页、sitemap 和 RSS；不要在公开点评或对话里写私密信息。
+
+## 刷新机制
+
+QMReader 的刷新分两段：
+
+1. **Fetch worker:** 抓 RSS/页面，写入缓存和 SQLite，并立刻通知 Web 进程重新加载。用户先看到新条目。
+2. **AI worker:** 只对有新条目的源排队做标题翻译和自动改写。AI 慢或失败时，不阻塞 RSS 阅读。
+
+不同源有不同 freshness 策略。例如 Hacker News 5 分钟高优先级，Product Hunt 15 分钟，GitHub/Hugging Face 30 分钟，播客类 12 小时。`/api/sources` 会返回 `backgroundJob.fetch` 和 `backgroundJob.ai`，便于观察两段任务状态。
+
+命令行手动刷新：
+
+```bash
+npm run refresh:worker
+node scripts/refresh-worker.js --kind=auto-rewrite --sources=hackernews
 ```
-server.js            # Express 入口：API 路由、静态托管、定时刷新调度
-lib/sources.js       # 信息源注册表（61 个源、分类、候选 feed 地址）
-lib/fetcher.js       # 抓取层：RSS 解析、多候选回退、sitemap 解析、磁盘缓存
-lib/background-jobs.js # 后台刷新、标题翻译、自动重写任务
-public/index.html    # 四栏布局骨架：源 / 列表 / 阅读器 / Article Agent
-public/styles.css    # 中性产品主题（深/浅色）
-public/app.js        # 前端逻辑：侧栏/列表/阅读面板、已读/收藏、搜索、文章对话
-public/purify.min.js # DOMPurify（本地化，正文 HTML 消毒）
-data/                # 运行时生成：cache.json、state.json、qmreader.sqlite
-ops/qmreader.service # systemd 运行模板，不依赖 Docker
-scripts/             # VPS systemd 安装脚本、独立刷新 worker
-Dockerfile           # Node 26 生产镜像
-docker-compose.yml   # 可选 Docker 部署，默认绑定 127.0.0.1:3088
-```
 
-## 添加 / 修改信息源
+## 信息源
 
-编辑 `lib/sources.js`，往 `SOURCES` 数组加一项：
+信息源在 `lib/sources.js` 里配置。示例：
 
 ```js
 {
-  id: 'my-source',                 // 唯一 id
+  id: 'my-source',
   name: '我的源',
-  category: 'article',             // article | news | podcast
-  siteUrl: 'https://example.com',  // 用于取 favicon 和跳转
+  category: 'article',
+  siteUrl: 'https://example.com',
   enabled: true,
-  limit: 10,                       // 保留最新 N 篇（上限 30）
+  limit: 10,
   feeds: [
-    'https://example.com/feed',    // 候选地址按顺序尝试
-    '{rsshub}/some/route',         // {rsshub} 会展开为多个 RSSHub 实例
-    'sitemap:https://example.com/sitemap.xml', // 无 RSS 的站点走 sitemap 解析
+    'https://example.com/feed',
+    '{rsshub}/some/route',
+    'sitemap:https://example.com/sitemap.xml',
   ],
 }
 ```
 
-三种候选地址：
+支持三类候选地址：
 
 | 写法 | 说明 |
 |---|---|
 | 普通 URL | 直接按 RSS/Atom 解析 |
-| `{rsshub}/路由` | 依次尝试 `RSSHUB_INSTANCES` 中的每个实例（rssforever / ktachibana / rsshub.app），可自行增删实例 |
-| `sitemap:URL` | 抓 sitemap.xml 取最新文章页，再抓页面 og 标签提取标题/摘要/封面（适合 beehiiv 等无公开 RSS 的站点） |
+| `{rsshub}/route` | 依次尝试内置 RSSHub 实例 |
+| `sitemap:URL` | 抓 sitemap.xml 取最新文章页，再解析页面 og 标签 |
 
 ## API
 
+常用公开接口：
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/me` | 当前登录用户 |
-| GET | `/api/me/translations` | 登录用户读取自己生成过的公开双语翻译 |
-| GET | `/api/me/rewrites` | 登录用户读取自己生成过的公开乔木风格重写 |
-| GET | `/api/me/comments` | 登录用户读取自己发布过的公开点评 |
-| GET | `/api/me/chat-messages` | 登录用户读取自己发布过的公开文章对话 |
-| GET | `/api/contributors` | 公开贡献者列表，包含有用反馈汇总，不含邮箱；支持 `?sort=helpful` / `?sort=assets` |
-| GET | `/api/contributors/:id` | 公开读取某个用户的公开翻译、重写、点评和文章对话，包含有用反馈汇总，不含邮箱 |
-| GET | `/api/me/entry-states` | 登录用户读取自己的已读、收藏和浏览记录状态 |
-| POST | `/api/me/entry-state` | 登录用户更新单篇已读、收藏和浏览记录状态；body 可传 `{"entryId":"","read":true,"starred":true,"viewed":true}` |
-| POST | `/api/me/entry-states/read` | 登录用户批量标记已读 |
-| POST | `/api/auth/register` | 注册并登录；body `{"email":"","password":"","displayName":""}` |
-| POST | `/api/auth/login` | 登录；body `{"email":"","password":""}` |
-| POST | `/api/auth/logout` | 退出登录 |
-| POST | `/api/ai/models` | 登录用户用自己的 provider/key 获取模型列表 |
-| POST | `/api/ai/test` | 登录用户用自己的 provider/key 测试 chat completion |
-| GET | `/api/sources` | 全部源及抓取状态、刷新进度 |
-| GET | `/api/entries?source=&category=&q=&limit=` | 文章列表（不含正文） |
+| GET | `/api/sources` | 全部源及抓取状态、刷新进度、fetch/AI 后台状态 |
+| GET | `/api/entries?source=&category=&q=&limit=` | 文章列表 |
 | GET | `/api/entry/:id` | 单篇全文 |
-| POST | `/api/entry/:id/content` | 从原文链接补全并保存正文；公共接口，只能抓取已存在文章的公开链接 |
-| GET | `/api/entry/:id/translation` | 读取单篇双语翻译缓存 |
-| POST | `/api/entry/:id/translation` | 登录用户生成并保存单篇双语翻译 |
-| GET | `/api/entry/:id/rewrite` | 读取公开乔木风格重写 |
-| POST | `/api/entry/:id/rewrite` | 登录用户生成并保存乔木风格重写 |
-| POST | `/api/entry/:id/assets/:type/helpful` | 登录用户标记或取消单条翻译/重写快照有用；`type` 为 `translation` / `rewrite`，body `{"helpful":true,"assetId":"..."}` |
+| GET | `/api/entry/:id/translation` | 读取双语翻译缓存 |
+| GET | `/api/entry/:id/rewrite` | 读取乔木风格改写 |
 | GET | `/api/entry/:id/comments` | 读取公开人工点评 |
-| POST | `/api/entry/:id/comments` | 登录用户发布公开人工点评 |
-| PATCH | `/api/entry/:id/comments/:commentId` | 本人或管理员编辑单条公开点评 |
-| POST | `/api/entry/:id/comments/:commentId/helpful` | 登录用户标记或取消单条点评有用；body `{"helpful":true}` |
-| DELETE | `/api/entry/:id/comments/:commentId` | 本人或管理员撤回单条公开点评 |
 | GET | `/api/entry/:id/chat` | 读取公开文章对话 |
-| POST | `/api/entry/:id/chat` | 登录用户以当前文章为上下文对话；body `{"messages":[{"role":"user","content":"..."}]}` |
-| POST | `/api/entry/:id/chat/:messageId/helpful` | 登录用户标记或取消单条公开对话有用；body `{"helpful":true}` |
-| DELETE | `/api/entry/:id/chat/:messageId` | 本人或管理员撤回单条公开对话 |
-| GET | `/assets` | 公开资产网页目录；支持 `?q=` 搜索和 `?sort=helpful` 有用排序 |
-| GET | `/assets/:type` | 按类型浏览公开资产并支持 `?q=` 搜索、`?sort=helpful` 有用排序；`type` 为 `translation` / `rewrite` / `comments` / `chat` |
-| GET | `/contributors` | 公开贡献者网页目录；支持 `?q=` 搜索和 `?sort=helpful` / `?sort=assets` 排序 |
-| GET | `/contributors/:id` | 某个贡献者的公开资产页；支持 `?type=translation|rewrite|comments|chat` 和 `?sort=helpful` |
-| GET | `/contributors/:id.xml` | 某个贡献者的公开翻译、重写、点评和文章对话 RSS 订阅流 |
-| GET | `/assets.xml` | 公开资产 RSS 订阅流；支持 `?sort=helpful` |
-| GET | `/assets/:type.xml` | 按类型订阅公开资产；支持 `?sort=helpful`，`type` 为 `translation` / `rewrite` / `comments` / `chat` |
-| POST | `/api/translate-titles` | 管理员手动触发英文标题补翻译 |
-| POST | `/api/refresh` | 管理员刷新；body `{}` 刷新全部，`{"sourceId":"xx"}` 刷新单个 |
-| POST | `/api/sources/:id/toggle` | 管理员启用/禁用某个源（持久化到 data/state.json） |
+| GET | `/assets` | 公开资产网页目录 |
+| GET | `/assets.xml` | 公开资产 RSS |
+| GET | `/contributors` | 公开贡献者目录 |
+| GET | `/contributors/:id.xml` | 贡献者公开资产 RSS |
+| GET | `/llms.txt` | 站点定位、公开目录、RSS 和 sitemap 汇总 |
 
-刷新、标题补翻译和自动重写由 `scripts/refresh-worker.js` 子进程执行。worker 抓取完成后会先通知主 Web 进程重新载入文章缓存，让新 RSS 条目先可见；标题补翻译和自动重写随后继续后台执行，不阻塞阅读页/API 响应。需要在命令行手动跑全量刷新时可用：
+需要登录或管理员权限的接口包括生成翻译/改写、发布点评、文章对话、刷新源、启用/禁用源等。详见 `server.js` 路由。
+
+## 部署
+
+### systemd 推荐路径
 
 ```bash
-npm run refresh:worker
+rsync -az --delete \
+  --exclude node_modules \
+  --exclude .git \
+  --exclude data \
+  --exclude .env \
+  ./ user@server:/opt/qmreader/
+
+ssh user@server 'cd /opt/qmreader && bash scripts/install-systemd-service.sh'
 ```
 
-## VPS systemd 部署（推荐）
-
-`rss.qiaomu.ai` 的生产路径是 `/opt/qiaomu-apps/qmreader`，Nginx 反代 `127.0.0.1:3088`。为了避免 Docker daemon 故障影响站点，推荐用宿主机 Node + systemd 运行：
-
-```bash
-rsync -az --delete --exclude node_modules --exclude .git --exclude data --exclude .env ./ myvps:/opt/qiaomu-apps/qmreader/
-ssh myvps 'cd /opt/qiaomu-apps/qmreader && bash scripts/install-systemd-service.sh'
-```
-
-默认会执行 `npm ci --omit=dev`，安装并启动 `/etc/systemd/system/qmreader.service`，服务监听 `HOST=127.0.0.1`、`PORT=3088`，并禁用启动时全量刷新，避免恢复服务时阻塞请求。每天 08:00 的定时刷新和后台管理里的手动刷新仍然保留。
+安装脚本会执行 `npm ci --omit=dev`，写入 systemd unit，并默认监听 `HOST=127.0.0.1`、`PORT=3088`。公开访问建议由 Nginx/Caddy 反代 HTTPS。
 
 常用命令：
 
@@ -204,23 +196,186 @@ journalctl -u qmreader -n 100 --no-pager
 systemctl restart qmreader
 ```
 
-如果不安装 systemd，也可以直接运行：
-
-```bash
-HOST=127.0.0.1 PORT=3088 NODE_ENV=production npm start
-```
-
-## Docker 部署（可选）
+### Docker Compose
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
-默认容器内端口 `8080`，宿主机私有端口 `127.0.0.1:3088`，公开访问应由 Nginx 反代。
+默认容器内端口 `8080`，宿主机私有端口 `127.0.0.1:3088`。
+
+## 项目结构
+
+```text
+server.js                  Express 入口、API、调度器、静态托管
+lib/sources.js             信息源注册表和刷新策略
+lib/fetcher.js             RSS/RSSHub/sitemap/页面抓取和缓存
+lib/background-jobs.js     后台刷新、标题翻译、自动改写 worker 逻辑
+lib/deepseek.js            AI provider、翻译、改写、对话调用
+lib/store.js               SQLite schema 和数据访问
+public/                    静态前端
+scripts/                   systemd 安装脚本和 refresh worker
+ops/                       部署记录
+data/                      运行时数据，默认不提交
+```
+
+## 验证
+
+```bash
+node --check server.js
+node --check lib/background-jobs.js
+node --check lib/sources.js
+node --check scripts/refresh-worker.js
+node --check public/app.js
+npm run refresh:worker
+```
+
+发布前额外做过：
+
+- tracked HEAD 文件 secret 扫描，无 API key/token/private key 命中。
+- Git 历史 `git grep -l` secret 模式扫描，无命中。
+- `data/`、`node_modules/`、`.env`、`.env.local` 默认被排除。
+- live API `https://rss.qiaomu.ai/api/sources` 返回 61 个信息源。
 
 ## 已知限制
 
-- There's An AI For That 被 Cloudflare 盾拦截，服务端无法抓取
-- 未登录时已读、收藏和浏览记录存浏览器 localStorage（沙箱 iframe 中自动降级为内存存储），登录后按账号存 SQLite
-- favicon 使用 Google S2 favicon 服务，外部网络或 Google 被阻断时会退回字母图标
+- 某些站点会被 Cloudflare 或反爬策略拦截，无法稳定抓取。
+- AI 生成质量依赖外部 provider，可能遇到限流、模型变更或费用问题。
+- 默认 SQLite 适合个人/小团队自托管，不是高并发多租户服务。
+- 注册没有邮件验证，不适合直接作为开放社区账号系统。
+- Google S2 favicon 在部分网络环境不可用，会回退到字母图标。
+- GitHub social preview 暂未自动配置，需要仓库发布后在 GitHub Settings 手动上传。
+
+## 贡献
+
+这个项目目前首先服务向阳乔木自己的阅读工作流，也欢迎围绕 RSS 源、部署文档、隐私边界和 bug 修复提交 PR。请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [SECURITY.md](SECURITY.md)。
+
+## 关于向阳乔木
+
+- 官网：[qiaomu.ai](https://qiaomu.ai)
+- 博客：[blog.qiaomu.ai](https://blog.qiaomu.ai)
+- 推荐：[tuijian.qiaomu.ai](https://tuijian.qiaomu.ai)
+- X：[@vista8](https://x.com/vista8)
+- GitHub：[@joeseesun](https://github.com/joeseesun)
+- 微信公众号：向阳乔木推荐看
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
+
+---
+
+<a name="english"></a>
+
+# English
+
+QMReader is a self-hosted RSS reading workbench by Qiaomu. It combines feed aggregation, bilingual title translation, Chinese article rewriting, public comments, and article-context AI conversations into one quiet reader interface.
+
+## What You Get
+
+- RSSHub, direct RSS, sitemap, Hacker News, Product Hunt, GitHub Trending, Hugging Face Papers, and other technical sources.
+- A fast refresh pipeline: RSS fetches land first; AI translation/rewrite work runs separately in the background.
+- Public reading assets: translations, rewrites, comments, chats, contributor pages, RSS feeds, and stable deep links.
+- A static frontend served by Express, with SQLite for runtime data.
+- Server-side DeepSeek/OpenAI-compatible support, plus user-provided browser-side AI profiles.
+
+## Try It
+
+Live demo: [rss.qiaomu.ai](https://rss.qiaomu.ai)
+
+```bash
+npm install
+cp .env.example .env
+npm start
+```
+
+Open `http://localhost:8080`.
+
+To run locally only:
+
+```bash
+HOST=127.0.0.1 PORT=3000 npm start
+```
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in your own keys. The repository does not contain production API keys.
+
+Important variables:
+
+- `DEEPSEEK_API_KEY`: server-side key for title translation and default rewriting.
+- `DEEPSEEK_MODEL`: default `deepseek-v4-flash`.
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD`: admin account seed.
+- `HOST` / `PORT`: HTTP bind address and port.
+- `STARTUP_REFRESH_DELAY_MS`: startup refresh delay, or `-1` to disable.
+- `FRESHNESS_SWEEP_INTERVAL_MS`: stale-source sweep interval.
+- `AUTO_REWRITE_SOURCE_IDS`: optional source allowlist for auto rewriting.
+
+Runtime data is stored under `data/` and is ignored by Git.
+
+## Privacy And Security
+
+- Server API keys are read from env files or environment variables only.
+- User-configured AI keys are kept in browser localStorage and are not stored in SQLite.
+- Public contributions are intentionally public through asset pages, contributor pages, sitemap, and RSS.
+- AI base URLs must be public HTTPS URLs; localhost and private network addresses are rejected.
+- Report vulnerabilities through the process in [SECURITY.md](SECURITY.md).
+
+## Deployment
+
+Recommended production shape:
+
+1. Run Node on a private host/port, for example `127.0.0.1:3088`.
+2. Put Nginx or Caddy in front for HTTPS.
+3. Keep `.env` and `data/` on the server only.
+
+```bash
+rsync -az --delete \
+  --exclude node_modules \
+  --exclude .git \
+  --exclude data \
+  --exclude .env \
+  ./ user@server:/opt/qmreader/
+
+ssh user@server 'cd /opt/qmreader && bash scripts/install-systemd-service.sh'
+```
+
+Docker Compose is also available:
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+## Verification
+
+```bash
+node --check server.js
+node --check lib/background-jobs.js
+node --check lib/sources.js
+node --check scripts/refresh-worker.js
+node --check public/app.js
+```
+
+Before public release, tracked files and Git history were scanned for common API key/token/private key patterns. No matches were found.
+
+## Limits
+
+- External websites may block scraping.
+- AI output depends on your provider, quota, and model behavior.
+- SQLite is intended for small self-hosted use, not a large multi-tenant SaaS.
+- Account registration has no email verification.
+- The GitHub social preview image is a manual follow-up after publication.
+
+## Maintainer
+
+Maintained by 向阳乔木:
+
+- [qiaomu.ai](https://qiaomu.ai)
+- [blog.qiaomu.ai](https://blog.qiaomu.ai)
+- [tuijian.qiaomu.ai](https://tuijian.qiaomu.ai)
+- X [@vista8](https://x.com/vista8)
+- GitHub [@joeseesun](https://github.com/joeseesun)
+
+MIT License.
