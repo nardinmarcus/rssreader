@@ -25,6 +25,9 @@ function readStoredNumber(key) {
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
 const READER_TABS = ['original', 'rewrite', 'translation'];
+const READER_NAV_TABS = ['original', 'rewrite'];
+const DEFAULT_READER_OPEN_TAB = 'rewrite';
+const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
 const DASHBOARD_TABS = ['profile', 'ai', 'contributions'];
@@ -35,6 +38,8 @@ const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
 const CONTEXT_PANE_MIN_WIDTH = 260;
 const CONTEXT_PANE_MAX_WIDTH = 620;
+const READER_PANE_MIN_WIDTH = 700;
+const SOURCE_REFRESH_HINT_COOLDOWN_MS = 5 * 60 * 1000;
 const COMMENT_TEMPLATES = {
   insight: '观点：',
   question: '疑问：',
@@ -50,7 +55,94 @@ const COMMENT_TEMPLATE_LABELS = {
   source: '资料',
 };
 const COMMENT_SORTS = ['helpful', 'latest'];
+const DEFAULT_REWRITE_MODEL = 'deepseek-v4-flash';
+const READER_PREF_DEFAULTS = {
+  fontSize: 16.5,
+  lineHeight: 1.88,
+  measure: 70,
+  font: 'default',
+};
+const READER_FONTS = {
+  default: '默认混排',
+  pingfang: '苹方黑体',
+  song: '宋体',
+  kai: '楷体',
+  serif: '衬线',
+  mono: '等宽',
+  hei: '系统黑体',
+};
+const AI_READING_TASKS = [
+  {
+    group: '理解',
+    items: [
+      ['总结要点', '用 5 条 bullet 总结这篇文章最值得关注的观点。'],
+      ['结构拆解', '把这篇文章的论证结构拆成：问题、证据、结论、隐含假设。'],
+    ],
+  },
+  {
+    group: '核查',
+    items: [
+      ['事实清单', '把文章里的关键事实、数据、案例列出来，并逐条说明它们分别证明了什么。'],
+      ['待验证点', '这篇文章有哪些值得怀疑或需要验证的地方？按重要性排序。'],
+    ],
+  },
+  {
+    group: '反驳',
+    items: [
+      ['反方观点', '站在反方立场，指出这篇文章最可能被挑战的 5 个点。'],
+      ['前提测试', '这篇文章的论证依赖哪些前提？哪些前提一旦不成立，结论就会变弱？'],
+    ],
+  },
+  {
+    group: '行动',
+    items: [
+      ['行动建议', '如果我是 AI 产品创作者，读完这篇文章下一步可以做什么？'],
+      ['产品机会', '这篇文章里有哪些可以变成产品、工具或自动化流程的机会？'],
+    ],
+  },
+  {
+    group: '写作',
+    items: [
+      ['分享文案', '帮我写一段适合发到 X / 即刻的中文分享文案，短一点但有观点。'],
+      ['选题角度', '如果向阳乔木要基于这篇文章写一篇中文内容，最有传播潜力的切入角度有哪些？给 3 个。'],
+    ],
+  },
+  {
+    group: '延伸',
+    items: [
+      ['延伸阅读', '基于这篇文章，给我 5 个值得继续追问或延伸阅读的方向。'],
+      ['关联概念', '列出这篇文章背后的关键概念、人物、产品或论文，并说明为什么相关。'],
+    ],
+  },
+];
+const DEFAULT_AGENT_PROMPTS = AI_READING_TASKS
+  .flatMap(group => group.items.map(([label, prompt]) => ({ label, prompt })))
+  .slice(0, 8);
+const AGENT_PROMPT_LIMIT = 24;
+const PERSONA_AGENT_VERSION = 'persona-qmreader-v1';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const LUCIDE_DEFAULT_ATTRS = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: 24,
+  height: 24,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': 2,
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+  focusable: 'false',
+  'aria-hidden': 'true',
+};
+const ICON_FALLBACK_GLYPHS = {
+  'panel-left-close': '‹',
+  'panel-left-open': '›',
+  'panel-right-close': '›',
+  'panel-right-open': '‹',
+  'arrow-left': '←',
+  'arrow-right': '→',
+  x: '×',
+};
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
 const AI_PROVIDER_PRESETS = [
   {
@@ -59,8 +151,8 @@ const AI_PROVIDER_PRESETS = [
     providerType: 'openai_compatible',
     category: '国内大模型',
     baseUrl: 'https://api.deepseek.com/v1',
-    defaultModel: 'deepseek-chat',
-    quickModels: ['deepseek-chat', 'deepseek-reasoner'],
+    defaultModel: DEFAULT_REWRITE_MODEL,
+    quickModels: [DEFAULT_REWRITE_MODEL, 'deepseek-chat', 'deepseek-reasoner'],
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     description: 'DeepSeek 官方接口',
     recommended: true,
@@ -232,12 +324,175 @@ function createId(prefix) {
   return `${prefix}-${Date.now()}-${random}`;
 }
 
+function attrHtml(attrs = {}) {
+  return Object.entries(attrs)
+    .filter(([, value]) => value !== undefined && value !== null && value !== false)
+    .map(([name, value]) => ` ${name}="${escapeHtml(value === true ? name : value)}"`)
+    .join('');
+}
+
+function lucideNodeHtml(node) {
+  if (!Array.isArray(node) || !node.length) return '';
+  const [tag, attrs = {}, children = []] = node;
+  const childHtml = Array.isArray(children) ? children.map(lucideNodeHtml).join('') : '';
+  return `<${tag}${attrHtml(attrs)}>${childHtml}</${tag}>`;
+}
+
+function lucideIcon(name, { className = 'app-icon', title = '', attrs = {} } = {}) {
+  const nodes = window.QM_LUCIDE_ICONS && window.QM_LUCIDE_ICONS[name];
+  if (!nodes) return '';
+  const svgAttrs = { ...LUCIDE_DEFAULT_ATTRS, class: className, ...attrs };
+  const titleHtml = title ? `<title>${escapeHtml(title)}</title>` : '';
+  return `<svg${attrHtml(svgAttrs)}>${titleHtml}${nodes.map(lucideNodeHtml).join('')}</svg>`;
+}
+
+function fallbackIcon(name, { className = 'app-icon' } = {}) {
+  const glyph = ICON_FALLBACK_GLYPHS[name] || '·';
+  return `<span class="${escapeHtml(`${className} app-icon-fallback`)}" aria-hidden="true">${escapeHtml(glyph)}</span>`;
+}
+
+function iconMarkup(name, options = {}) {
+  return lucideIcon(name, options) || fallbackIcon(name, options);
+}
+
+function iconButtonLabel(icon, label = '', { className = 'app-icon', labelClass = 'button-label' } = {}) {
+  return `${iconMarkup(icon, { className })}${label ? `<span class="${labelClass}">${escapeHtml(label)}</span>` : ''}`;
+}
+
+function iconSlotFor(el) {
+  if (!el) return null;
+  if (el.matches && el.matches('[data-qm-icon]')) return el;
+  return el.querySelector ? el.querySelector('[data-qm-icon]') : null;
+}
+
+function setElementIcon(el, icon, options = {}) {
+  if (!el) return;
+  const slot = iconSlotFor(el);
+  const html = iconMarkup(icon, options);
+  if (slot) {
+    slot.dataset.qmIcon = icon;
+    if (options.className) slot.dataset.qmIconClass = options.className;
+    slot.innerHTML = html;
+    return;
+  }
+  el.innerHTML = html;
+}
+
+function setButtonIconLabel(el, icon, label, options = {}) {
+  if (!el) return;
+  el.innerHTML = iconButtonLabel(icon, label, options);
+}
+
+function hydrateLucideIcons(root = document) {
+  root.querySelectorAll('[data-qm-icon]').forEach(slot => {
+    const icon = slot.dataset.qmIcon;
+    const className = slot.dataset.qmIconClass || 'app-icon';
+    slot.innerHTML = iconMarkup(icon, { className });
+  });
+}
+
 function normalizeBaseUrl(input) {
   return String(input || '').trim().replace(/\/+$/, '');
 }
 
 function normalizeReaderTab(tab) {
   return READER_TABS.includes(tab) ? tab : 'original';
+}
+
+function normalizeDefaultReaderTab(tab) {
+  return READER_OPEN_TABS.includes(tab) ? tab : DEFAULT_READER_OPEN_TAB;
+}
+
+function currentDefaultReaderTab() {
+  return normalizeDefaultReaderTab((state.me && state.me.defaultReaderTab) || state.defaultReaderTab);
+}
+
+function normalizeReaderOpenTab(tab) {
+  return tab === undefined || tab === null || tab === ''
+    ? currentDefaultReaderTab()
+    : normalizeReaderTab(tab);
+}
+
+function setCurrentUser(user, { resetProfileDraft = true } = {}) {
+  state.me = user || null;
+  state.defaultReaderTab = normalizeDefaultReaderTab(state.me && state.me.defaultReaderTab);
+  if (resetProfileDraft) state.profileDefaultReaderTabDraft = state.defaultReaderTab;
+}
+
+function activeSourceForEntry(entry = state.activeEntry) {
+  return entry ? sourceById(entry.sourceId) : null;
+}
+
+function isPaperEntry(entry = state.activeEntry) {
+  const source = activeSourceForEntry(entry);
+  return Boolean(entry && (entry.sourceId === 'huggingface' || source?.contentKind === 'paper'));
+}
+
+function rewriteUiCopy(entry = state.activeEntry) {
+  if (isPaperEntry(entry)) {
+    return {
+      tab: '论文解读',
+      section: '论文解读',
+      asset: '论文解读',
+      action: '生成解读',
+      generating: '解读中…',
+      stale: '更新解读',
+      redo: '重写解读',
+      empty: '这篇论文还没有 AI 解读。',
+      copyTitle: '复制论文解读',
+      copied: '论文解读已复制',
+      generateTitle: '生成乔木风格论文解读',
+      updateTitle: '更新乔木风格论文解读',
+      redoTitle: '重新生成乔木风格论文解读',
+      saved: '论文解读已保存',
+      cached: '已显示缓存解读',
+      fetched: '已获取论文页面并保存解读',
+      failedPrefix: '解读失败: ',
+      railIcon: 'file-search',
+    };
+  }
+  return {
+    tab: '中文改写',
+    section: '中文改写',
+    asset: '中文改写',
+    action: '生成',
+    generating: '改写中…',
+    stale: '更新',
+    redo: '重写',
+    empty: '这篇文章还没有中文改写。',
+    copyTitle: '复制中文改写',
+    copied: '重写已复制',
+    generateTitle: '生成中文改写',
+    updateTitle: '更新中文改写',
+    redoTitle: '重新生成中文改写',
+    saved: '中文改写已保存',
+    cached: '已显示缓存重写',
+    fetched: '已获取原文并保存中文改写',
+    failedPrefix: '重写失败: ',
+    railIcon: 'sparkles',
+  };
+}
+
+function updateRewriteUiLabels(entry = state.activeEntry) {
+  const copy = rewriteUiCopy(entry);
+  const tab = $('.reader-tab[data-tab="rewrite"]');
+  if (tab) tab.textContent = copy.tab;
+  const section = $('#rewrite-section-label');
+  if (section) section.textContent = copy.section;
+  const emptyText = $('#rewrite-empty p');
+  if (emptyText) emptyText.textContent = copy.empty;
+  const copyBtn = $('#rewrite-copy');
+  if (copyBtn) {
+    copyBtn.title = copy.copyTitle;
+    copyBtn.setAttribute('aria-label', copy.copyTitle);
+  }
+  const rail = $('#reader-rail-rewrite');
+  if (rail) {
+    rail.title = copy.section;
+    rail.setAttribute('aria-label', copy.section);
+    const icon = rail.querySelector('.reader-signal-icon');
+    if (icon) setElementIcon(icon, copy.railIcon);
+  }
 }
 
 function clampTemperature(value) {
@@ -379,10 +634,13 @@ const state = {
   annotations: [],
   annotationDraft: null,
   annotationBusy: false,
+  activeAnnotationId: '',
   annotationFilter: storage.getItem('qm_annotation_filter') || 'all',
   annotationOnlyDiscussed: storage.getItem('qm_annotation_only_discussed') === '1',
   pendingAnnotationId: '',
-  contextPanel: ['annotations', 'agent', 'info'].includes(storage.getItem('qm_context_panel')) ? storage.getItem('qm_context_panel') : 'annotations',
+  agentContext: null,
+  readerNavBusy: false,
+  contextPanel: 'agent',
   myTranslations: [],
   myRewrites: [],
   myAnnotations: [],
@@ -409,17 +667,32 @@ const state = {
   rewriteGenerating: false,
   pendingRewriteGenerate: false,
   readerTab: 'original',
+  defaultReaderTab: DEFAULT_READER_OPEN_TAB,
+  profileDefaultReaderTabDraft: DEFAULT_READER_OPEN_TAB,
+  readerPrefs: normalizeReaderPrefs(readJson('qm_reader_prefs', JSON.stringify(READER_PREF_DEFAULTS))),
+  readerPrefsOpen: false,
+  readerImmersive: storage.getItem('qm_reader_immersive') === '1',
   readerAssetsExpanded: false,
   readerTocAvailable: false,
   readerFocus: null,
   readerAssetId: '',
   pendingAssetJump: null,
+  suppressAnnotationUntil: 0,
   pendingCommentId: '',
   pendingChatMessageId: '',
   fetchingOriginal: false,
   agentBusy: false,
-  agentCollapsed: storage.getItem('qm_agent_collapsed') !== '0',
+  agentPrompts: loadAgentPrompts(),
+  agentPromptEditingId: '',
+  agentPromptQuery: '',
+  personaAgentController: null,
+  personaAgentEntryId: '',
+  personaAgentMessageKey: '',
+  personaAgentReady: false,
+  agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
+  agentAutoCollapsed: false,
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
+  leftCollapsed: storage.getItem('qm_left_collapsed') === '1',
   sidebarMoreOpen: storage.getItem('qm_sidebar_more_open') === '1',
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   contextPaneWidth: readStoredNumber('qm_context_pane_width'),
@@ -435,8 +708,11 @@ const state = {
   pendingAgentText: '',
   pendingSubmitLink: null,
   articleLinkMenuUrl: '',
+  articleLinkSubmitting: false,
   loadedAiScope: '',
 };
+const sourceRefreshHintAt = new Map();
+const sourceRefreshPolls = new Map();
 
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -463,6 +739,16 @@ function routeStateFromUrl() {
   const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : (pathChatMessageId || queryChatMessageId);
   const queryFocus = ASSET_FILTER_TYPES.includes(params.get('focus')) ? params.get('focus') : null;
   const focus = commentId ? 'comments' : annotationId ? 'annotations' : chatMessageId ? 'chat' : (articleRoute && articleRoute.focus ? articleRoute.focus : queryFocus);
+  const queryReaderTab = params.has('tab') ? normalizeReaderTab(params.get('tab')) : null;
+  const routeReaderTab = articleRoute && articleRoute.focus === 'translation'
+    ? 'translation'
+    : articleRoute && articleRoute.focus === 'rewrite'
+      ? 'rewrite'
+      : queryReaderTab !== null
+        ? queryReaderTab
+        : focus
+          ? 'original'
+          : null;
   return {
     entryId: articleRoute && articleRoute.id ? articleRoute.id : String(params.get('entry') || '').trim(),
     dashboard: dashboardPath,
@@ -471,11 +757,7 @@ function routeStateFromUrl() {
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
-    tab: articleRoute && articleRoute.focus === 'translation'
-      ? 'translation'
-      : articleRoute && articleRoute.focus === 'rewrite'
-      ? 'rewrite'
-      : normalizeReaderTab(params.get('tab')),
+    tab: routeReaderTab,
     view: contributorsPath ? 'contributors' : (isAssetPath || params.get('view') === 'assets' ? 'assets' : ''),
     assetFilter: isAssetPath ? pathAssetFilter : queryAssetFilter,
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
@@ -663,6 +945,51 @@ function copyReaderLink() {
   copyText(url.href, focus && ASSET_FOCUS_LABELS[focus] ? `${ASSET_FOCUS_LABELS[focus]}链接已复制` : '文章链接已复制');
 }
 
+function readerVisibleContentRoot() {
+  if (state.readerTab === 'rewrite') return $('#rewrite-content');
+  if (state.readerTab === 'translation') return $('#translation-list');
+  return $('#reader-content');
+}
+
+function elementTextForCopy(root) {
+  return String(root?.innerText || root?.textContent || '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function activeReaderCopyText(entry = state.activeEntry) {
+  if (!entry) return '';
+  const src = sourceById(entry.sourceId);
+  const mainTitle = entry.titleZh || entry.title || '未命名文章';
+  const originalTitle = entry.titleZh && entry.title && entry.title !== entry.titleZh ? entry.title : '';
+  const date = entry.published ? new Date(entry.published).toLocaleString('zh-CN') : '';
+  const meta = [src?.name, entry.author, date].filter(Boolean).join(' · ');
+  let body = elementTextForCopy(readerVisibleContentRoot());
+  if (!body && state.readerTab === 'rewrite' && state.rewrite?.body) body = String(state.rewrite.body).trim();
+  if (!body && state.readerTab === 'original') body = plainTextFromHtml(contentCache.get(entry.id) || entry.content || entry.summary || '');
+  const versionLabel = state.readerTab === 'rewrite'
+    ? rewriteUiCopy(entry).section
+    : state.readerTab === 'translation'
+      ? '中文翻译'
+      : '原文';
+  return [
+    mainTitle,
+    originalTitle,
+    meta,
+    entry.link || '',
+    versionLabel ? `版本：${versionLabel}` : '',
+    '',
+    body,
+  ].filter((line, index) => index === 5 || String(line || '').trim()).join('\n');
+}
+
+function copyReaderContent() {
+  const text = activeReaderCopyText();
+  copyText(text, '文章内容已复制');
+}
+
 function listUrlFor(view = state.view, assetFilter = state.assetFilter) {
   const url = new URL(window.location.href);
   url.pathname = '/';
@@ -783,6 +1110,10 @@ function toast(msg, ms = 2200) {
   t._timer = setTimeout(() => t.classList.add('hidden'), ms);
 }
 
+function delay(ms = 0) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function showConfirmDialog({
   title = '确认操作',
   message = '',
@@ -821,7 +1152,7 @@ function showConfirmDialog({
     };
     titleEl.textContent = title;
     messageEl.textContent = message;
-    iconEl.textContent = danger ? '!' : '?';
+    setElementIcon(iconEl, danger ? 'circle-alert' : 'circle-help', { className: 'app-icon confirm-symbol' });
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
     modal.classList.toggle('danger', Boolean(danger));
@@ -921,26 +1252,74 @@ function renderInlineMarkdown(value) {
 
 function renderMarkdownLite(value) {
   const escaped = escapeHtml(value).replace(/\r\n/g, '\n').replace(/\n\s*-{3,}\s*\n/g, '\n\n');
-  const blocks = escaped.split(/\n{2,}/).map(block => {
-    const lines = block.split('\n');
-    const first = lines[0].trim();
-    if (/^#{1,4}\s+/.test(first) && lines.length === 1) {
-      const level = Math.min(first.match(/^#+/)[0].length, 4);
-      return `<h${level}>${renderInlineMarkdown(first.replace(/^#{1,4}\s+/, ''))}</h${level}>`;
-    }
-    if (lines.every(line => /^&gt;\s+/.test(line.trim()))) {
-      return `<blockquote>${lines.map(line => renderInlineMarkdown(line.trim().replace(/^&gt;\s+/, ''))).join('<br>')}</blockquote>`;
-    }
-    if (lines.every(line => /^[-*]\s+/.test(line.trim()))) {
-      return `<ul>${lines.map(line => `<li>${renderInlineMarkdown(line.trim().replace(/^[-*]\s+/, ''))}</li>`).join('')}</ul>`;
-    }
-    if (lines.every(line => /^\d+\.\s+/.test(line.trim()))) {
-      return `<ol>${lines.map(line => `<li>${renderInlineMarkdown(line.trim().replace(/^\d+\.\s+/, ''))}</li>`).join('')}</ol>`;
-    }
-    return `<p>${renderInlineMarkdown(lines.join('<br>'))}</p>`;
-  }).join('');
+  const output = [];
+  let paragraph = [];
+  let quote = [];
+  let list = null;
 
-  return blocks;
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    output.push(`<p>${renderInlineMarkdown(paragraph.join('<br>'))}</p>`);
+    paragraph = [];
+  };
+  const flushQuote = () => {
+    if (!quote.length) return;
+    output.push(`<blockquote>${quote.map(renderInlineMarkdown).join('<br>')}</blockquote>`);
+    quote = [];
+  };
+  const flushList = () => {
+    if (!list || !list.items.length) return;
+    output.push(`<${list.type}>${list.items.map(item => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${list.type}>`);
+    list = null;
+  };
+
+  for (const line of escaped.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushQuote();
+      flushList();
+      continue;
+    }
+
+    const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushParagraph();
+      flushQuote();
+      flushList();
+      const level = Math.min(heading[1].length, 4);
+      output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const quoteLine = /^&gt;\s+(.+)$/.exec(trimmed);
+    if (quoteLine) {
+      flushParagraph();
+      flushList();
+      quote.push(quoteLine[1]);
+      continue;
+    }
+    flushQuote();
+
+    const unordered = /^(?:[-*+]|•)\s+(.+)$/.exec(trimmed);
+    const ordered = /^\d+[.)]\s+(.+)$/.exec(trimmed);
+    if (unordered || ordered) {
+      flushParagraph();
+      const type = ordered ? 'ol' : 'ul';
+      if (!list || list.type !== type) flushList();
+      if (!list) list = { type, items: [] };
+      list.items.push((unordered || ordered)[1]);
+      continue;
+    }
+
+    flushList();
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushQuote();
+  flushList();
+  return output.join('');
 }
 
 async function copyText(value, success = '已复制') {
@@ -995,7 +1374,7 @@ function faviconHtml(siteUrl, name, size = 17) {
   const letter = ((name || '?').trim()[0] || '?').toUpperCase();
   const safeSize = Math.max(12, Math.min(Number(size) || 17, 48));
   if (!d) return `<span class="letter-icon" style="--icon-size:${safeSize}px">${escapeHtml(letter)}</span>`;
-  const src = `https://www.google.com/s2/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
+  const src = `/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
   return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="lazy" referrerpolicy="no-referrer"
     onerror="fallbackFavicon(this, '${escapeJsString(letter)}')" />`;
 }
@@ -1018,6 +1397,45 @@ function timeAgo(ts) {
   const d = Math.floor(h / 24);
   if (d < 30) return `${d} 天前`;
   return new Date(ts).toLocaleDateString('zh-CN');
+}
+
+function shanghaiParts(ts = Date.now()) {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+    hour12: false,
+  }).formatToParts(new Date(ts));
+  const pick = type => parts.find(part => part.type === type)?.value || '';
+  return {
+    year: Number(pick('year')) || 0,
+    month: Number(pick('month')) || 0,
+    day: Number(pick('day')) || 0,
+    hour: pick('hour') || '00',
+    minute: pick('minute') || '00',
+  };
+}
+
+function shanghaiDayIndex(parts) {
+  return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86400000);
+}
+
+function friendlyDateTime(ts) {
+  const time = Number(ts) || 0;
+  if (!time) return '';
+  const current = shanghaiParts(Date.now());
+  const target = shanghaiParts(time);
+  const dayDiff = shanghaiDayIndex(current) - shanghaiDayIndex(target);
+  const clock = `${Number(target.hour)}:${target.minute}`;
+  if (dayDiff === 0) return `今天 ${clock}`;
+  if (dayDiff === 1) return `昨天 ${clock}`;
+  if (dayDiff > 1 && dayDiff <= 6) return `${dayDiff}天前 ${clock}`;
+  if (target.year === current.year) return `${Number(target.month)}月${Number(target.day)}日 ${clock}`;
+  return `${target.year}年${Number(target.month)}月${Number(target.day)}日 ${clock}`;
 }
 
 /* ---------- API ---------- */
@@ -1234,6 +1652,47 @@ async function loadSources() {
   renderSourceRefreshButton();
   return data;
 }
+
+function hintSourceRefresh(sourceId, reason = 'source-interaction') {
+  const id = String(sourceId || '').trim();
+  if (!id) return;
+  const now = Date.now();
+  const last = sourceRefreshHintAt.get(id) || 0;
+  if (now - last < SOURCE_REFRESH_HINT_COOLDOWN_MS) return;
+  sourceRefreshHintAt.set(id, now);
+  fetch(`/api/sources/${encodeURIComponent(id)}/refresh-hint`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+    keepalive: true,
+  })
+    .then(res => (res.ok ? res.json() : null))
+    .then(data => {
+      const refresh = data && data.refresh;
+      if (refresh && (refresh.started || refresh.running)) pollHintedSourceRefresh(id);
+    })
+    .catch(() => {});
+}
+
+function pollHintedSourceRefresh(sourceId) {
+  const id = String(sourceId || '').trim();
+  if (!id || sourceRefreshPolls.has(id)) return;
+  const task = (async () => {
+    for (let i = 0; i < 90; i++) {
+      await delay(1500);
+      const data = await loadSources().catch(() => null);
+      if (!data) continue;
+      if (!data.refreshing) {
+        await reload({ keepReader: true, clearUrl: false }).catch(() => null);
+        return;
+      }
+    }
+  })().finally(() => {
+    sourceRefreshPolls.delete(id);
+  });
+  sourceRefreshPolls.set(id, task);
+}
+
 async function loadEntries() {
   const p = new URLSearchParams();
   if (state.filterSource) p.set('source', state.filterSource);
@@ -1297,22 +1756,73 @@ function entryStatsLabel(entry) {
     stats.viewCount ? `阅 ${formatCompactCount(stats.viewCount)}` : '',
     stats.favoriteCount ? `藏 ${formatCompactCount(stats.favoriteCount)}` : '',
     stats.likeCount ? `赞 ${formatCompactCount(stats.likeCount)}` : '',
-    stats.dislikeCount ? `踩 ${formatCompactCount(stats.dislikeCount)}` : '',
+    stats.dislikeCount ? `负反馈 ${formatCompactCount(stats.dislikeCount)}` : '',
   ].filter(Boolean).join(' · ');
 }
 
-function entryQualityScore(entry) {
+function entryTitlePenalty(entry) {
+  const title = String(entry && (entry.titleZh || entry.title) || '');
+  let penalty = 0;
+  if (/[!?！？]{3,}/.test(title)) penalty += 1.2;
+  if (/(震惊|必看|速看|爆火|封神|赢麻|逆天|标题党)/i.test(title)) penalty += 1.4;
+  if (title.length > 88) penalty += 0.8;
+  return penalty;
+}
+
+function entryQualityBreakdown(entry) {
   const stats = entryStats(entry);
   const assets = entry && entry.assets ? entry.assets : {};
   const ageHours = Math.max(0, (Date.now() - (Number(entry && entry.publishedTs) || Date.now())) / 36e5);
-  const agePenalty = Math.log2(2 + ageHours / 12);
-  const signal =
-    (Number(stats.likeCount) || 0) * 4
-    + (Number(stats.favoriteCount) || 0) * 2.5
-    + (Number(assets.helpfulCount) || 0) * 3
-    + Math.min(8, (Number(stats.viewCount) || 0) / 8)
-    - (Number(stats.dislikeCount) || 0) * 3;
-  return signal / agePenalty;
+  const decay = Math.max(1, Math.log2(2 + ageHours / 12));
+  const signals = {
+    likes: (Number(stats.likeCount) || 0) * 4,
+    favorites: (Number(stats.favoriteCount) || 0) * 2.5,
+    helpful: (Number(assets.helpfulCount) || 0) * 3,
+    comments: (Number(assets.comments) || 0) * 2,
+    annotations: (Number(assets.annotations) || 0) * 1.6,
+    aiAssets: (assetCountForType(entry, 'translation') + assetCountForType(entry, 'rewrite')) * 1.4,
+    chat: (Number(assets.chatMessages) || 0) * 1.1,
+    reads: Math.min(8, (Number(stats.viewCount) || 0) / 8),
+  };
+  const penalties = {
+    dislikes: (Number(stats.dislikeCount) || 0) * 3,
+    title: entryTitlePenalty(entry),
+  };
+  const positive = Object.values(signals).reduce((sum, value) => sum + value, 0);
+  const negative = Object.values(penalties).reduce((sum, value) => sum + value, 0);
+  const raw = Math.max(0, positive - negative);
+  return {
+    score: raw / decay,
+    raw,
+    positive,
+    negative,
+    decay,
+    ageHours,
+    signals,
+    penalties,
+  };
+}
+
+function entryQualityScore(entry) {
+  return entryQualityBreakdown(entry).score;
+}
+
+function qScoreParts(entry) {
+  const q = entryQualityBreakdown(entry);
+  const parts = [
+    q.signals.likes ? `赞 +${q.signals.likes.toFixed(1)}` : '',
+    q.signals.favorites ? `收藏 +${q.signals.favorites.toFixed(1)}` : '',
+    q.signals.helpful ? `有用 +${q.signals.helpful.toFixed(1)}` : '',
+    q.signals.comments ? `点评 +${q.signals.comments.toFixed(1)}` : '',
+    q.signals.annotations ? `划线 +${q.signals.annotations.toFixed(1)}` : '',
+    q.signals.aiAssets ? `AI 资产 +${q.signals.aiAssets.toFixed(1)}` : '',
+    q.signals.chat ? `对话 +${q.signals.chat.toFixed(1)}` : '',
+    q.signals.reads ? `阅读 +${q.signals.reads.toFixed(1)}` : '',
+    q.penalties.dislikes ? `负反馈 -${q.penalties.dislikes.toFixed(1)}` : '',
+    q.penalties.title ? `标题惩罚 -${q.penalties.title.toFixed(1)}` : '',
+    `时间衰减 ÷${q.decay.toFixed(2)}`,
+  ].filter(Boolean);
+  return { ...q, parts };
 }
 
 function hotEntryCount(entries = state.entries) {
@@ -1342,24 +1852,18 @@ function renderReaderStatsUi() {
     starBtn.classList.toggle('starred', starred);
     starBtn.setAttribute('aria-pressed', starred ? 'true' : 'false');
     starBtn.title = starred ? '取消收藏' : '收藏这篇文章';
-    starBtn.innerHTML = readerActionPillHtml('★', favoriteText || '0', starred ? '已收藏' : '收藏');
+    starBtn.setAttribute('aria-label', `${starred ? '取消收藏' : '收藏这篇文章'}，当前 ${favoriteText || '0'} 个收藏`);
+    starBtn.innerHTML = readerActionPillHtml('star', favoriteText || '0', starred ? '已收藏' : '收藏');
   }
   const likeBtn = $('#reader-like');
-  const dislikeBtn = $('#reader-dislike');
   if (likeBtn) {
     likeBtn.classList.toggle('active', stats.reactionByMe === 'like');
     likeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
-    likeBtn.innerHTML = readerActionPillHtml('▲', formatCompactCount(stats.likeCount) || '0', '赞');
+    likeBtn.setAttribute('aria-label', `${stats.reactionByMe === 'like' ? '取消点赞' : '点赞这篇文章'}，当前 ${formatCompactCount(stats.likeCount) || '0'} 个赞`);
+    likeBtn.innerHTML = readerActionPillHtml('thumbs-up', formatCompactCount(stats.likeCount) || '0', '赞');
     likeBtn.title = state.me ? '认可这篇文章' : '登录后可以点赞';
   }
-  if (dislikeBtn) {
-    dislikeBtn.classList.toggle('active', stats.reactionByMe === 'dislike');
-    dislikeBtn.setAttribute('aria-pressed', stats.reactionByMe === 'dislike' ? 'true' : 'false');
-    dislikeBtn.innerHTML = readerActionPillHtml('▼', formatCompactCount(stats.dislikeCount) || '0', '踩');
-    dislikeBtn.title = state.me ? '减少类似内容推荐权重' : '登录后可以点踩';
-  }
   const railLike = $('#reader-rail-like');
-  const railDislike = $('#reader-rail-dislike');
   const railStar = $('#reader-rail-star');
   const railComment = $('#reader-rail-comment');
   const railAnnotation = $('#reader-rail-annotation');
@@ -1369,11 +1873,6 @@ function renderReaderStatsUi() {
     railLike.classList.toggle('active', stats.reactionByMe === 'like');
     railLike.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
     $('#reader-rail-like-count').textContent = formatCompactCount(stats.likeCount) || '0';
-  }
-  if (railDislike) {
-    railDislike.classList.toggle('active', stats.reactionByMe === 'dislike');
-    railDislike.setAttribute('aria-pressed', stats.reactionByMe === 'dislike' ? 'true' : 'false');
-    $('#reader-rail-dislike-count').textContent = formatCompactCount(stats.dislikeCount) || '0';
   }
   if (railStar) {
     railStar.classList.toggle('active', starred);
@@ -1385,17 +1884,15 @@ function renderReaderStatsUi() {
   if (railRewrite) railRewrite.classList.toggle('active', Boolean(state.rewrite));
   if (railTranslate) railTranslate.classList.toggle('active', Boolean(state.translation));
   const viewCount = $('#reader-view-count');
-  if (viewCount) viewCount.textContent = `访问：${formatCompactCount(stats.viewCount) || 0}`;
+  if (viewCount) viewCount.textContent = `访问 ${formatCompactCount(stats.viewCount) || 0}`;
   renderArticleInfoPanel();
 }
 
 function readerActionPillHtml(icon, count, label) {
   return `
-    <span class="reader-action-icon" aria-hidden="true">
-      <span class="reader-action-symbol">${escapeHtml(icon)}</span>
-      <span class="reader-action-count">${escapeHtml(count)}</span>
-    </span>
-    <span class="reader-action-label">${escapeHtml(label)}</span>`;
+    ${lucideIcon(icon, { className: 'app-icon reader-action-symbol' })}
+    <span class="reader-action-label">${escapeHtml(label)}</span>
+    <span class="reader-action-count">${escapeHtml(count)}</span>`;
 }
 
 function renderEntryStateUi() {
@@ -1438,7 +1935,7 @@ function recordEntryView(entryId) {
 
 async function loadMe() {
   const data = await api('/api/me');
-  state.me = data.user || null;
+  setCurrentUser(data.user || null);
   await loadUserEntryStates();
   loadAiProfilesForScope();
   renderAuthState();
@@ -1488,7 +1985,6 @@ function renderSidebar() {
   $('#count-unread').textContent = unreadCountFor(() => true) || '';
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-history').textContent = state.history.size || '';
-  $('#count-assets').textContent = assetTotalCount(state.entries.filter(hasEntryAssets)) || '';
   $('#count-contributors').textContent = state.contributors.length || '';
   renderAssetDashboard();
   renderSidebarMore();
@@ -1645,22 +2141,38 @@ function sourceById(id) { return state.sources.find(s => s.id === id); }
 function entryAssetItems(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const items = [];
-  if (assets.translation) items.push({ type: 'translation', label: '中译', title: '查看中文翻译' });
-  if (assets.rewrite) items.push({ type: 'rewrite', label: '重写', title: '查看中文改写' });
-  if (assets.annotations) items.push({ type: 'annotations', label: `划线 ${assets.annotations}`, title: '查看划线点评' });
-  if (assets.comments) items.push({ type: 'comments', label: `点评 ${assets.comments}`, title: '查看人工点评' });
-  if (assets.chatMessages) items.push({ type: 'chat', label: `对话 ${assets.chatMessages}`, title: '查看文章对话' });
+  if (assets.translation) items.push({ type: 'translation', label: '中文翻译', count: 0, title: '查看中文翻译' });
+  if (assets.rewrite) items.push({ type: 'rewrite', label: '中文改写', count: 0, title: '查看中文改写' });
+  if (assets.annotations) items.push({ type: 'annotations', label: '划线点评', count: Number(assets.annotations) || 0, title: '查看划线点评' });
+  if (assets.comments) items.push({ type: 'comments', label: '人工点评', count: Number(assets.comments) || 0, title: '查看人工点评' });
+  if (assets.chatMessages) items.push({ type: 'chat', label: '文章对话', count: Number(assets.chatMessages) || 0, title: '查看文章对话' });
   return items;
+}
+
+const ASSET_ICON_NAMES = {
+  translation: 'languages',
+  rewrite: 'sparkles',
+  annotations: 'highlighter',
+  comments: 'message-square-text',
+  chat: 'bot',
+};
+
+function assetBadgeContent(item) {
+  const icon = ASSET_ICON_NAMES[item.type] || 'boxes';
+  const count = Number(item.count || 0);
+  return `${lucideIcon(icon, { className: 'app-icon asset-badge-icon' })}${count ? `<span class="asset-badge-count">${formatCompactCount(count)}</span>` : ''}`;
 }
 
 function assetBadgesHtml(entry, { interactive = false, copyable = false } = {}) {
   return entryAssetItems(entry).map(item => {
     const cls = `asset-badge asset-${item.type}${interactive ? ' asset-jump' : ''}`;
-    if (!interactive) return `<span class="${cls}">${escapeHtml(item.label)}</span>`;
-    const badge = `<button type="button" class="${cls}" data-asset="${item.type}" title="${escapeHtml(item.title)}">${escapeHtml(item.label)}</button>`;
+    const accessibleLabel = item.count ? `${item.label} ${formatCompactCount(item.count)}` : item.label;
+    const content = assetBadgeContent(item);
+    if (!interactive) return `<span class="${cls}" title="${escapeHtml(accessibleLabel)}" aria-label="${escapeHtml(accessibleLabel)}">${content}</span>`;
+    const badge = `<button type="button" class="${cls}" data-asset="${item.type}" title="${escapeHtml(item.title)}" aria-label="${escapeHtml(accessibleLabel)}">${content}</button>`;
     if (!copyable) return badge;
-    const label = ASSET_FOCUS_LABELS[item.type] || item.label;
-    return `<span class="asset-badge-group">${badge}<button type="button" class="asset-badge-copy" data-asset-copy="${item.type}" title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">⧉</button></span>`;
+    const label = ASSET_FOCUS_LABELS[item.type] || accessibleLabel;
+    return `<span class="asset-badge-group">${badge}<button type="button" class="asset-badge-copy" data-asset-copy="${item.type}" title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">${lucideIcon('copy')}</button></span>`;
   }).join('');
 }
 
@@ -1828,11 +2340,12 @@ function entryHistoryLabel(entry) {
 
 function hotEntryLabel(entry) {
   if (state.view !== 'hot') return '';
+  const q = qScoreParts(entry);
   const stats = entryStats(entry);
   const parts = [
-    `热度 ${entryQualityScore(entry).toFixed(1)}`,
+    `QScore ${q.score.toFixed(1)}`,
     stats.likeCount ? `赞 ${formatCompactCount(stats.likeCount)}` : '',
-    stats.dislikeCount ? `踩 ${formatCompactCount(stats.dislikeCount)}` : '',
+    stats.dislikeCount ? `负反馈 ${formatCompactCount(stats.dislikeCount)}` : '',
     stats.favoriteCount ? `收藏 ${formatCompactCount(stats.favoriteCount)}` : '',
   ].filter(Boolean);
   return parts.join(' · ');
@@ -1938,8 +2451,8 @@ function assetPreviewHtml(preview) {
         <span class="entry-asset-preview-text">${escapeHtml(display.text)}</span>
         ${meta ? `<span class="entry-asset-preview-meta">${escapeHtml(meta)}</span>` : ''}
       </button>
-      <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy-content="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}内容" aria-label="复制${escapeHtml(label)}内容">文</button>
-      <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">⧉</button>
+      <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy-content="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}内容" aria-label="复制${escapeHtml(label)}内容">${lucideIcon('file-text')}</button>
+      <button type="button" class="entry-asset-preview-copy" data-asset-preview-copy="${escapeHtml(type)}"${copyItemId} title="复制${escapeHtml(label)}链接" aria-label="复制${escapeHtml(label)}链接">${lucideIcon('copy')}</button>
     </div>`;
 }
 
@@ -2043,7 +2556,6 @@ function renderEntryPaneTabs() {
 function currentListScope() {
   if (state.view === 'hot') return 'hot';
   if (state.view === 'unread') return 'unread';
-  if (state.view === 'assets') return 'assets';
   return 'latest';
 }
 
@@ -2062,13 +2574,9 @@ function renderListScopeBar() {
 }
 
 function selectListScope(scope = 'latest') {
-  const next = ['latest', 'hot', 'unread', 'assets'].includes(scope) ? scope : 'latest';
+  const next = ['latest', 'hot', 'unread'].includes(scope) ? scope : 'latest';
   if (next === 'latest') {
     state.view = 'all';
-    state.assetFilter = null;
-    state.assetSort = 'latest';
-  } else if (next === 'assets') {
-    state.view = 'assets';
     state.assetFilter = null;
     state.assetSort = 'latest';
   } else {
@@ -2146,7 +2654,12 @@ async function openAssetActivityButton(btn) {
 function renderAssetActivityStrip() {
   const el = $('#asset-activity-strip');
   if (!el) return;
-  el.classList.remove('asset-filter-strip');
+  el.classList.remove('asset-filter-strip', 'qscore-strip');
+  if (state.view === 'hot') {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
   if (state.view === 'assets') {
     const { entries, latest, counts, totalAssets } = assetDashboardStats();
     const total = entries.length;
@@ -2206,7 +2719,7 @@ function renderAssetActivityStrip() {
         <span>${escapeHtml(activeLabel)}</span>
         <strong>${activeAssetCount} 条</strong>
         <em>${escapeHtml(statusText)}</em>
-        <button type="button" class="asset-copy-link" data-asset-copy-list title="复制当前资产页链接" aria-label="复制当前资产页链接">⧉</button>
+        <button type="button" class="asset-copy-link" data-asset-copy-list title="复制当前资产页链接" aria-label="复制当前资产页链接">${lucideIcon('copy')}</button>
         <a class="asset-feed-link" href="${escapeHtml(feedHref)}" target="_blank" rel="noopener" title="订阅公开资产 RSS">RSS</a>
       </div>
       <div class="asset-sort-row">
@@ -2396,9 +2909,10 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   }
   if (assets.rewrite) {
     const total = assetCountForType(entry, 'rewrite');
+    const copy = rewriteUiCopy(entry);
     rows.push({
       type: 'rewrite',
-      label: '中文改写',
+      label: copy.asset,
       value: rewrite ? assetMetaLine([total > 1 ? `${total} 条` : '', rewrite.createdBy, rewrite.model, assetHelpfulMeta(rewrite), formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite', [total > 1 ? `${total} 条` : '']) || '正在加载详情'),
       preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
     });
@@ -2447,7 +2961,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
         <strong>${escapeHtml(row.value)}</strong>
         ${row.preview ? `<em class="asset-summary-preview">${escapeHtml(row.preview)}</em>` : ''}
       </button>
-      <button type="button" class="asset-summary-copy" data-asset-copy="${row.type}" title="复制${escapeHtml(row.label)}链接" aria-label="复制${escapeHtml(row.label)}链接">⧉</button>
+      <button type="button" class="asset-summary-copy" data-asset-copy="${row.type}" title="复制${escapeHtml(row.label)}链接" aria-label="复制${escapeHtml(row.label)}链接">${lucideIcon('copy')}</button>
     </div>`).join('');
   el.classList.toggle('hidden', !rows.length || !state.readerAssetsExpanded);
   renderArticleInfoPanel();
@@ -2456,8 +2970,10 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
 function renderArticleInfoPanel(entry = state.activeEntry) {
   const titleEl = $('#article-info-title');
   const body = $('#article-info-body');
-  if (!titleEl || !body) return;
+  const workbenchTitle = $('#context-workbench-title');
   if (!entry) {
+    if (workbenchTitle) workbenchTitle.textContent = '讨论、伴读和文章信号';
+    if (!titleEl || !body) return;
     titleEl.textContent = '未选择文章';
     body.innerHTML = '<div class="article-info-empty">选择一篇文章后，这里会显示来源、链接、资产和反馈信号。</div>';
     return;
@@ -2466,7 +2982,10 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
   const stats = entryStats(entry);
   const assets = mergeAssets(entry);
   const assetItems = entryAssetItems(entry);
+  const qScore = qScoreParts(entry);
   const canonicalUrl = readerUrlFor(entry, state.readerTab, readerShareFocus(), state.readerAssetId).href;
+  if (workbenchTitle) workbenchTitle.textContent = plainSnippet(entry.titleZh || entry.title || '当前文章', 28);
+  if (!titleEl || !body) return;
   titleEl.textContent = entry.titleZh || entry.title || '无标题';
   const originalState = hasUsableOriginalContent(entry)
     ? '已保存完整原文'
@@ -2476,7 +2995,7 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
   const assetRows = assetItems.length
     ? assetItems.map(item => `
       <button type="button" class="article-info-asset asset-${item.type}" data-info-asset="${escapeHtml(item.type)}">
-        <span>${escapeHtml(ASSET_FOCUS_LABELS[item.type] || item.label)}</span>
+        <span>${escapeHtml(item.type === 'rewrite' ? rewriteUiCopy(entry).asset : (ASSET_FOCUS_LABELS[item.type] || item.label))}</span>
         <strong>${escapeHtml(String(assetCountForType(entry, item.type) || 1))}</strong>
       </button>`).join('')
     : '<span class="article-info-muted">暂无公开资产</span>';
@@ -2490,7 +3009,14 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
       <div><span>访问</span><strong>${escapeHtml(formatCompactCount(stats.viewCount) || '0')}</strong></div>
       <div><span>收藏</span><strong>${escapeHtml(formatCompactCount(stats.favoriteCount) || '0')}</strong></div>
       <div><span>赞</span><strong>${escapeHtml(formatCompactCount(stats.likeCount) || '0')}</strong></div>
-      <div><span>踩</span><strong>${escapeHtml(formatCompactCount(stats.dislikeCount) || '0')}</strong></div>
+    </div>
+    <div class="article-info-group article-qscore">
+      <span class="article-info-label">QScore</span>
+      <div class="article-qscore-head">
+        <strong>${escapeHtml(qScore.score.toFixed(1))}</strong>
+        <span>质量信号 ${escapeHtml(qScore.positive.toFixed(1))} · 降权 ${escapeHtml(qScore.negative.toFixed(1))} · 时间衰减 ÷${escapeHtml(qScore.decay.toFixed(2))}</span>
+      </div>
+      <div class="article-qscore-parts">${qScore.parts.map(part => `<span>${escapeHtml(part)}</span>`).join('')}</div>
     </div>
     <div class="article-info-group">
       <span class="article-info-label">原文状态</span>
@@ -2502,9 +3028,8 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
       <div class="article-info-assets">${assetRows}</div>
     </div>
     <div class="article-info-actions">
-      <a class="ghost-btn" href="${escapeHtml(entry.link || '#')}" target="_blank" rel="noopener">打开原文 ↗</a>
-      <button type="button" class="ghost-btn" data-info-copy="${escapeHtml(canonicalUrl)}">复制链接</button>
-      <button type="button" class="ghost-btn" data-info-fetch-original ${hasUsableOriginalContent(entry) ? 'disabled' : ''}>获取原文</button>
+      <a class="ghost-btn" href="${escapeHtml(entry.link || '#')}" target="_blank" rel="noopener">${iconButtonLabel('external-link', '打开原文')}</a>
+      <button type="button" class="ghost-btn" data-info-copy="${escapeHtml(canonicalUrl)}">${iconButtonLabel('copy', '复制链接')}</button>
     </div>`;
 }
 
@@ -2545,8 +3070,12 @@ function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = 
   if (type === 'annotations') {
     state.readerFocus = 'annotations';
     if (syncUrl) syncReaderUrl({ replace: replaceUrl });
-    setContextPanel('annotations', { expand: !isCompactViewport() });
-    if (isCompactViewport()) scrollReaderTarget('#reader-annotations');
+    const first = visibleAnnotationsForReader()[0];
+    if (first) {
+      jumpToAnnotation(first.id);
+      return;
+    }
+    scrollReaderTarget('#reader-annotations');
     return;
   }
   if (type === 'chat') {
@@ -2637,7 +3166,10 @@ function renderAuthState() {
   $('#auth-open')?.classList.toggle('hidden', loggedIn);
   $('#account-info')?.classList.toggle('hidden', !loggedIn);
   $('#account-settings-open')?.classList.toggle('hidden', !loggedIn);
-  if (!loggedIn) setAccountMenuOpen(false);
+  if (!loggedIn) {
+    setAccountMenuOpen(false);
+    closeChangePasswordModal();
+  }
   if (loggedIn) {
     $('#account-info').innerHTML = `
       ${avatarHtml(state.me, 'account-avatar')}
@@ -2709,6 +3241,21 @@ function closeAuth() {
   $('#auth-modal').classList.add('hidden');
 }
 
+function openChangePasswordModal() {
+  if (!requireAuth('login')) return;
+  $('#change-password-current').value = '';
+  $('#change-password-new').value = '';
+  $('#change-password-confirm').value = '';
+  $('#change-password-submit').disabled = false;
+  $('#change-password-submit').textContent = '保存新密码';
+  $('#change-password-modal').classList.remove('hidden');
+  setTimeout(() => $('#change-password-current').focus(), 30);
+}
+
+function closeChangePasswordModal() {
+  $('#change-password-modal').classList.add('hidden');
+}
+
 function requireAuth(mode = 'login') {
   if (state.me) return true;
   openAuth(mode);
@@ -2720,11 +3267,6 @@ function openSubmitLinkModal(prefill = {}) {
     url: String(prefill.url || '').trim(),
     note: String(prefill.note || '').trim(),
   };
-  if (!state.me) {
-    state.pendingSubmitLink = next.url ? next : null;
-    openAuth('login');
-    return;
-  }
   $('#submit-link-url').value = next.url || '';
   $('#submit-link-note').value = next.note || '';
   $('#submit-link-submit').disabled = false;
@@ -2738,7 +3280,6 @@ function closeSubmitLinkModal() {
 }
 
 async function submitReaderLink() {
-  if (!requireAuth('login')) return;
   const url = $('#submit-link-url').value.trim();
   const note = $('#submit-link-note').value.trim();
   if (!url) {
@@ -2767,7 +3308,7 @@ async function submitReaderLink() {
     renderList();
     renderSidebar();
     if (data.entry) await openEntry(data.entry);
-    toast('链接已提交');
+    toast('已收录到读者提交，正在生成中文改写');
   } catch (err) {
     toast('提交失败: ' + err.message, 5000);
   } finally {
@@ -2787,7 +3328,7 @@ async function submitAuth() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, displayName }),
     });
-    state.me = data.user || null;
+    setCurrentUser(data.user || null);
     closeAuth();
     await loadUserEntryStates();
     loadAiProfilesForScope();
@@ -2811,13 +3352,48 @@ async function submitAuth() {
   }
 }
 
+async function submitChangePassword() {
+  if (!requireAuth('login')) return;
+  const currentPassword = $('#change-password-current').value;
+  const newPassword = $('#change-password-new').value;
+  const confirmPassword = $('#change-password-confirm').value;
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    toast('请填写完整密码信息');
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    toast('两次输入的新密码不一致');
+    return;
+  }
+  const btn = $('#change-password-submit');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  try {
+    const data = await api('/api/me/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    if (data.user) setCurrentUser(data.user);
+    closeChangePasswordModal();
+    renderAuthState();
+    toast('密码已修改');
+  } catch (err) {
+    toast('修改失败: ' + err.message, 5000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存新密码';
+  }
+}
+
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   const wasDashboardOpen = state.workspacePage === 'dashboard' || state.workspacePage === 'admin';
-  state.me = null;
+  setCurrentUser(null);
   state.myComments = [];
   state.myChatMessages = [];
   setAccountMenuOpen(false);
+  closeChangePasswordModal();
   if (wasDashboardOpen) closeMyCommentsModal();
   applyGuestEntryStates();
   loadAiProfilesForScope();
@@ -2922,23 +3498,30 @@ function renderList() {
   const frag = document.createDocumentFragment();
   for (const e of list) {
     const src = sourceById(e.sourceId);
-    const assetsHtml = assetBadgesHtml(e, { interactive: true, copyable: true });
+    const assetsHtml = assetBadgesHtml(e, { interactive: true });
     const entryActivity = assetActivityLabel(e) || entryHistoryLabel(e) || hotEntryLabel(e);
     const statsLine = entryStatsLabel(e);
     const metaRow = [statsLine ? `<span class="entry-stats">${escapeHtml(statsLine)}</span>` : '', assetsHtml ? `<span class="asset-badges entry-asset-badges">${assetsHtml}</span>` : ''].filter(Boolean).join('');
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
+    const publishedLabel = timeAgo(e.publishedTs);
+    const sourceName = src ? src.name : e.sourceId;
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
     card.dataset.id = e.id;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', e.titleZh || e.title || '打开文章');
     card.innerHTML = `
       <div class="unread-dot"></div>
       <div class="entry-main">
-        <div class="entry-top">
+        <div class="entry-kicker">
+          <div class="entry-source-line">
           ${src ? faviconHtml(src.siteUrl, src.name, 13) : ''}
-          <span class="src">${escapeHtml(src ? src.name : e.sourceId)}</span>
-          <span>·</span><span>${timeAgo(e.publishedTs)}</span>
-          ${state.starred.has(e.id) ? '<span class="entry-star">★</span>' : ''}
+            <span class="src">${escapeHtml(sourceName)}</span>
+          </div>
+          <time class="entry-time" datetime="${escapeHtml(e.published || '')}">${escapeHtml(publishedLabel)}</time>
+          ${state.starred.has(e.id) ? `<span class="entry-star">${lucideIcon('star')}</span>` : ''}
         </div>
         <div class="entry-title">${escapeHtml(e.titleZh || e.title)}</div>
         ${e.titleZh ? `<div class="entry-original">${escapeHtml(e.title)}</div>` : ''}
@@ -2947,7 +3530,7 @@ function renderList() {
         ${assetItems || (assetPreview ? assetPreviewHtml(assetPreview) : '')}
         ${entryActivity ? `<div class="entry-asset-activity">${escapeHtml(entryActivity)}</div>` : ''}
       </div>
-      ${e.image ? `<img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.remove()" />` : ''}`;
+      ${e.image ? `<div class="entry-media"><img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.closest('.entry-media')?.remove()" /></div>` : ''}`;
     card.onclick = (event) => {
       const previewCopyContent = event.target.closest('[data-asset-preview-copy-content]');
       if (previewCopyContent) {
@@ -2993,6 +3576,11 @@ function renderList() {
       }
       openEntry(e);
     };
+    card.onkeydown = (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      openEntry(e);
+    };
     frag.appendChild(card);
   }
   el.appendChild(frag);
@@ -3036,7 +3624,9 @@ function renderSourceRefreshButton() {
   btn.classList.toggle('hidden', !source);
   btn.classList.toggle('refreshing', sourceRefreshing);
   btn.disabled = sourceRefreshing;
-  btn.textContent = sourceRefreshing ? '…' : '↻';
+  setElementIcon(btn, sourceRefreshing ? 'loader-circle' : 'refresh-cw', {
+    className: sourceRefreshing ? 'app-icon app-icon-spin' : 'app-icon',
+  });
   if (source) {
     btn.title = `${sourceRefreshing ? '正在检查' : '检查'} ${source.name} 更新`;
     btn.setAttribute('aria-label', btn.title);
@@ -3280,19 +3870,863 @@ function formatAssetTime(ts) {
   return new Date(ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizeReaderPrefs(raw = {}) {
+  const prefs = raw && typeof raw === 'object' ? raw : {};
+  const font = READER_FONTS[prefs.font] ? prefs.font : READER_PREF_DEFAULTS.font;
+  return {
+    fontSize: clampNumber(prefs.fontSize, 15, 20, READER_PREF_DEFAULTS.fontSize),
+    lineHeight: clampNumber(prefs.lineHeight, 1.65, 2.05, READER_PREF_DEFAULTS.lineHeight),
+    measure: clampNumber(prefs.measure, 56, 84, READER_PREF_DEFAULTS.measure),
+    font,
+  };
+}
+
+function persistReaderPrefs() {
+  storage.setItem('qm_reader_prefs', JSON.stringify(state.readerPrefs));
+}
+
+function readerLanguageRoot(tab = state.readerTab) {
+  if (tab === 'rewrite') return $('#rewrite-content');
+  if (tab === 'translation') return $('#translation-list');
+  return $('#reader-content');
+}
+
+function readerLanguageSample(tab = state.readerTab) {
+  const root = readerLanguageRoot(tab);
+  const text = elementTextForCopy(root);
+  if (text) return text.slice(0, 6000);
+  const entry = state.activeEntry;
+  return [entry?.titleZh || entry?.title || '', entry?.titleZh ? entry?.title || '' : '', entry?.summary || '']
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 2000);
+}
+
+function readerLanguageProfile(text) {
+  const sample = String(text || '');
+  const cjk = (sample.match(/[\u3400-\u9fff\uf900-\ufaff]/g) || []).length;
+  const latin = (sample.match(/[A-Za-z]/g) || []).length;
+  const total = Math.max(1, cjk + latin);
+  const ratio = cjk / total;
+  if (cjk >= 80 && ratio >= 0.2) return 'cjk';
+  if (cjk >= 24 && ratio >= 0.1) return 'mixed';
+  return 'latin';
+}
+
+function adaptiveReaderMeasure(profile, prefs = state.readerPrefs) {
+  const measure = normalizeReaderPrefs(prefs).measure;
+  if (profile === 'cjk') {
+    return {
+      value: clampNumber(37 + (measure - 56) * (10 / 28), 37, 47, 42),
+      unit: 'em',
+    };
+  }
+  if (profile === 'mixed') {
+    return {
+      value: clampNumber(measure - 2, 58, 74, 68),
+      unit: 'ch',
+    };
+  }
+  return {
+    value: clampNumber(measure, 60, 76, 70),
+    unit: 'ch',
+  };
+}
+
+function updateReaderLanguageProfile() {
+  const reader = $('#reader');
+  const prefs = normalizeReaderPrefs(state.readerPrefs);
+  const profile = state.activeEntry ? readerLanguageProfile(readerLanguageSample()) : 'latin';
+  const adaptive = adaptiveReaderMeasure(profile, prefs);
+  const lineHeightBoost = profile === 'cjk' ? 0.05 : profile === 'mixed' ? 0.03 : 0;
+  const effectiveLineHeight = clampNumber(prefs.lineHeight + lineHeightBoost, 1.65, 2.1, prefs.lineHeight);
+  document.documentElement.style.setProperty('--reader-measure-setting', `${prefs.measure}ch`);
+  document.documentElement.style.setProperty('--reader-measure', `${adaptive.value.toFixed(adaptive.unit === 'em' ? 1 : 0)}${adaptive.unit}`);
+  document.documentElement.style.setProperty('--reader-line-height-effective', effectiveLineHeight.toFixed(2));
+  document.documentElement.style.setProperty('--reader-paragraph-gap', profile === 'cjk' ? '1.18em' : profile === 'mixed' ? '1.12em' : '1.02em');
+  if (reader) {
+    reader.dataset.readerLanguage = profile;
+    reader.dataset.readerMeasureUnit = adaptive.unit;
+  }
+  return profile;
+}
+
+function applyReaderPrefs() {
+  const prefs = normalizeReaderPrefs(state.readerPrefs);
+  state.readerPrefs = prefs;
+  const app = $('#app');
+  const reader = $('#reader');
+  document.documentElement.style.setProperty('--reader-font-size', `${prefs.fontSize}px`);
+  document.documentElement.style.setProperty('--reader-line-height', prefs.lineHeight.toFixed(2));
+  if (reader) reader.dataset.readerFont = prefs.font;
+  if (app) app.classList.toggle('reader-immersive', Boolean(state.readerImmersive && state.activeEntry));
+  updateReaderLanguageProfile();
+  renderLeftCollapseToggle();
+  renderReaderPrefs();
+}
+
+function renderReaderPrefs() {
+  const prefs = normalizeReaderPrefs(state.readerPrefs);
+  const panel = $('#reader-preferences');
+  const toggle = $('#reader-prefs-toggle');
+  if (panel) panel.classList.toggle('hidden', !state.readerPrefsOpen);
+  if (toggle) {
+    toggle.classList.toggle('active', Boolean(state.readerPrefsOpen));
+    toggle.setAttribute('aria-expanded', state.readerPrefsOpen ? 'true' : 'false');
+  }
+  const immersive = $('#reader-immersive');
+  if (immersive) {
+    immersive.classList.toggle('active', Boolean(state.readerImmersive));
+    immersive.setAttribute('aria-pressed', state.readerImmersive ? 'true' : 'false');
+    setButtonIconLabel(immersive, state.readerImmersive ? 'minimize-2' : 'maximize-2', '沉浸阅读');
+    immersive.title = state.readerImmersive ? '退出沉浸阅读' : '沉浸阅读';
+  }
+  const fontSizeValue = $('#reader-font-size-value');
+  if (fontSizeValue) fontSizeValue.textContent = prefs.fontSize.toFixed(prefs.fontSize % 1 ? 1 : 0);
+  const lineHeight = $('#reader-line-height');
+  if (lineHeight) {
+    lineHeight.value = prefs.lineHeight.toFixed(2);
+    lineHeight.title = `行高 ${prefs.lineHeight.toFixed(2)}`;
+  }
+  const measure = $('#reader-measure');
+  if (measure) {
+    measure.value = String(Math.round(prefs.measure));
+    measure.title = `栏宽 ${Math.round(prefs.measure)}ch`;
+  }
+  const font = $('#reader-font-family');
+  if (font) font.value = prefs.font;
+}
+
+function setReaderPrefsOpen(open) {
+  state.readerPrefsOpen = Boolean(open);
+  renderReaderPrefs();
+}
+
+function setReaderPref(name, value) {
+  state.readerPrefs = normalizeReaderPrefs({ ...state.readerPrefs, [name]: value });
+  persistReaderPrefs();
+  applyReaderPrefs();
+}
+
+function setReaderImmersive(enabled) {
+  state.readerImmersive = Boolean(enabled);
+  storage.setItem('qm_reader_immersive', state.readerImmersive ? '1' : '0');
+  applyReaderPrefs();
+}
+
+function createAgentPromptId() {
+  return `prompt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeAgentPrompt(item, index = 0) {
+  const raw = item && typeof item === 'object' ? item : {};
+  const label = String(raw.label || '').trim().slice(0, 24);
+  const prompt = String(raw.prompt || '').trim().slice(0, 2400);
+  if (!label || !prompt) return null;
+  return {
+    id: String(raw.id || `default-${index}`).trim() || `default-${index}`,
+    label,
+    prompt,
+  };
+}
+
+function defaultAgentPrompts() {
+  return DEFAULT_AGENT_PROMPTS
+    .map((item, index) => normalizeAgentPrompt({ ...item, id: `default-${index + 1}` }, index))
+    .filter(Boolean);
+}
+
+function loadAgentPrompts() {
+  const stored = readJson('qm_agent_prompts', 'null');
+  if (Array.isArray(stored)) return stored.map(normalizeAgentPrompt).filter(Boolean).slice(0, AGENT_PROMPT_LIMIT);
+  return defaultAgentPrompts();
+}
+
+function persistAgentPrompts() {
+  storage.setItem('qm_agent_prompts', JSON.stringify((state.agentPrompts || []).map(item => ({
+    id: item.id,
+    label: item.label,
+    prompt: item.prompt,
+  }))));
+}
+
+function agentPromptById(id) {
+  return (state.agentPrompts || []).find(item => item.id === id) || null;
+}
+
+function visibleAgentPrompts() {
+  return Array.isArray(state.agentPrompts) ? state.agentPrompts : defaultAgentPrompts();
+}
+
+function renderAgentPrompts() {
+  const wrap = $('.agent-prompts');
+  if (!wrap) return;
+  const prompts = visibleAgentPrompts().slice(0, 5);
+  wrap.innerHTML = `
+    <div class="agent-prompt-row" role="list">
+      ${prompts.map(item => `
+        <button class="agent-prompt agent-prompt-chip" type="button" role="listitem" data-agent-prompt-id="${escapeHtml(item.id)}" data-prompt="${escapeHtml(item.prompt)}" title="${escapeHtml(item.prompt)}">${escapeHtml(item.label)}</button>
+      `).join('')}
+    </div>
+    <button class="agent-prompt-manage" type="button" data-agent-prompt-manage title="管理常用提示词" aria-label="管理常用提示词">${lucideIcon('ellipsis')}</button>
+  `;
+}
+
+function renderAgentPromptManager() {
+  const list = $('#agent-prompt-list');
+  const queryInput = $('#agent-prompt-search');
+  if (queryInput && queryInput.value !== state.agentPromptQuery) queryInput.value = state.agentPromptQuery || '';
+  if (!list) return;
+  const query = String(state.agentPromptQuery || '').trim().toLowerCase();
+  const prompts = visibleAgentPrompts()
+    .filter(item => !query || `${item.label}\n${item.prompt}`.toLowerCase().includes(query));
+  list.innerHTML = prompts.length ? prompts.map(item => `
+    <div class="agent-prompt-library-item" data-agent-prompt-item="${escapeHtml(item.id)}">
+      <div class="agent-prompt-library-copy">
+        <strong>${escapeHtml(item.label)}</strong>
+        <p>${escapeHtml(item.prompt)}</p>
+      </div>
+      <div class="agent-prompt-library-actions">
+        <button type="button" class="ghost-btn" data-agent-prompt-use="${escapeHtml(item.id)}">使用</button>
+        <button type="button" class="ghost-btn" data-agent-prompt-edit="${escapeHtml(item.id)}">编辑</button>
+        <button type="button" class="ghost-btn danger" data-agent-prompt-delete="${escapeHtml(item.id)}">删除</button>
+      </div>
+    </div>
+  `).join('') : '<div class="agent-prompt-empty">没有匹配的提示词</div>';
+}
+
+function setAgentPromptForm(item = null) {
+  state.agentPromptEditingId = item ? item.id : '';
+  const id = $('#agent-prompt-id');
+  const label = $('#agent-prompt-label');
+  const prompt = $('#agent-prompt-content');
+  const save = $('#agent-prompt-save');
+  if (id) id.value = item ? item.id : '';
+  if (label) label.value = item ? item.label : '';
+  if (prompt) prompt.value = item ? item.prompt : '';
+  if (save) save.textContent = item ? '保存修改' : '添加';
+}
+
+function openAgentPromptManager(editId = '') {
+  const modal = $('#agent-prompt-modal');
+  if (!modal) return;
+  const editItem = editId ? agentPromptById(editId) : null;
+  setAgentPromptForm(editItem);
+  renderAgentPromptManager();
+  modal.classList.remove('hidden');
+  setTimeout(() => (editItem ? $('#agent-prompt-content') : $('#agent-prompt-label'))?.focus(), 30);
+}
+
+function closeAgentPromptManager() {
+  $('#agent-prompt-modal')?.classList.add('hidden');
+}
+
+function saveAgentPromptFromForm() {
+  const label = String($('#agent-prompt-label')?.value || '').trim();
+  const prompt = String($('#agent-prompt-content')?.value || '').trim();
+  const id = String($('#agent-prompt-id')?.value || '').trim();
+  if (!label || !prompt) {
+    toast('请填写名称和提示词');
+    return;
+  }
+  const normalized = normalizeAgentPrompt({ id: id || createAgentPromptId(), label, prompt });
+  if (!normalized) return;
+  const list = Array.isArray(state.agentPrompts) ? [...state.agentPrompts] : [];
+  const index = list.findIndex(item => item.id === normalized.id);
+  if (index >= 0) list[index] = normalized;
+  else {
+    if (list.length >= AGENT_PROMPT_LIMIT) {
+      toast(`最多保存 ${AGENT_PROMPT_LIMIT} 条常用提示词`);
+      return;
+    }
+    list.unshift(normalized);
+  }
+  state.agentPrompts = list;
+  persistAgentPrompts();
+  setAgentPromptForm(index >= 0 ? normalized : null);
+  renderAgentPrompts();
+  renderAgentPromptManager();
+  updateAgentControls();
+  refreshPersonaAgent();
+  toast(index >= 0 ? '提示词已更新' : '提示词已添加');
+}
+
+async function deleteAgentPrompt(id) {
+  const item = agentPromptById(id);
+  if (!item) return;
+  const ok = await showConfirmDialog({
+    title: '删除提示词',
+    message: `确认删除“${item.label}”？`,
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  state.agentPrompts = (state.agentPrompts || []).filter(prompt => prompt.id !== id);
+  persistAgentPrompts();
+  if (state.agentPromptEditingId === id) setAgentPromptForm(null);
+  renderAgentPrompts();
+  renderAgentPromptManager();
+  updateAgentControls();
+  refreshPersonaAgent();
+  toast('提示词已删除');
+}
+
+function personaAgentAvailable() {
+  return false;
+}
+
+function personaAgentActive() {
+  return Boolean(
+    state.personaAgentReady &&
+    state.personaAgentController &&
+    state.personaAgentEntryId &&
+    state.activeEntry &&
+    state.personaAgentEntryId === state.activeEntry.id
+  );
+}
+
+function personaMessageDate(value) {
+  const time = Number(value) || Date.parse(value || '');
+  return Number.isFinite(time) && time > 0 ? new Date(time).toISOString() : new Date().toISOString();
+}
+
+function personaInitialMessages() {
+  return (state.agentMessages || [])
+    .filter(message => message && (message.role === 'user' || message.role === 'assistant') && String(message.content || '').trim())
+    .map((message, index) => ({
+      id: message.id || `qmreader-${state.activeEntry?.id || 'entry'}-${index}`,
+      role: message.role,
+      content: String(message.content || ''),
+      createdAt: personaMessageDate(message.createdAt),
+      sequence: index + 1,
+    }));
+}
+
+function personaMessagesKey() {
+  return personaInitialMessages()
+    .map(message => `${message.id}:${message.role}:${message.content.length}:${message.createdAt}`)
+    .join('|');
+}
+
+function personaPayloadMessages(payload) {
+  const normalized = (payload && Array.isArray(payload.messages) ? payload.messages : [])
+    .filter(message => message && (message.role === 'user' || message.role === 'assistant'))
+    .map(message => {
+      const raw = Array.isArray(message.content)
+        ? message.content.map(part => part && (part.text || part.content || '')).join('\n')
+        : message.content;
+      return { role: message.role, content: String(raw || '').trim() };
+    })
+    .filter(message => message.content)
+    .slice(-12);
+  const lastUserIndex = normalized.map(message => message.role).lastIndexOf('user');
+  if (lastUserIndex >= 0) {
+    normalized[lastUserIndex] = {
+      ...normalized[lastUserIndex],
+      content: withAgentContext(normalized[lastUserIndex].content),
+    };
+  }
+  return normalized;
+}
+
+function personaParseSseEvent(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (data.type === 'delta') return { text: String(data.text || '') };
+  if (data.type === 'done') return { done: true };
+  if (data.type === 'error') return { error: String(data.error || '对话失败') };
+  if (typeof data.text === 'string') return { text: data.text };
+  return null;
+}
+
+async function personaCustomFetch(_url, init = {}, payload = {}) {
+  const entry = state.activeEntry;
+  if (!entry || !entry.id) throw new Error('请先选择一篇文章');
+  if (!state.me) throw new Error('请先登录或注册账号');
+  const agentConfig = aiConfigForPurpose('agent');
+  if (!hasUsableAiConfig(agentConfig)) throw new Error('请先保存一个可用的 AI 配置');
+  return fetch(`/api/entry/${encodeURIComponent(entry.id)}/chat/stream`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    signal: init.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...aiHeadersFromConfig(agentConfig),
+    },
+    body: JSON.stringify({ messages: personaPayloadMessages(payload) }),
+  });
+}
+
+function createPersonaPromptPlugin() {
+  return {
+    id: 'qmreader-prompt-row',
+    renderComposer({ defaultRenderer, onSubmit, streaming }) {
+      const root = document.createElement('div');
+      root.className = 'persona-qm-composer';
+
+      const prompts = document.createElement('div');
+      prompts.className = 'persona-qm-prompts';
+
+      const row = document.createElement('div');
+      row.className = 'persona-qm-prompt-row';
+      row.setAttribute('role', 'list');
+      const canSend = Boolean(state.activeEntry && state.me && hasUsableAiConfig(aiConfigForPurpose('agent')) && !streaming);
+      visibleAgentPrompts().slice(0, 5).forEach(item => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'persona-qm-prompt';
+        btn.textContent = item.label;
+        btn.title = item.prompt;
+        btn.disabled = !canSend;
+        btn.setAttribute('role', 'listitem');
+        btn.addEventListener('click', () => onSubmit(item.prompt));
+        row.appendChild(btn);
+      });
+
+      const manage = document.createElement('button');
+      manage.type = 'button';
+      manage.className = 'persona-qm-prompt-manage';
+      setElementIcon(manage, 'ellipsis');
+      manage.title = '管理常用提示词';
+      manage.setAttribute('aria-label', '管理常用提示词');
+      manage.addEventListener('click', openAgentPromptManager);
+
+      prompts.appendChild(row);
+      prompts.appendChild(manage);
+      root.appendChild(prompts);
+      const contextNode = agentContextNode();
+      if (contextNode) root.appendChild(contextNode);
+      root.appendChild(defaultRenderer());
+      return root;
+    },
+  };
+}
+
+function agentContextTitle(context = state.agentContext) {
+  if (!context) return '';
+  if (context.type === 'comment') return '人工点评';
+  if (context.type === 'selection') return '选中文本';
+  return context.body ? '划线点评' : '划线';
+}
+
+function agentContextSurfaceLabel(context = state.agentContext) {
+  if (!context) return '';
+  if (context.surface) return ANNOTATION_SURFACE_LABELS[normalizeAnnotationSurface(context.surface)] || '';
+  return '';
+}
+
+function agentContextBodyText(context = state.agentContext) {
+  if (!context) return '';
+  const lines = [];
+  if (context.quote) lines.push(`引用：${context.quote}`);
+  if (context.body) lines.push(`${context.type === 'comment' ? '点评' : '说明'}：${context.body}`);
+  const replies = Array.isArray(context.replies)
+    ? context.replies.map(reply => String(reply && reply.body || '').trim()).filter(Boolean)
+    : [];
+  if (replies.length) lines.push(`回复：${replies.slice(0, 3).join(' / ')}`);
+  return lines.join('\n');
+}
+
+function agentContextPromptPrefix(context = state.agentContext) {
+  const body = agentContextBodyText(context);
+  if (!body) return '';
+  const scope = [agentContextTitle(context), agentContextSurfaceLabel(context)].filter(Boolean).join(' · ');
+  return [
+    '【当前引用上下文】',
+    scope ? `类型：${scope}` : '',
+    body,
+  ].filter(Boolean).join('\n');
+}
+
+function withAgentContext(content) {
+  const text = String(content || '').trim();
+  const prefix = agentContextPromptPrefix();
+  if (!text || !prefix || text.includes('【当前引用上下文】')) return text;
+  return `${prefix}\n\n【用户问题】\n${text}`;
+}
+
+function agentContextCardHtml(context = state.agentContext) {
+  if (!context) return '';
+  const title = agentContextTitle(context);
+  const surface = agentContextSurfaceLabel(context);
+  const quote = plainSnippet(context.quote || context.body || '', 160);
+  const body = context.quote && context.body ? plainSnippet(context.body, 140) : '';
+  const meta = [surface, context.author, context.createdAt ? formatAssetTime(context.createdAt) : ''].filter(Boolean).join(' · ');
+  return `
+    <div class="agent-inline-context-card">
+      <div class="agent-inline-context-top">
+        <span>${escapeHtml(title)}</span>
+        <button type="button" class="agent-context-clear" data-agent-context-clear title="清除引用上下文" aria-label="清除引用上下文">${lucideIcon('x')}</button>
+      </div>
+      ${meta ? `<div class="agent-inline-context-meta">${escapeHtml(meta)}</div>` : ''}
+      <blockquote>${escapeHtml(quote || '已加入当前上下文')}</blockquote>
+      ${body ? `<p>${escapeHtml(body)}</p>` : ''}
+    </div>`;
+}
+
+function bindAgentContextNode(root) {
+  if (!root) return;
+  const clear = root.querySelector('[data-agent-context-clear]');
+  if (clear) clear.onclick = () => clearAgentContext();
+}
+
+function agentContextNode() {
+  if (!state.agentContext) return null;
+  const wrapper = document.createElement('div');
+  wrapper.innerHTML = agentContextCardHtml();
+  const node = wrapper.firstElementChild;
+  bindAgentContextNode(node);
+  return node;
+}
+
+function renderAgentInlineContext() {
+  const el = $('#agent-inline-context');
+  if (!el) return;
+  if (!state.agentContext) {
+    el.innerHTML = '';
+    el.classList.add('hidden');
+    return;
+  }
+  el.innerHTML = agentContextCardHtml();
+  el.classList.remove('hidden');
+  bindAgentContextNode(el);
+}
+
+function clearAgentContext({ refresh = true } = {}) {
+  state.agentContext = null;
+  renderAgentInlineContext();
+  renderAgentContextStrip();
+  if (refresh) refreshPersonaAgent();
+}
+
+function setAgentContext(context, { focus = true } = {}) {
+  if (!context) return;
+  state.agentContext = {
+    ...context,
+    entryId: state.activeEntry?.id || '',
+    createdAt: context.createdAt || Date.now(),
+  };
+  setContextPanel('agent', { expand: true });
+  renderAgentInlineContext();
+  renderAgentContextStrip();
+  refreshPersonaAgent();
+  updateAgentControls();
+  if (focus) focusAgentComposer();
+  toast('已加入 AI 上下文');
+}
+
+function focusAgentComposer() {
+  setTimeout(() => {
+    const personaInput = $('#persona-agent-host textarea, #persona-agent-host [contenteditable="true"], #persona-agent-host input');
+    const fallbackInput = $('#agent-input');
+    const input = personaInput || fallbackInput;
+    if (!input || input.disabled) return;
+    input.focus({ preventScroll: true });
+    if ('selectionStart' in input) input.selectionStart = input.selectionEnd = input.value.length;
+  }, 180);
+}
+
+function contextFromAnnotation(item) {
+  if (!item) return null;
+  return {
+    type: 'annotation',
+    annotationId: item.id,
+    surface: item.surface,
+    quote: item.quote || '',
+    body: item.body || '',
+    replies: item.replies || [],
+    author: item.author || '',
+    createdAt: item.updatedAt || item.createdAt || Date.now(),
+  };
+}
+
+function contextFromComment(comment) {
+  if (!comment) return null;
+  const display = commentDisplayParts(comment.body);
+  return {
+    type: 'comment',
+    commentId: comment.id,
+    quote: '',
+    body: display.body || comment.body || '',
+    author: comment.author || '',
+    createdAt: comment.updatedAt || comment.createdAt || Date.now(),
+  };
+}
+
+function sendAnnotationDraftToAgent() {
+  const draft = state.annotationDraft;
+  if (!draft) return;
+  setAgentContext({
+    type: 'selection',
+    surface: draft.surface,
+    quote: draft.quote,
+    body: $('#annotation-popover-input')?.value.trim() || '',
+    author: state.me?.displayName || '读者',
+  });
+  hideAnnotationPopover();
+  window.getSelection()?.removeAllRanges();
+}
+
+function sendAnnotationToAgent(annotationId) {
+  const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
+  if (!item) return toast('找不到这条划线点评');
+  setAgentContext(contextFromAnnotation(item));
+}
+
+function sendCommentToAgent(commentId) {
+  const comment = (state.comments || []).find(item => item.id === commentId);
+  if (!comment) return toast('找不到这条点评');
+  setAgentContext(contextFromComment(comment));
+}
+
+function personaThemeConfig() {
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2563eb';
+  return {
+    semantic: {
+      colors: {
+        accent,
+        container: 'transparent',
+      },
+    },
+  };
+}
+
+function buildPersonaAgentConfig() {
+  const persona = window.AgentWidget || {};
+  return {
+    ...(persona.DEFAULT_WIDGET_CONFIG || {}),
+    apiUrl: '/api/persona/local',
+    launcher: { enabled: false },
+    autoFocusInput: false,
+    colorScheme: document.body?.dataset.theme === 'dark' ? 'dark' : 'light',
+    copy: {
+      ...((persona.DEFAULT_WIDGET_CONFIG && persona.DEFAULT_WIDGET_CONFIG.copy) || {}),
+      welcomeTitle: '围绕当前文章提问',
+      welcomeSubtitle: '',
+      inputPlaceholder: state.activeEntry ? '问当前文章…' : '先选择一篇文章',
+      sendButtonLabel: '发送',
+      stopButtonLabel: '停止',
+      showWelcomeCard: false,
+    },
+    layout: {
+      ...((persona.DEFAULT_WIDGET_CONFIG && persona.DEFAULT_WIDGET_CONFIG.layout) || {}),
+      showHeader: false,
+      contentMaxWidth: '100%',
+    },
+    theme: personaThemeConfig(),
+    parserType: 'plain',
+    initialMessages: personaInitialMessages(),
+    suggestionChips: [],
+    plugins: [createPersonaPromptPlugin()],
+    postprocessMessage: ({ text }) => (
+      persona.markdownPostprocessor ? persona.markdownPostprocessor(text) : renderMarkdownLite(text)
+    ),
+    sanitize: html => (window.DOMPurify ? window.DOMPurify.sanitize(html) : escapeHtml(html)),
+    customFetch: personaCustomFetch,
+    parseSSEEvent: personaParseSseEvent,
+    errorMessage: (error) => `对话失败：${error && error.message ? error.message : '请稍后重试'}`,
+    features: {
+      ...((persona.DEFAULT_WIDGET_CONFIG && persona.DEFAULT_WIDGET_CONFIG.features) || {}),
+      showEventStreamToggle: false,
+      showReasoning: false,
+      showToolCalls: false,
+      scrollBehavior: { mode: 'follow' },
+      streamAnimation: { type: 'typewriter', buffer: 'word' },
+    },
+    messageActions: {
+      copy: { enabled: true },
+      feedback: { enabled: false },
+    },
+    webmcp: { enabled: false },
+    textToSpeech: { enabled: false },
+    voiceRecognition: { enabled: false },
+  };
+}
+
+function syncPersonaAgentVisibility() {
+  const panel = $('#agent-side-panel');
+  if (!panel) return;
+  panel.classList.toggle('persona-agent-active', personaAgentActive());
+}
+
+function destroyPersonaAgent() {
+  if (state.personaAgentController && typeof state.personaAgentController.destroy === 'function') {
+    try { state.personaAgentController.destroy(); } catch { /* best effort cleanup */ }
+  }
+  state.personaAgentController = null;
+  state.personaAgentEntryId = '';
+  state.personaAgentMessageKey = '';
+  state.personaAgentReady = false;
+  const host = $('#persona-agent-host');
+  if (host) host.innerHTML = '';
+  syncPersonaAgentVisibility();
+}
+
+function mountPersonaAgent({ force = false } = {}) {
+  const host = $('#persona-agent-host');
+  const entryId = state.activeEntry?.id || '';
+  if (!host || !entryId || !personaAgentAvailable()) {
+    if (!entryId || !personaAgentAvailable()) destroyPersonaAgent();
+    return;
+  }
+  const nextKey = `${PERSONA_AGENT_VERSION}:${entryId}:${personaMessagesKey()}`;
+  if (
+    !force &&
+    state.personaAgentController &&
+    state.personaAgentEntryId === entryId &&
+    state.personaAgentMessageKey &&
+    !personaInitialMessages().length
+  ) {
+    if (typeof state.personaAgentController.update === 'function') {
+      state.personaAgentController.update(buildPersonaAgentConfig());
+    }
+    syncPersonaAgentVisibility();
+    return;
+  }
+  if (
+    !force &&
+    state.personaAgentController &&
+    state.personaAgentEntryId === entryId &&
+    state.personaAgentMessageKey === nextKey
+  ) {
+    if (typeof state.personaAgentController.update === 'function') {
+      state.personaAgentController.update(buildPersonaAgentConfig());
+    }
+    syncPersonaAgentVisibility();
+    return;
+  }
+
+  destroyPersonaAgent();
+  try {
+    const controller = window.AgentWidget.createAgentExperience(host, buildPersonaAgentConfig());
+    state.personaAgentController = controller;
+    state.personaAgentEntryId = entryId;
+    state.personaAgentMessageKey = nextKey;
+    state.personaAgentReady = true;
+    controller.on?.('user:message', () => {
+      state.agentBusy = true;
+      updateAgentControls();
+    });
+    controller.on?.('assistant:complete', async () => {
+      state.agentBusy = false;
+      updateAgentControls();
+      if (state.activeEntry?.id === entryId) await loadAgentMessages(state.activeEntry);
+    });
+    syncPersonaAgentVisibility();
+  } catch (err) {
+    console.warn('Persona agent failed to mount', err);
+    destroyPersonaAgent();
+  }
+}
+
+function refreshPersonaAgent() {
+  if (!personaAgentActive()) return;
+  mountPersonaAgent({ force: true });
+}
+
+function submitPersonaAgentMessage(text) {
+  const content = String(text || '').trim();
+  if (!content || !personaAgentActive()) return false;
+  if (!requireAuth('login')) return true;
+  const agentConfig = aiConfigForPurpose('agent');
+  if (!hasUsableAiConfig(agentConfig)) {
+    openAiConfigModal('agent', 'agent', content);
+    toast('请先保存一个可用的 AI 配置');
+    return true;
+  }
+  const controller = state.personaAgentController;
+  const submitted = controller.submitMessage?.(withAgentContext(content));
+  if (!submitted) {
+    controller.setMessage?.(withAgentContext(content));
+    controller.submitMessage?.();
+  }
+  return true;
+}
+
+function renderAgentContextStrip() {
+  const el = $('#agent-context-strip');
+  if (!el) return;
+  const entry = state.activeEntry;
+  if (!entry) {
+    el.innerHTML = '<span>未选择文章</span>';
+    return;
+  }
+  const assets = mergeAssets(entry);
+  const stats = entryStats(entry);
+  const parts = [
+    ['上下文', '当前文章'],
+    state.agentContext ? ['引用', agentContextTitle(state.agentContext)] : null,
+    ['划线', formatCompactCount((state.annotations || []).length) || '0'],
+    ['点评', formatCompactCount((state.comments || []).length) || '0'],
+    ['对话', formatCompactCount((state.agentMessages || []).length) || '0'],
+  ].filter(Boolean);
+  if (assets.latestAt) parts.push(['资产', formatAssetTime(assets.latestAt)]);
+  if (stats.viewCount) parts.push(['访问', formatCompactCount(stats.viewCount)]);
+  el.innerHTML = parts.map(([label, value]) => `
+    <span class="agent-context-chip"><em>${escapeHtml(label)}</em>${escapeHtml(value)}</span>
+  `).join('');
+}
+
+function agentEmptyHtml(kind = 'empty') {
+  const hasArticle = Boolean(state.activeEntry);
+  const title = !hasArticle ? '先选择一篇文章' : kind === 'busy' ? '正在组织回答' : '围绕当前文章开始伴读';
+  const note = !hasArticle
+    ? '未选择上下文。'
+    : '回答会尽量围绕正文；关键事实请回到原文核查。';
+  return `
+    <div class="agent-empty agent-empty-state">
+      <div class="agent-empty-mark">AI</div>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(note)}</p>
+    </div>`;
+}
+
+function setReaderTitleLink(anchor, text, url, ariaPrefix = '打开原文') {
+  if (!anchor) return;
+  const value = String(text || '').trim() || '未命名文章';
+  anchor.textContent = value;
+  anchor.title = url ? '打开原文' : '';
+  anchor.setAttribute('aria-label', url ? `${ariaPrefix}：${value}` : value);
+  anchor.classList.toggle('disabled', !url);
+  if (url) {
+    anchor.href = url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener';
+  } else {
+    anchor.removeAttribute('href');
+  }
+}
+
 function renderTitle(e) {
-  $('#reader-title').textContent = e.titleZh || e.title;
-  $('#reader-title-zh').classList.toggle('hidden', !e.titleZh);
-  $('#reader-title-zh').textContent = e.titleZh ? e.title : '';
+  const mainTitle = e.titleZh || e.title;
+  const originalTitle = e.titleZh ? e.title : '';
+  const mainLink = $('#reader-title-link');
+  const originalLink = $('#reader-title-original-link');
+  if (mainLink) {
+    setReaderTitleLink(mainLink, mainTitle, e.link, '打开原文');
+  } else {
+    $('#reader-title').textContent = mainTitle;
+  }
+  const originalWrap = $('#reader-title-zh');
+  if (originalWrap) originalWrap.classList.toggle('hidden', !originalTitle);
+  if (originalLink) setReaderTitleLink(originalLink, originalTitle, e.link, '打开原文');
 }
 
 function updateFetchOriginalButton(entry = state.activeEntry) {
   const btn = $('#reader-fetch-original');
+  if (!btn) return;
   const canFetch = Boolean(entry && /^https?:\/\//i.test(entry.link || ''));
   const alreadyHandled = Boolean(entry && (entry.originalFetchedAt || entry.originalFetchAttemptedAt || hasUsableOriginalContent(entry)));
   btn.classList.toggle('hidden', !canFetch || alreadyHandled);
   btn.disabled = !canFetch || alreadyHandled || state.fetchingOriginal;
-  btn.textContent = state.fetchingOriginal ? '获取中…' : '获取原文';
+  setButtonIconLabel(btn, state.fetchingOriginal ? 'loader-circle' : 'book-open-text', state.fetchingOriginal ? '获取中…' : '获取原文', {
+    className: state.fetchingOriginal ? 'app-icon app-icon-spin' : 'app-icon',
+  });
   btn.title = entry && entry.originalFetchError ? `上次获取失败：${entry.originalFetchError}` : '从原始网页提取正文';
 }
 
@@ -3334,8 +4768,13 @@ function renderOriginalContent(entry, content) {
   $('#reader-content').innerHTML = sanitize(content || fallback);
   $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
   renderReaderToc($('#reader-content'));
+  updateReaderLanguageProfile();
   applyTextAnnotations();
   if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
+}
+
+function elementFromNode(node) {
+  return node && node.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement || null;
 }
 
 function articleContentLinkUrl(anchor) {
@@ -3348,6 +4787,18 @@ function articleContentLinkUrl(anchor) {
   } catch {
     return '';
   }
+}
+
+function articleContentLinkFromTarget(target) {
+  const el = elementFromNode(target);
+  const anchor = el && el.closest ? el.closest('a') : null;
+  return articleContentLinkUrl(anchor) ? anchor : null;
+}
+
+function suppressAnnotationPopoverForLink() {
+  state.suppressAnnotationUntil = Date.now() + 500;
+  hideAnnotationPopover();
+  window.getSelection?.()?.removeAllRanges();
 }
 
 function hideArticleLinkMenu() {
@@ -3380,15 +4831,30 @@ function showArticleLinkMenu(anchor, event) {
   return true;
 }
 
-function submitArticleLinkToSite() {
+async function submitArticleLinkToSite() {
   const url = state.articleLinkMenuUrl;
   hideArticleLinkMenu();
   if (!url) return;
   const title = state.activeEntry && (state.activeEntry.titleZh || state.activeEntry.title);
-  openSubmitLinkModal({
-    url,
-    note: title ? `来自《${title}》正文链接` : '',
-  });
+  const note = title ? `来自《${title}》正文链接` : '';
+  if (state.articleLinkSubmitting) return;
+  state.articleLinkSubmitting = true;
+  try {
+    await api('/api/submit-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, note }),
+    });
+    await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+    updateListTitle();
+    renderList();
+    renderSidebar();
+    toast('已收录到本站，正在生成中文改写');
+  } catch (err) {
+    toast('收录失败: ' + err.message, 5000);
+  } finally {
+    state.articleLinkSubmitting = false;
+  }
 }
 
 function openArticleLinkInWindow() {
@@ -3406,6 +4872,7 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   $('#reader-translation').classList.toggle('hidden', next !== 'translation');
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
   updateReaderTocVisibility(next);
+  updateReaderLanguageProfile();
   applyTextAnnotations();
   if (syncUrl) syncReaderUrl({ replace: replaceUrl });
 }
@@ -3416,33 +4883,10 @@ function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {})
     state.readerAssetId = '';
   }
   setReaderTab(tab, { replaceUrl });
-  if (tab === 'translation') {
-    if (state.translation) return;
-    if (state.translationLoading) {
-      state.pendingTranslationGenerate = true;
-      return;
-    }
-    generateTranslation();
-    return;
-  }
-  if (tab !== 'rewrite' || state.rewrite) return;
-  if (state.rewriteLoading) {
-    state.pendingRewriteGenerate = true;
-    return;
-  }
-  generateRewrite();
 }
 
-function shouldAutoGenerateRewrite(entry = state.activeEntry) {
-  if (!entry || state.rewrite || state.rewriteLoading || state.rewriteGenerating) return false;
-  return state.readerTab === 'rewrite' || state.readerFocus === 'rewrite';
-}
-
-function maybeGenerateRewriteAfterLoad(entry = state.activeEntry) {
-  if (!state.pendingRewriteGenerate && state.readerTab !== 'rewrite') return;
+function maybeGenerateRewriteAfterLoad() {
   state.pendingRewriteGenerate = false;
-  if (!shouldAutoGenerateRewrite(entry)) return;
-  generateRewrite();
 }
 
 function entryAssetHasContent(type, asset) {
@@ -3629,6 +5073,7 @@ function renderTranslation(translation, { loading = false } = {}) {
         <div class="translation-target reader-content">${translationBlockTargetHtml(pair)}</div>
       </div>`).join('');
   $$('#translation-list a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  updateReaderLanguageProfile();
   applyTextAnnotations();
   renderReaderAssetSummary();
   settlePendingAssetJump('translation');
@@ -3666,36 +5111,63 @@ async function loadTranslation(entry) {
   }
 }
 
+function rewriteMetaText(rewrite) {
+  if (!rewrite || !rewrite.body) return '';
+  return [
+    rewrite.stale ? '原文/链接已更新' : '',
+    rewrite.model || DEFAULT_REWRITE_MODEL,
+    formatAssetTime(rewrite.updatedAt),
+  ].filter(Boolean).join(' · ');
+}
+
 function renderRewrite(rewrite) {
   state.rewrite = rewrite || null;
+  const copyTextForEntry = rewriteUiCopy();
+  updateRewriteUiLabels();
   renderReaderStatsUi();
   const content = $('#rewrite-content');
   const empty = $('#rewrite-empty');
   const copy = $('#rewrite-copy');
+  const action = $('#reader-rewrite');
+  const meta = $('#rewrite-meta');
   content.innerHTML = '';
   copy.classList.toggle('hidden', !rewrite || !rewrite.body);
   copy.disabled = !rewrite || !rewrite.body;
   renderAssetHelpfulButton('rewrite', state.rewrite);
   if (!rewrite || !rewrite.body) {
     empty.classList.remove('hidden');
-    $('#rewrite-meta').textContent = '暂无';
-    $('#reader-rewrite').textContent = '生成中文改写';
+    if (meta) {
+      meta.textContent = '';
+      meta.classList.add('hidden');
+    }
+    if (action) {
+      action.textContent = copyTextForEntry.action;
+      action.title = copyTextForEntry.generateTitle;
+    }
     renderAssetHelpfulButton('rewrite', null);
     return;
   }
   empty.classList.add('hidden');
-  $('#reader-rewrite').textContent = rewrite.stale ? '更新中文改写' : '重新生成中文改写';
-  $('#rewrite-meta').textContent = [rewrite.stale ? '原文/链接已更新' : '', rewrite.createdBy, rewrite.model, formatAssetTime(rewrite.updatedAt)].filter(Boolean).join(' · ');
+  const metaText = rewriteMetaText(rewrite);
+  if (action) {
+    action.textContent = rewrite.stale ? copyTextForEntry.stale : copyTextForEntry.redo;
+    action.title = [rewrite.stale ? copyTextForEntry.updateTitle : copyTextForEntry.redoTitle, metaText].filter(Boolean).join(' · ');
+  }
+  if (meta) {
+    meta.textContent = metaText;
+    meta.classList.add('hidden');
+  }
   renderAssetHelpfulButton('rewrite', state.rewrite);
   content.innerHTML = renderMarkdownLite(rewrite.body);
   $$('#rewrite-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  updateReaderLanguageProfile();
   applyTextAnnotations();
   renderReaderAssetSummary();
   settlePendingAssetJump('rewrite');
 }
 
 function copyRewriteText() {
-  copyText(state.rewrite && state.rewrite.body, '重写已复制');
+  copyText(state.rewrite && state.rewrite.body, rewriteUiCopy().copied);
 }
 
 async function loadRewrite(entry) {
@@ -3813,7 +5285,7 @@ async function generateRewrite({ force = false } = {}) {
   setReaderTab('rewrite');
   state.rewriteGenerating = true;
   btn.disabled = true;
-  btn.textContent = '改写中…';
+  btn.textContent = rewriteUiCopy(entry).generating;
   try {
     const data = await api(`/api/entry/${entry.id}/rewrite`, {
       method: 'POST',
@@ -3829,17 +5301,19 @@ async function generateRewrite({ force = false } = {}) {
       renderList();
     }
     setReaderTab('rewrite');
-    toast(data.originalFetched ? '已获取原文并保存中文改写' : data.cached ? '已显示缓存重写' : '中文改写已保存');
+    const copyTextForEntry = rewriteUiCopy(state.activeEntry || entry);
+    toast(data.originalFetched ? copyTextForEntry.fetched : data.cached ? copyTextForEntry.cached : copyTextForEntry.saved);
   } catch (err) {
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
       openAiConfigModal('rewrite', 'rewrite');
     }
-    toast('重写失败: ' + err.message, 5000);
+    toast(rewriteUiCopy(entry).failedPrefix + err.message, 5000);
   } finally {
     state.rewriteGenerating = false;
     btn.disabled = false;
-    if (!state.rewrite) btn.textContent = '生成中文改写';
-    else btn.textContent = state.rewrite.stale ? '更新中文改写' : '重新生成中文改写';
+    const copyTextForEntry = rewriteUiCopy(state.activeEntry || entry);
+    if (!state.rewrite) btn.textContent = copyTextForEntry.action;
+    else btn.textContent = state.rewrite.stale ? copyTextForEntry.stale : copyTextForEntry.redo;
   }
 }
 
@@ -4110,15 +5584,21 @@ function applyTextAnnotations() {
     }
   }
   applyAnnotationDiscussionFilter();
+  requestAnimationFrame(placeAnnotationMarginCards);
 }
 
 function selectionAnnotationContext() {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !state.activeEntry) return null;
+  if (Date.now() < Number(state.suppressAnnotationUntil || 0)) return null;
   const selectedText = String(selection.toString() || '').trim();
   const quote = normalizeAnnotationText(selectedText).slice(0, 800);
   if (quote.length < 2) return null;
   const range = selection.getRangeAt(0);
+  const commonEl = elementFromNode(range.commonAncestorContainer);
+  const startEl = elementFromNode(range.startContainer);
+  const endEl = elementFromNode(range.endContainer);
+  if (commonEl?.closest('a') || startEl?.closest('a') || endEl?.closest('a')) return null;
   const surface = annotationSurfaceFromNode(range.commonAncestorContainer);
   if (!surface) return null;
   const root = annotationSurfaceRoot(surface);
@@ -4246,7 +5726,7 @@ function visibleAnnotationsForReader() {
     });
 }
 
-function renderAnnotationItem(item, { side = false } = {}) {
+function renderAnnotationItem(item, { side = false, margin = false } = {}) {
   const helpfulActive = Boolean(item.helpfulByMe);
   const helpfulCount = Number(item.helpfulCount || 0);
   const authorHtml = item.contributorId
@@ -4268,10 +5748,35 @@ function renderAnnotationItem(item, { side = false } = {}) {
     : item.anchorMissing
       ? '这段文字暂时没有在当前内容中定位到，可能原文已更新。'
       : '';
-  const idPrefix = side ? 'side-annotation' : 'annotation';
-  const focusLabel = side ? '定位' : '定位原文';
+  const idPrefix = margin ? 'margin-annotation' : side ? 'side-annotation' : 'annotation';
+  const focusLabel = margin ? '回到划线' : side ? '定位' : '定位原文';
+  const replyCount = Array.isArray(item.replies) ? item.replies.length : 0;
+  const activeClass = state.activeAnnotationId === item.id ? ' annotation-active' : '';
+  const className = `annotation-item${margin ? ' annotation-margin-card' : ''}${activeClass}`;
+  if (margin) {
+    const bodySnippet = plainSnippet(item.body, 110);
+    const quoteSnippet = plainSnippet(item.quote, 92);
+    const metaText = [formatAssetTime(item.createdAt), replyCount ? `${replyCount} 回复` : ''].filter(Boolean).join(' · ');
+    return `
+      <article id="${idPrefix}-${escapeHtml(item.id)}" class="${className}" data-annotation-item="${escapeHtml(item.id)}" data-annotation-surface="${escapeHtml(item.surface)}">
+        <div class="annotation-margin-top">
+          <span class="annotation-surface-badge">${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')}</span>
+          <span class="annotation-margin-author">${authorHtml}</span>
+          ${metaText ? `<span class="annotation-margin-time">${escapeHtml(metaText)}</span>` : ''}
+        </div>
+        <p class="annotation-margin-body">${escapeHtml(bodySnippet || '这条划线还没有补充说明。')}</p>
+        <div class="annotation-margin-quote">${escapeHtml(quoteSnippet)}</div>
+        ${staleMessage ? `<div class="annotation-anchor-missing">${escapeHtml(staleMessage)}</div>` : ''}
+        <div class="annotation-margin-actions">
+          <button type="button" class="annotation-action${helpfulActive ? ' active' : ''}" data-annotation-helpful="${escapeHtml(item.id)}" aria-pressed="${helpfulActive ? 'true' : 'false'}">有用${helpfulCount ? ` ${helpfulCount}` : ''}</button>
+          <button type="button" class="annotation-action" data-annotation-focus="${escapeHtml(item.id)}">${focusLabel}</button>
+          <button type="button" class="annotation-action" data-annotation-send-ai="${escapeHtml(item.id)}">问AI</button>
+          <button type="button" class="annotation-action" data-annotation-link="${escapeHtml(item.id)}">链接</button>
+        </div>
+      </article>`;
+  }
   return `
-      <article id="${idPrefix}-${escapeHtml(item.id)}" class="annotation-item" data-annotation-item="${escapeHtml(item.id)}">
+      <article id="${idPrefix}-${escapeHtml(item.id)}" class="${className}" data-annotation-item="${escapeHtml(item.id)}" data-annotation-surface="${escapeHtml(item.surface)}">
         <div class="annotation-meta">
           <span class="annotation-surface-badge">${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')}</span>
           ${versionBadge}
@@ -4281,9 +5786,11 @@ function renderAnnotationItem(item, { side = false } = {}) {
         <div class="annotation-quote">${escapeHtml(item.quote)}</div>
         ${staleMessage ? `<div class="annotation-anchor-missing">${escapeHtml(staleMessage)}</div>` : ''}
         <div class="annotation-body">${renderMarkdownLite(item.body)}</div>
+        ${margin && replyCount ? `<div class="annotation-margin-reply-count">${replyCount} 条回复</div>` : ''}
         <div class="annotation-actions">
           <button type="button" class="annotation-action${helpfulActive ? ' active' : ''}" data-annotation-helpful="${escapeHtml(item.id)}" aria-pressed="${helpfulActive ? 'true' : 'false'}">有用${helpfulCount ? ` ${helpfulCount}` : ''}</button>
           <button type="button" class="annotation-action" data-annotation-focus="${escapeHtml(item.id)}">${focusLabel}</button>
+          <button type="button" class="annotation-action" data-annotation-send-ai="${escapeHtml(item.id)}">问AI</button>
           <button type="button" class="annotation-action" data-annotation-link="${escapeHtml(item.id)}">复制链接</button>
           <button type="button" class="annotation-action" data-annotation-copy="${escapeHtml(item.id)}">复制内容</button>
           ${item.canDelete ? `<button type="button" class="annotation-action annotation-action-danger" data-annotation-delete="${escapeHtml(item.id)}">撤回</button>` : ''}
@@ -4311,19 +5818,74 @@ function renderAnnotationActionList(container, visible, { side = false } = {}) {
   container.innerHTML = visible.map(item => renderAnnotationItem(item, { side })).join('');
 }
 
+function annotationMarginContainer(surface) {
+  return $(`#annotation-margin-${normalizeAnnotationSurface(surface)}`);
+}
+
+function renderAnnotationSideMeta(visible = visibleAnnotationsForReader()) {
+  const count = visible.length;
+  const countEl = $('#context-annotation-count');
+  if (countEl) countEl.textContent = formatCompactCount(count) || '0';
+  const openCountEl = $('#context-open-annotation-count');
+  if (openCountEl) openCountEl.textContent = formatCompactCount(count) || '0';
+  const title = $('#annotation-side-title');
+  if (title) {
+    title.textContent = state.activeEntry
+      ? (state.activeEntry.titleZh || state.activeEntry.title || '无标题')
+      : '未选择文章';
+  }
+  const focus = $('#annotation-side-focus');
+  if (focus) focus.disabled = !state.activeEntry;
+}
+
+function renderAnnotationMargins(visible = visibleAnnotationsForReader()) {
+  for (const surface of ANNOTATION_SURFACES) {
+    const container = annotationMarginContainer(surface);
+    if (!container) continue;
+    const items = visible.filter(item => normalizeAnnotationSurface(item.surface) === surface);
+    container.classList.toggle('hidden', !items.length);
+    container.innerHTML = items.map(item => renderAnnotationItem(item, { margin: true })).join('');
+  }
+  requestAnimationFrame(placeAnnotationMarginCards);
+}
+
+function annotationElementTopWithinPanel(element, panel) {
+  if (!element || !panel) return 0;
+  const elementRect = element.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  return Math.max(0, elementRect.top - panelRect.top);
+}
+
+function placeAnnotationMarginCards() {
+  for (const surface of ANNOTATION_SURFACES) {
+    const panel = document.querySelector(`[data-annotation-surface="${surface}"]`);
+    const container = annotationMarginContainer(surface);
+    if (!panel || !container || panel.classList.contains('hidden') || container.classList.contains('hidden')) continue;
+    let cursor = 0;
+    const cards = [...container.querySelectorAll('.annotation-margin-card')];
+    for (const card of cards) {
+      const id = card.dataset.annotationItem || '';
+      const mark = id
+        ? panel.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(id)}"]`)
+        : null;
+      const desired = mark ? annotationElementTopWithinPanel(mark, panel) - 6 : cursor;
+      const gap = Math.max(0, desired - cursor);
+      card.style.marginTop = `${Math.round(gap)}px`;
+      cursor += gap + card.offsetHeight + 10;
+    }
+  }
+}
+
 function renderAnnotations() {
   const list = $('#annotations-list');
   if (!list) return;
   const annotations = state.annotations || [];
   $('#annotations-count').textContent = annotations.length ? `${annotations.length} 条` : '暂无';
-  $('#context-annotation-count').textContent = formatCompactCount(annotations.length) || '0';
   const rail = $('#reader-rail-annotation-count');
   if (rail) rail.textContent = formatCompactCount(annotations.length) || '0';
   const filter = ANNOTATION_SURFACES.includes(state.annotationFilter) ? state.annotationFilter : 'all';
   const select = $('#annotation-surface-filter');
-  const sideSelect = $('#side-annotation-surface-filter');
   if (select) select.value = filter;
-  if (sideSelect) sideSelect.value = filter;
   const toggle = $('#annotation-discussed-toggle');
   if (toggle) {
     toggle.classList.toggle('active', Boolean(state.annotationOnlyDiscussed));
@@ -4336,11 +5898,10 @@ function renderAnnotations() {
       ${escapeHtml(ANNOTATION_SURFACE_LABELS[item.surface] || '原文')} · ${escapeHtml(plainSnippet(item.quote, 42))}
     </button>
   `).join('');
-  $('#annotation-side-title').textContent = state.activeEntry
-    ? (state.activeEntry.titleZh || state.activeEntry.title || '无标题')
-    : '未选择文章';
   renderAnnotationActionList(list, visible);
   renderAnnotationActionList($('#side-annotations-list'), visible, { side: true });
+  renderAnnotationSideMeta(visible);
+  renderAnnotationMargins(visible);
   renderReaderAssetSummary();
   applyAnnotationDiscussionFilter();
   highlightAnnotationFromRoute();
@@ -4350,48 +5911,71 @@ function renderAnnotations() {
 function highlightAnnotationFromRoute() {
   const annotationId = state.pendingAnnotationId;
   if (!annotationId) return;
+  state.pendingAnnotationId = '';
   const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
+  if (item) {
+    state.activeAnnotationId = annotationId;
+    setContextPanel('annotations', { expand: true });
+  }
   if (item && state.readerTab !== item.surface) {
     setReaderTab(item.surface, { syncUrl: false });
     applyTextAnnotations();
   }
   const target = document.getElementById(`annotation-${annotationId}`);
-  const sideTarget = document.getElementById(`side-annotation-${annotationId}`);
+  const marginTarget = document.getElementById(`margin-annotation-${annotationId}`);
   const mark = document.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(annotationId)}"]`);
-  if (!target && !sideTarget && !mark) return;
-  state.pendingAnnotationId = '';
+  if (!target && !marginTarget && !mark) return;
   const destination = mark || target;
-  setContextPanel('annotations', { expand: !isCompactViewport() });
   destination?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   target?.classList.add('annotation-target');
-  sideTarget?.classList.add('annotation-target');
+  marginTarget?.classList.add('annotation-target');
   mark?.classList.add('active');
   setTimeout(() => {
     target?.classList.remove('annotation-target');
-    sideTarget?.classList.remove('annotation-target');
+    marginTarget?.classList.remove('annotation-target');
     mark?.classList.remove('active');
   }, 2600);
+}
+
+function revealSideAnnotation(annotationId) {
+  if (!annotationId) return;
+  requestAnimationFrame(() => {
+    const target = document.getElementById(`side-annotation-${annotationId}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('annotation-target');
+    setTimeout(() => target.classList.remove('annotation-target'), 2200);
+  });
 }
 
 function jumpToAnnotation(annotationId) {
   const item = (state.annotations || []).find(annotation => annotation.id === annotationId);
   if (!item) return;
+  state.activeAnnotationId = annotationId;
   state.readerFocus = 'annotations';
   state.readerAssetId = annotationId;
-  setContextPanel('annotations', { expand: !isCompactViewport() });
+  if (state.contextPanel !== 'annotations' || state.agentCollapsed) {
+    setContextPanel('annotations', { expand: true });
+  } else {
+    renderAnnotations();
+  }
+  revealSideAnnotation(annotationId);
   const tab = normalizeAnnotationSurface(item.surface);
   setReaderTab(tab, { syncUrl: true, replaceUrl: true });
   applyTextAnnotations();
   requestAnimationFrame(() => {
     const mark = document.querySelector(`.text-annotation-mark[data-annotation-id="${CSS.escape(annotationId)}"]`);
-    const sideTarget = document.getElementById(`side-annotation-${annotationId}`);
-    sideTarget?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    sideTarget?.classList.add('annotation-target');
-    setTimeout(() => sideTarget?.classList.remove('annotation-target'), 2200);
+    const marginTarget = document.getElementById(`margin-annotation-${annotationId}`);
+    marginTarget?.classList.add('annotation-target');
+    setTimeout(() => marginTarget?.classList.remove('annotation-target'), 2200);
     if (mark) {
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
       mark.classList.add('active');
       setTimeout(() => mark.classList.remove('active'), 2200);
+      return;
+    }
+    if (marginTarget && !isCompactViewport()) {
+      marginTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       return;
     }
     scrollReaderTarget(`#annotation-${annotationId}`);
@@ -4429,7 +6013,7 @@ async function submitAnnotationDraft() {
   const entry = state.activeEntry;
   const draft = state.annotationDraft;
   const body = $('#annotation-popover-input').value.trim();
-  if (!entry || !draft || !body) return;
+  if (!entry || !draft) return;
   if (!requireAuth('login')) return;
   const btn = $('#annotation-popover-submit');
   btn.disabled = true;
@@ -4455,7 +6039,7 @@ async function submitAnnotationDraft() {
     window.getSelection()?.removeAllRanges();
     renderAnnotations();
     if (data.annotation?.id) jumpToAnnotation(data.annotation.id);
-    toast('划线点评已发布');
+    toast(body ? '划线点评已发布' : '已划线');
   } catch (err) {
     toast('划线点评失败: ' + err.message, 5000);
   } finally {
@@ -4577,10 +6161,11 @@ function renderComments() {
             <div class="comment-meta">${authorHtml} · ${formatAssetTime(comment.createdAt)}${escapeHtml(editedAt)}</div>
           </div>
           <div class="comment-actions">
-            <button type="button" class="comment-action comment-link-copy" data-comment-link="${escapeHtml(comment.id)}" title="复制这条点评链接" aria-label="复制这条点评链接">#</button>
-            <button type="button" class="comment-action comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">⧉</button>
-            ${comment.canEdit && !isEditing ? `<button type="button" class="comment-action comment-edit" data-comment-edit="${escapeHtml(comment.id)}" title="编辑这条点评" aria-label="编辑这条点评">✎</button>` : ''}
-            ${comment.canDelete && !isEditing ? `<button type="button" class="comment-action comment-action-danger" data-comment-delete="${escapeHtml(comment.id)}" title="撤回这条点评" aria-label="撤回这条点评">×</button>` : ''}
+            <button type="button" class="comment-action comment-link-copy" data-comment-link="${escapeHtml(comment.id)}" title="复制这条点评链接" aria-label="复制这条点评链接">${lucideIcon('hash')}</button>
+            <button type="button" class="comment-action comment-send-ai" data-comment-send-ai="${escapeHtml(comment.id)}" title="发给 AI 伴读" aria-label="发给 AI 伴读">${lucideIcon('bot')}</button>
+            <button type="button" class="comment-action comment-copy" data-comment-copy="${escapeHtml(comment.id)}" title="复制这条点评" aria-label="复制这条点评">${lucideIcon('copy')}</button>
+            ${comment.canEdit && !isEditing ? `<button type="button" class="comment-action comment-edit" data-comment-edit="${escapeHtml(comment.id)}" title="编辑这条点评" aria-label="编辑这条点评">${lucideIcon('pencil')}</button>` : ''}
+            ${comment.canDelete && !isEditing ? `<button type="button" class="comment-action comment-action-danger" data-comment-delete="${escapeHtml(comment.id)}" title="撤回这条点评" aria-label="撤回这条点评">${lucideIcon('trash-2')}</button>` : ''}
           </div>
         </div>
         ${isEditing ? `
@@ -4799,7 +6384,7 @@ function renderProfileLinksEditor() {
     <div class="profile-link-row" data-profile-link-row="${index}">
       <input data-profile-link-title="${index}" type="text" maxlength="48" placeholder="标题" value="${escapeHtml(link.title)}" />
       <input data-profile-link-url="${index}" type="url" placeholder="https://example.com" value="${escapeHtml(link.url)}" />
-      <button class="icon-btn profile-link-remove" type="button" data-profile-link-remove="${index}" title="移除链接">×</button>
+      <button class="icon-btn profile-link-remove" type="button" data-profile-link-remove="${index}" title="移除链接" aria-label="移除链接">${lucideIcon('x')}</button>
     </div>
   `).join('');
 }
@@ -4816,14 +6401,30 @@ function collectProfileLinks({ strict = false } = {}) {
   return strict ? normalizeProfileLinks(links) : links;
 }
 
+function renderProfileDefaultReaderTab() {
+  const selected = normalizeDefaultReaderTab(state.profileDefaultReaderTabDraft);
+  $$('[data-profile-reader-tab]').forEach(btn => {
+    const active = btn.dataset.profileReaderTab === selected;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+  });
+}
+
+function setProfileDefaultReaderTab(tab) {
+  state.profileDefaultReaderTabDraft = normalizeDefaultReaderTab(tab);
+  renderProfileDefaultReaderTab();
+}
+
 function renderProfileEditor() {
   if (!state.me) return;
   $('#profile-display-name').value = state.me.displayName || '';
   $('#profile-bio').value = state.me.bio || '';
   state.profileAvatarDraft = '';
   state.profileLinksDraft = normalizeProfileLinks(state.me.links || []);
+  state.profileDefaultReaderTabDraft = normalizeDefaultReaderTab(state.me.defaultReaderTab || state.defaultReaderTab);
   renderProfileAvatarPreview();
   renderProfileLinksEditor();
+  renderProfileDefaultReaderTab();
   const adminActions = $('#profile-admin-actions');
   if (adminActions) adminActions.classList.toggle('hidden', !isAdmin());
 }
@@ -4849,7 +6450,7 @@ async function loadNotifications() {
   try {
     const data = await api('/api/me/notifications?limit=80');
     state.notifications = data.notifications || [];
-    state.me = { ...state.me, notificationUnreadCount: Number(data.unreadCount) || 0 };
+    setCurrentUser({ ...state.me, notificationUnreadCount: Number(data.unreadCount) || 0 }, { resetProfileDraft: false });
     renderNotifications();
     renderAuthState();
   } catch (err) {
@@ -4863,7 +6464,7 @@ async function markMyNotificationsRead() {
   if (!state.me) return;
   try {
     const data = await api('/api/me/notifications/read', { method: 'POST' });
-    if (data.user) state.me = data.user;
+    if (data.user) setCurrentUser(data.user, { resetProfileDraft: false });
     state.notifications = (state.notifications || []).map(item => ({ ...item, read: true }));
     renderNotifications();
     renderAuthState();
@@ -4884,13 +6485,14 @@ async function saveProfile() {
       bio: $('#profile-bio').value.trim(),
       avatarUrl: state.profileAvatarDraft || state.me.avatarUrl || '',
       links: collectProfileLinks({ strict: true }),
+      defaultReaderTab: normalizeDefaultReaderTab(state.profileDefaultReaderTabDraft),
     };
     const data = await api('/api/me/profile', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (data.user) state.me = data.user;
+    if (data.user) setCurrentUser(data.user);
     renderAuthState();
     renderProfileEditor();
     renderMyPublicProfileActions();
@@ -4961,9 +6563,9 @@ function renderMyAssets() {
         </div>
         <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
         <div class="my-comment-actions">
-          <button type="button" class="ghost-btn" data-my-asset-open="${escapeHtml(item.id)}">打开文章</button>
-          <button type="button" class="ghost-btn" data-my-asset-copy-content="${escapeHtml(item.id)}">⧉ 复制内容</button>
-          <button type="button" class="ghost-btn" data-my-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
+          <button type="button" class="ghost-btn" data-my-asset-open="${escapeHtml(item.id)}">${iconButtonLabel('external-link', '打开文章')}</button>
+          <button type="button" class="ghost-btn" data-my-asset-copy-content="${escapeHtml(item.id)}">${iconButtonLabel('file-text', '复制内容')}</button>
+          <button type="button" class="ghost-btn" data-my-asset-copy="${escapeHtml(item.id)}">${iconButtonLabel('copy', '复制链接')}</button>
         </div>
       </article>`;
   }).join('');
@@ -5295,7 +6897,7 @@ function renderContributorAssets() {
     const meta = type === 'likes' ? [
       sourceName(entry.sourceId || item.sourceId),
       Number(item.stats?.likeCount || 0) ? `赞 ${Number(item.stats.likeCount)}` : '',
-      Number(item.stats?.dislikeCount || 0) ? `踩 ${Number(item.stats.dislikeCount)}` : '',
+      Number(item.stats?.dislikeCount || 0) ? `负反馈 ${Number(item.stats.dislikeCount)}` : '',
       Number(item.stats?.viewCount || 0) ? `阅 ${Number(item.stats.viewCount)}` : '',
       `点赞 ${formatAssetTime(item.updatedAt || item.createdAt)}`,
     ].filter(Boolean).join(' · ') : type === 'chat' ? [
@@ -5338,9 +6940,9 @@ function renderContributorAssets() {
         </div>
         <p class="my-comment-body">${escapeHtml(plainSnippet(display.body || item.bodySnippet || item.contentSnippet || item.body || item.content, 260))}</p>
         <div class="my-comment-actions">
-          <button type="button" class="ghost-btn" data-contributor-asset-open="${escapeHtml(item.id)}">打开文章</button>
-          ${type === 'likes' ? '' : `<button type="button" class="ghost-btn" data-contributor-asset-copy-content="${escapeHtml(item.id)}">⧉ 复制内容</button>`}
-          <button type="button" class="ghost-btn" data-contributor-asset-copy="${escapeHtml(item.id)}">⧉ 复制链接</button>
+          <button type="button" class="ghost-btn" data-contributor-asset-open="${escapeHtml(item.id)}">${iconButtonLabel('external-link', '打开文章')}</button>
+          ${type === 'likes' ? '' : `<button type="button" class="ghost-btn" data-contributor-asset-copy-content="${escapeHtml(item.id)}">${iconButtonLabel('file-text', '复制内容')}</button>`}
+          <button type="button" class="ghost-btn" data-contributor-asset-copy="${escapeHtml(item.id)}">${iconButtonLabel('copy', '复制链接')}</button>
         </div>
       </article>`;
   }).join('');
@@ -5655,16 +7257,18 @@ async function submitComment() {
 
 function renderAgentMessages(extraPending = false, { preserveScroll = false } = {}) {
   const el = $('#agent-messages');
+  if (!el) return;
+  renderAgentContextStrip();
   const thread = state.agentMessages || [];
   const hadPendingChatMessage = Boolean(state.pendingChatMessageId);
   const previousScrollTop = el.scrollTop;
   el.innerHTML = '';
   if (!state.activeEntry) {
-    el.innerHTML = '<div class="agent-empty">未选择文章</div>';
+    el.innerHTML = agentEmptyHtml('no-entry');
     return;
   }
   if (!thread.length && !extraPending) {
-    el.innerHTML = '<div class="agent-empty">当前对话为空</div>';
+    el.innerHTML = agentEmptyHtml();
     return;
   }
 
@@ -5694,6 +7298,8 @@ function renderAgentMessages(extraPending = false, { preserveScroll = false } = 
     }
     role.title = metaText;
     head.appendChild(role);
+    const footer = document.createElement('div');
+    footer.className = 'agent-msg-footer';
     if (!message.pending) {
       const actions = document.createElement('div');
       actions.className = 'agent-msg-actions';
@@ -5702,7 +7308,8 @@ function renderAgentMessages(extraPending = false, { preserveScroll = false } = 
         link.type = 'button';
         link.className = 'agent-msg-action agent-msg-link';
         link.title = '复制这条对话链接';
-        link.textContent = '#';
+        link.setAttribute('aria-label', '复制这条对话链接');
+        setElementIcon(link, 'hash');
         link.onclick = () => copyAgentMessageLink(message.id);
         actions.appendChild(link);
       }
@@ -5710,7 +7317,8 @@ function renderAgentMessages(extraPending = false, { preserveScroll = false } = 
       copy.type = 'button';
       copy.className = 'agent-msg-action agent-msg-copy';
       copy.title = '复制这条消息';
-      copy.textContent = '⧉';
+      copy.setAttribute('aria-label', '复制这条消息');
+      setElementIcon(copy, 'copy');
       copy.onclick = () => copyText(message.content, '消息已复制');
       actions.appendChild(copy);
       const draft = document.createElement('button');
@@ -5718,7 +7326,7 @@ function renderAgentMessages(extraPending = false, { preserveScroll = false } = 
       draft.className = 'agent-msg-action agent-msg-draft';
       draft.title = '放入人工点评';
       draft.setAttribute('aria-label', '放入人工点评');
-      draft.textContent = '评';
+      setElementIcon(draft, 'message-circle-plus');
       draft.onclick = () => draftCommentFromAgentMessage(message);
       actions.appendChild(draft);
       if (message.canDelete && message.id) {
@@ -5726,11 +7334,12 @@ function renderAgentMessages(extraPending = false, { preserveScroll = false } = 
         del.type = 'button';
         del.className = 'agent-msg-action agent-msg-action-danger';
         del.title = '撤回这条对话';
-        del.textContent = '×';
+        del.setAttribute('aria-label', '撤回这条对话');
+        setElementIcon(del, 'trash-2');
         del.onclick = () => deleteAgentMessage(message.id);
         actions.appendChild(del);
       }
-      head.appendChild(actions);
+      if (actions.childElementCount) footer.appendChild(actions);
     }
     const body = document.createElement('div');
     body.className = 'agent-msg-body';
@@ -5749,8 +7358,9 @@ function renderAgentMessages(extraPending = false, { preserveScroll = false } = 
       helpful.textContent = `有用${helpfulCount ? ` ${helpfulCount}` : ''}`;
       helpful.onclick = () => toggleAgentHelpful(message.id);
       feedback.appendChild(helpful);
-      row.appendChild(feedback);
+      footer.appendChild(feedback);
     }
+    if (footer.childElementCount) row.appendChild(footer);
     frag.appendChild(row);
   }
   el.appendChild(frag);
@@ -5903,25 +7513,40 @@ function updateAgentControls() {
   const hasKey = hasUsableAiConfig(aiConfigForPurpose('agent'));
   const input = $('#agent-input');
   const send = $('#agent-send');
+  const panel = $('#agent-side-panel');
+  if (!input || !send) return;
   if (!hasEntry) input.placeholder = '问当前文章…';
   else if (!hasUser) input.placeholder = '登录后围绕当前文章对话';
   else if (!hasKey) input.placeholder = '填写 API Key 后提问';
   else input.placeholder = '问当前文章…';
   input.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy;
   send.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy || !input.value.trim();
+  setElementIcon(send, state.agentBusy ? 'loader-circle' : 'send', {
+    className: state.agentBusy ? 'app-icon app-icon-spin' : 'app-icon',
+  });
+  send.title = state.agentBusy ? '正在生成' : '发送';
+  send.setAttribute('aria-label', state.agentBusy ? '正在生成' : '发送');
+  if (panel) panel.classList.toggle('agent-busy', Boolean(state.agentBusy));
   $$('.agent-prompt').forEach(btn => { btn.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy; });
-  $('#agent-copy-thread').disabled = !hasEntry || !(state.agentMessages || []).length;
+  const copyThread = $('#agent-copy-thread');
+  if (copyThread) copyThread.disabled = !hasEntry || !(state.agentMessages || []).length;
+  syncPersonaAgentVisibility();
   renderAiStatus();
 }
 
 function renderAgent() {
+  renderAgentPrompts();
+  const title = $('#agent-title');
   if (!state.activeEntry) {
-    $('#agent-title').textContent = '未选择文章';
+    if (title) title.textContent = '未选择文章';
     $('#agent-input').value = '';
   } else {
-    $('#agent-title').textContent = state.activeEntry.titleZh || state.activeEntry.title || '无标题';
+    if (title) title.textContent = state.activeEntry.titleZh || state.activeEntry.title || '无标题';
   }
+  renderAgentContextStrip();
+  renderAgentInlineContext();
   renderAgentMessages();
+  mountPersonaAgent();
   updateAgentControls();
 }
 
@@ -5943,6 +7568,7 @@ async function sendAgentMessage(text) {
   const entry = state.activeEntry;
   const content = String(text || '').trim();
   if (!entry || !content || state.agentBusy) return;
+  if (submitPersonaAgentMessage(content)) return;
   if (!requireAuth('login')) return;
   const agentConfig = aiConfigForPurpose('agent');
   if (!hasUsableAiConfig(agentConfig)) {
@@ -5951,7 +7577,8 @@ async function sendAgentMessage(text) {
     return;
   }
 
-  state.agentMessages.push({ role: 'user', author: state.me.displayName, content, createdAt: Date.now() });
+  const outboundContent = withAgentContext(content);
+  state.agentMessages.push({ role: 'user', author: state.me.displayName, content: outboundContent, createdAt: Date.now() });
   $('#agent-input').value = '';
   state.agentBusy = true;
   renderAgentMessages(true);
@@ -5962,7 +7589,7 @@ async function sendAgentMessage(text) {
       method: 'POST',
       aiConfig: agentConfig,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content }] }),
+      body: JSON.stringify({ messages: [{ role: 'user', content: outboundContent }] }),
     });
     if (state.activeEntry?.id === entry.id) {
       state.agentMessages = [...state.agentMessages.filter(m => !m.pending), data.assistantMessage || { role: 'assistant', author: 'DeepSeek', content: data.answer }];
@@ -5977,8 +7604,13 @@ async function sendAgentMessage(text) {
   }
 }
 
-async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
+async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
   setWorkspacePage('');
+  const previousEntryId = state.activeEntry?.id || '';
+  if (previousEntryId && previousEntryId !== e.id) {
+    state.agentContext = null;
+    state.activeAnnotationId = '';
+  }
   state.activeEntry = e;
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
   const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite')
@@ -5990,7 +7622,7 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
     ? 'translation'
     : requestedFocus === 'rewrite'
       ? 'rewrite'
-      : normalizeReaderTab(tab);
+      : normalizeReaderOpenTab(tab);
   state.read.add(e.id);
   recordEntryView(e.id);
   syncEntryState(e.id, { read: true, viewed: true });
@@ -6002,15 +7634,20 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   renderAdminEntryControls();
   $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>`;
   renderTitle(e);
+  updateRewriteUiLabels(e);
   document.title = readerRouteTitle(e, requestedFocus);
-  const date = e.published ? new Date(e.published).toLocaleString('zh-CN') : '';
-  $('#reader-meta').textContent = [e.author, date].filter(Boolean).join(' · ');
-  $('#reader-open').href = e.link || '#';
+  const publishedTime = friendlyDateTime(e.publishedTs || Date.parse(e.published || ''));
+  $('#reader-meta').textContent = [e.author, publishedTime].filter(Boolean).join(' · ');
+  const readerOpen = $('#reader-open');
+  if (readerOpen) readerOpen.href = e.link || '#';
   renderReaderStatsUi();
   $('#comment-input').value = '';
   state.editingCommentId = '';
   state.annotations = [];
   state.annotationDraft = null;
+  state.activeAnnotationId = '';
+  state.agentContext = null;
+  if (!annotationId) state.activeAnnotationId = '';
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
@@ -6031,9 +7668,8 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   renderReaderStatsUi();
   if (requestedFocus === 'chat') {
     setContextPanel('agent', { expand: true });
-  } else {
-    setContextPanel('annotations', { expand: !isCompactViewport() });
-    if (isCompactViewport()) setAgentCollapsed(true);
+  } else if (isCompactViewport()) {
+    setAgentCollapsed(true);
   }
   state.fetchingOriginal = false;
   renderReaderAssets(e);
@@ -6050,6 +7686,10 @@ async function openEntry(e, { tab = 'original', focus = null, aiAssetId = '', co
   $('#reader-audio').innerHTML = e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '';
   $('#reader-pane').scrollTop = 0;
   document.getElementById('app').classList.add('reading');
+  normalizeReaderWorkbenchLayout();
+  if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
+  if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
+  applyReaderPrefs();
   renderAgent();
 
   renderEntryStateUi();
@@ -6103,12 +7743,13 @@ function closeReaderFromRoute() {
   $('#reader-empty').classList.remove('hidden');
   renderAdminEntryControls();
   document.getElementById('app').classList.remove('reading');
+  applyReaderPrefs();
   document.title = 'QMReader · RSS 阅读器';
   renderList();
   renderAgent();
 }
 
-async function openEntryById(entryId, { tab = 'original', focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
+async function openEntryById(entryId, { tab = null, focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = false, replaceUrl = true } = {}) {
   const id = String(entryId || '').trim();
   if (!id) return false;
   let entry = state.entries.find(item => item.id === id);
@@ -6253,13 +7894,15 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
 
 function selectSource(id) {
   state.view = 'all';
-  state.filterSource = state.filterSource === id ? null : id;
+  const nextSource = state.filterSource === id ? null : id;
+  state.filterSource = nextSource;
   state.filterCategory = null;
   state.assetFilter = null;
   state.assetSort = 'latest';
   state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
+  if (nextSource) hintSourceRefresh(nextSource, 'source-select');
   reload();
 }
 function selectCategory(cat) {
@@ -6352,20 +7995,22 @@ async function refreshAll() {
   const buttons = ['#refresh-btn', '#profile-refresh-btn', '#admin-refresh-btn']
     .map(selector => $(selector))
     .filter(Boolean);
-  const setButtons = (text, disabled = true) => {
+  const setButtons = (label, disabled = true) => {
     buttons.forEach(btn => {
       btn.disabled = disabled;
-      btn.textContent = text;
+      setButtonIconLabel(btn, disabled ? 'loader-circle' : 'refresh-cw', label, {
+        className: disabled ? 'app-icon app-icon-spin' : 'app-icon',
+      });
     });
   };
-  setButtons('↻ 刷新中…', true);
+  setButtons('刷新中…', true);
   try {
     await api('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     // poll until done
     for (let i = 0; i < 120; i++) {
       await new Promise(r => setTimeout(r, 1500));
       const data = await loadSources();
-      setButtons(data.refreshing ? `↻ ${data.progress.done}/${data.progress.total}` : '↻ 刷新全部', Boolean(data.refreshing));
+      setButtons(data.refreshing ? `${data.progress.done}/${data.progress.total}` : '刷新全部', Boolean(data.refreshing));
       if (!data.refreshing) break;
     }
     await reload({ keepReader: true });
@@ -6375,7 +8020,7 @@ async function refreshAll() {
   } catch (e) {
     toast('刷新失败: ' + e.message);
   } finally {
-    setButtons('↻ 刷新全部', false);
+    setButtons('刷新全部', false);
   }
 }
 
@@ -6387,7 +8032,7 @@ async function refreshCurrentSource() {
   const btn = $('#source-refresh-btn');
   btn.disabled = true;
   btn.classList.add('refreshing');
-  btn.textContent = '…';
+  setElementIcon(btn, 'loader-circle', { className: 'app-icon app-icon-spin' });
   setSourceRefreshStatus('正在检查', 'loading');
   toast(`正在检查 ${source.name} 更新…`, 2600);
   try {
@@ -6594,7 +8239,9 @@ function renderAdminPage() {
   const refreshBtn = $('#admin-refresh-btn');
   if (refreshBtn) {
     refreshBtn.disabled = Boolean(state.refreshing);
-    refreshBtn.textContent = state.refreshing ? '刷新中…' : '刷新全部';
+    setButtonIconLabel(refreshBtn, state.refreshing ? 'loader-circle' : 'refresh-cw', state.refreshing ? '刷新中…' : '刷新全部', {
+      className: state.refreshing ? 'app-icon app-icon-spin' : 'app-icon',
+    });
   }
 }
 
@@ -6657,7 +8304,7 @@ function renderAiProfileSelect(selector, purpose) {
   )).join('');
   select.value = profile.id;
   select.disabled = !state.me || state.aiProfiles.length === 0;
-  select.classList.toggle('hidden', !state.me);
+  select.classList.toggle('hidden', !state.me && purpose !== 'agent');
 }
 
 function renderAiProfileControls() {
@@ -6984,29 +8631,49 @@ async function testAiConnection() {
   }
 }
 
-function setContextPanel(panel = 'annotations', { persist = true, expand = false } = {}) {
-  const next = panel === 'agent' ? 'agent' : panel === 'info' ? 'info' : 'annotations';
+function setContextPanel(panel = 'agent', { persist = true, expand = false } = {}) {
+  const next = panel === 'annotations' ? 'annotations' : 'agent';
   state.contextPanel = next;
-  if (persist) storage.setItem('qm_context_panel', next);
-  $('#context-tab-annotations')?.classList.toggle('active', next === 'annotations');
-  $('#context-tab-agent')?.classList.toggle('active', next === 'agent');
-  $('#context-tab-info')?.classList.toggle('active', next === 'info');
-  $('#annotation-side-panel')?.classList.toggle('hidden', next !== 'annotations');
-  $('#agent-side-panel')?.classList.toggle('hidden', next !== 'agent');
-  $('#article-info-panel')?.classList.toggle('hidden', next !== 'info');
-  $('#app')?.classList.toggle('context-agent-active', next === 'agent');
-  $('#app')?.classList.toggle('context-annotations-active', next === 'annotations');
-  $('#app')?.classList.toggle('context-info-active', next === 'info');
+  if (persist) storage.removeItem('qm_context_panel');
+  const isAgent = next === 'agent';
+  $('#context-tab-agent')?.classList.toggle('active', isAgent);
+  $('#context-tab-agent')?.setAttribute('aria-pressed', isAgent ? 'true' : 'false');
+  $('#context-tab-annotations')?.classList.toggle('active', !isAgent);
+  $('#context-tab-annotations')?.setAttribute('aria-pressed', isAgent ? 'false' : 'true');
+  $('#agent-side-panel')?.classList.toggle('hidden', !isAgent);
+  $('#annotation-side-panel')?.classList.toggle('hidden', isAgent);
+  $('#app')?.classList.toggle('context-agent-active', isAgent);
+  $('#app')?.classList.toggle('context-annotations-active', !isAgent);
   if (expand) setAgentCollapsed(false);
   renderAnnotations();
-  renderArticleInfoPanel();
+  renderAgentContextStrip();
 }
 
-function setAgentCollapsed(collapsed) {
+function setAgentCollapsed(collapsed, { persist: shouldPersist = true, auto = false } = {}) {
+  if (!collapsed && state.readerImmersive) setReaderImmersive(false);
+  if (!collapsed && shouldCollapseLeftForContext()) setLeftCollapsed(true);
   state.agentCollapsed = collapsed;
-  storage.setItem('qm_agent_collapsed', collapsed ? '1' : '0');
+  state.agentAutoCollapsed = Boolean(collapsed && auto);
+  if (shouldPersist) storage.setItem('qm_agent_collapsed', collapsed ? '1' : '0');
   $('#app').classList.toggle('agent-collapsed', collapsed);
-  $('#agent-open').classList.toggle('hidden', !collapsed);
+  if (collapsed) $('#app').style.removeProperty('--agent-width');
+  const rail = $('#context-open-rail');
+  if (rail) rail.classList.toggle('hidden', !collapsed);
+  const opener = $('#agent-open');
+  if (opener) {
+    opener.classList.toggle('hidden', !collapsed);
+    setElementIcon(opener, 'panel-right-open');
+    opener.title = '展开文章侧栏';
+    opener.setAttribute('aria-label', '展开文章侧栏');
+  }
+  const closer = $('#context-close');
+  if (closer) {
+    setElementIcon(closer, 'panel-right-close');
+    closer.title = '收起右侧栏';
+    closer.setAttribute('aria-label', '收起右侧栏');
+  }
+  if (!collapsed && state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
+  updateSeparatorMetrics();
 }
 
 function setSidebarCollapsed(collapsed) {
@@ -7014,15 +8681,88 @@ function setSidebarCollapsed(collapsed) {
   storage.setItem('qm_sidebar_collapsed', collapsed ? '1' : '0');
   $('#app').classList.toggle('sidebar-collapsed', collapsed);
   const toggle = $('#sidebar-toggle');
-  toggle.textContent = collapsed ? '⇥' : '⇤';
+  setElementIcon(toggle, collapsed ? 'panel-left-open' : 'panel-left-close');
   toggle.title = collapsed ? '展开左侧栏' : '收起左侧栏';
   toggle.setAttribute('aria-label', toggle.title);
+  normalizeReaderWorkbenchLayout();
+  updateSeparatorMetrics();
+}
+
+function renderLeftCollapseToggle() {
+  const toggle = $('#left-collapse-toggle');
+  if (!toggle) return;
+  const effectivelyCollapsed = Boolean(state.leftCollapsed || (state.readerImmersive && state.activeEntry));
+  setElementIcon(toggle, effectivelyCollapsed ? 'panel-left-open' : 'panel-left-close');
+  toggle.title = effectivelyCollapsed ? '展开左侧' : '收起左侧';
+  toggle.setAttribute('aria-label', toggle.title);
+  toggle.setAttribute('aria-pressed', effectivelyCollapsed ? 'true' : 'false');
+}
+
+function setLeftCollapsed(collapsed) {
+  if (!collapsed && state.readerImmersive) setReaderImmersive(false);
+  state.leftCollapsed = Boolean(collapsed);
+  storage.setItem('qm_left_collapsed', state.leftCollapsed ? '1' : '0');
+  $('#app').classList.toggle('left-collapsed', state.leftCollapsed);
+  renderLeftCollapseToggle();
+  if (!state.leftCollapsed) {
+    const storedEntryWidth = readStoredNumber('qm_entry_pane_width');
+    if (storedEntryWidth) state.entryPaneWidth = storedEntryWidth;
+    normalizeReaderWorkbenchLayout();
+    if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
+    if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
+  }
+  updateSeparatorMetrics();
+}
+
+function readerWorkbenchWidthBudget({ includeContext = !state.agentCollapsed } = {}) {
+  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  const sidebarWidth = state.leftCollapsed ? 0 : (state.sidebarCollapsed ? 64 : 232);
+  const entryWidth = state.leftCollapsed ? 0 : ENTRY_PANE_MIN_WIDTH;
+  const listResizerWidth = state.leftCollapsed ? 0 : 4;
+  const contextWidth = includeContext ? CONTEXT_PANE_MIN_WIDTH : 0;
+  const contextResizerWidth = includeContext ? 4 : 0;
+  return sidebarWidth + entryWidth + listResizerWidth + minimumReaderPaneWidth() + contextResizerWidth + contextWidth;
+}
+
+function shouldAutoCollapseContext() {
+  if (!state.activeEntry || state.readerImmersive || state.leftCollapsed || state.agentCollapsed) return false;
+  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  if (viewport <= 980) return false;
+  return viewport < readerWorkbenchWidthBudget({ includeContext: true });
+}
+
+function shouldCollapseLeftForContext() {
+  if (!state.activeEntry || state.readerImmersive || state.leftCollapsed) return false;
+  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  if (viewport <= 980) return false;
+  return viewport < readerWorkbenchWidthBudget({ includeContext: true });
+}
+
+function normalizeReaderWorkbenchLayout() {
+  if (!state.activeEntry || state.readerImmersive) return;
+  if (shouldAutoCollapseContext()) {
+    setAgentCollapsed(true, { persist: false, auto: true });
+    return;
+  }
+  if (state.agentAutoCollapsed && storage.getItem('qm_agent_collapsed') !== '1' && !shouldCollapseLeftForContext()) {
+    setAgentCollapsed(false, { persist: false });
+  }
 }
 
 function entryPaneWidthBounds() {
+  if (state.leftCollapsed && $('#app')?.classList.contains('reading')) return { min: 0, max: 0 };
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
-  const max = Math.min(ENTRY_PANE_MAX_WIDTH, Math.max(ENTRY_PANE_MIN_WIDTH, Math.floor(viewport * 0.45)));
-  return { min: ENTRY_PANE_MIN_WIDTH, max };
+  let max = Math.min(ENTRY_PANE_MAX_WIDTH, Math.max(ENTRY_PANE_MIN_WIDTH, Math.floor(viewport * 0.45)));
+  if (state.activeEntry && viewport > 980) {
+    const sidebarWidth = visibleElementWidth('#sidebar', state.sidebarCollapsed ? 64 : 232);
+    const agentWidth = state.agentCollapsed ? 0 : visibleElementWidth('#agent-pane', state.contextPaneWidth || CONTEXT_PANE_MIN_WIDTH);
+    const listResizerWidth = visibleElementWidth('#list-resizer', 4);
+    const contextResizerWidth = state.agentCollapsed ? 0 : visibleElementWidth('#context-resizer', 4);
+    const available = viewport - sidebarWidth - agentWidth - listResizerWidth - contextResizerWidth - minimumReaderPaneWidth();
+    max = Math.min(max, Math.max(ENTRY_PANE_MIN_WIDTH, Math.floor(available)));
+  }
+  const min = Math.min(ENTRY_PANE_MIN_WIDTH, Math.max(0, max));
+  return { min, max: Math.max(min, max) };
 }
 
 function clampEntryPaneWidth(width) {
@@ -7033,6 +8773,7 @@ function clampEntryPaneWidth(width) {
 }
 
 function setEntryPaneWidth(width, { persist: shouldPersist = true } = {}) {
+  if (state.leftCollapsed && $('#app')?.classList.contains('reading')) return;
   const next = clampEntryPaneWidth(width);
   state.entryPaneWidth = next;
   if (next) {
@@ -7042,12 +8783,39 @@ function setEntryPaneWidth(width, { persist: shouldPersist = true } = {}) {
     $('#app').style.removeProperty('--entry-width');
     if (shouldPersist) storage.removeItem('qm_entry_pane_width');
   }
+  updateSeparatorMetrics();
+}
+
+function visibleElementWidth(selector, fallback = 0) {
+  const el = $(selector);
+  if (!el) return fallback;
+  const style = getComputedStyle(el);
+  if (style.display === 'none') return 0;
+  const width = el.getBoundingClientRect().width;
+  return Number.isFinite(width) && width > 0 ? width : fallback;
+}
+
+function minimumReaderPaneWidth() {
+  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  if (viewport <= 980) return 0;
+  if (viewport <= 1280) return 640;
+  if (viewport <= 1500) return 700;
+  return READER_PANE_MIN_WIDTH;
 }
 
 function contextPaneWidthBounds() {
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
-  const max = Math.min(CONTEXT_PANE_MAX_WIDTH, Math.max(CONTEXT_PANE_MIN_WIDTH, Math.floor(viewport * 0.42)));
-  return { min: CONTEXT_PANE_MIN_WIDTH, max };
+  let max = Math.min(CONTEXT_PANE_MAX_WIDTH, Math.max(CONTEXT_PANE_MIN_WIDTH, Math.floor(viewport * 0.36)));
+  if (state.activeEntry && viewport > 980) {
+    const sidebarWidth = visibleElementWidth('#sidebar', state.sidebarCollapsed ? 64 : 232);
+    const entryWidth = visibleElementWidth('#entry-pane', state.entryPaneWidth || ENTRY_PANE_MIN_WIDTH);
+    const listResizerWidth = visibleElementWidth('#list-resizer', 4);
+    const contextResizerWidth = visibleElementWidth('#context-resizer', 4);
+    const available = viewport - sidebarWidth - entryWidth - listResizerWidth - contextResizerWidth - minimumReaderPaneWidth();
+    max = Math.min(max, Math.max(0, Math.floor(available)));
+  }
+  const min = Math.min(CONTEXT_PANE_MIN_WIDTH, Math.max(0, max));
+  return { min, max: Math.max(min, max) };
 }
 
 function clampContextPaneWidth(width) {
@@ -7058,6 +8826,13 @@ function clampContextPaneWidth(width) {
 }
 
 function setContextPaneWidth(width, { persist: shouldPersist = true } = {}) {
+  if (state.agentCollapsed) {
+    const n = Number(width);
+    if (Number.isFinite(n) && n > 0) state.contextPaneWidth = Math.round(n);
+    $('#app').style.removeProperty('--agent-width');
+    updateSeparatorMetrics();
+    return;
+  }
   const next = clampContextPaneWidth(width);
   state.contextPaneWidth = next;
   if (next) {
@@ -7066,6 +8841,28 @@ function setContextPaneWidth(width, { persist: shouldPersist = true } = {}) {
   } else {
     $('#app').style.removeProperty('--agent-width');
     if (shouldPersist) storage.removeItem('qm_context_pane_width');
+  }
+  updateSeparatorMetrics();
+}
+
+function updateSeparatorMetrics() {
+  const listResizer = $('#list-resizer');
+  if (listResizer) {
+    const bounds = entryPaneWidthBounds();
+    const current = state.leftCollapsed ? 0 : Math.round(visibleElementWidth('#entry-pane', state.entryPaneWidth || ENTRY_PANE_MIN_WIDTH));
+    listResizer.setAttribute('aria-controls', 'entry-pane');
+    listResizer.setAttribute('aria-valuemin', String(bounds.min));
+    listResizer.setAttribute('aria-valuemax', String(bounds.max));
+    listResizer.setAttribute('aria-valuenow', String(current));
+  }
+  const contextResizer = $('#context-resizer');
+  if (contextResizer) {
+    const bounds = contextPaneWidthBounds();
+    const current = state.agentCollapsed ? 0 : Math.round(visibleElementWidth('#agent-pane', state.contextPaneWidth || CONTEXT_PANE_MIN_WIDTH));
+    contextResizer.setAttribute('aria-controls', 'agent-pane');
+    contextResizer.setAttribute('aria-valuemin', String(bounds.min));
+    contextResizer.setAttribute('aria-valuemax', String(bounds.max));
+    contextResizer.setAttribute('aria-valuenow', String(current));
   }
 }
 
@@ -7148,12 +8945,23 @@ function setupContextResizer() {
 /* ---------- Events ---------- */
 $('#brand-home').onclick = goHomeAll;
 $$('.view-btn[data-view]').forEach(b => b.onclick = () => selectView(b.dataset.view));
-$('#nav-more-toggle').onclick = () => {
+const navMoreToggle = $('#nav-more-toggle');
+if (navMoreToggle) navMoreToggle.onclick = () => {
   state.sidebarMoreOpen = !state.sidebarMoreOpen;
   storage.setItem('qm_sidebar_more_open', state.sidebarMoreOpen ? '1' : '0');
   renderSidebarMore();
 };
 $('#sidebar-toggle').onclick = () => setSidebarCollapsed(!state.sidebarCollapsed);
+const leftCollapseToggle = $('#left-collapse-toggle');
+if (leftCollapseToggle) {
+  leftCollapseToggle.onclick = () => {
+    if (state.readerImmersive) {
+      setLeftCollapsed(false);
+      return;
+    }
+    setLeftCollapsed(!state.leftCollapsed);
+  };
+}
 $('#asset-dashboard-open').onclick = () => {
   state.assetSort = 'latest';
   selectAssetFilter(null);
@@ -7220,9 +9028,13 @@ $('#entry-list').onclick = async (e) => {
 };
 $('#refresh-btn').onclick = refreshAll;
 $('#source-refresh-btn').onclick = refreshCurrentSource;
+$('#reader-pane').addEventListener('pointerdown', (e) => {
+  if (articleContentLinkFromTarget(e.target)) suppressAnnotationPopoverForLink();
+}, true);
 $('#reader-pane').addEventListener('click', (e) => {
-  const anchor = e.target.closest('a');
-  if (!anchor || !anchor.closest('#reader-content, #rewrite-content, #translation-list')) return;
+  const anchor = articleContentLinkFromTarget(e.target);
+  if (!anchor) return;
+  suppressAnnotationPopoverForLink();
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
   if (!showArticleLinkMenu(anchor, e)) return;
   e.preventDefault();
@@ -7271,7 +9083,7 @@ async function setReaderReaction(reaction) {
       body: JSON.stringify({ reaction: next }),
     });
     if (data.stats) mergeEntryStats(entry.id, data.stats);
-    toast(next === 'like' ? '已点赞' : next === 'dislike' ? '已点踩' : '已取消反馈');
+    toast(next === 'like' ? '已点赞' : next === 'dislike' ? '已记录负反馈' : '已取消反馈');
   } catch (err) {
     toast('反馈失败: ' + err.message, 5000);
   }
@@ -7291,7 +9103,7 @@ async function deleteCurrentEntry() {
   const btn = $('#reader-delete');
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '删除中…';
+    setButtonIconLabel(btn, 'loader-circle', '删除中…', { className: 'app-icon app-icon-spin' });
   }
   try {
     await api(`/api/entry/${encodeURIComponent(entry.id)}`, {
@@ -7316,29 +9128,32 @@ async function deleteCurrentEntry() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '删除页面';
+      setButtonIconLabel(btn, 'trash-2', '删除页面');
     }
     renderAdminEntryControls();
   }
 }
 
 $('#reader-like').onclick = () => setReaderReaction('like');
-$('#reader-dislike').onclick = () => setReaderReaction('dislike');
-$('#reader-rail-like').onclick = () => setReaderReaction('like');
-$('#reader-rail-dislike').onclick = () => setReaderReaction('dislike');
+const readerRailLike = $('#reader-rail-like');
+if (readerRailLike) readerRailLike.onclick = () => setReaderReaction('like');
 $('#reader-rail-star').onclick = () => $('#reader-star').click();
 $('#reader-rail-comment').onclick = () => scrollReaderTarget('#reader-comments', { offset: 72 });
 $('#reader-rail-annotation').onclick = () => {
-  setContextPanel('annotations', { expand: !isCompactViewport() });
-  if (isCompactViewport()) scrollReaderTarget('#reader-annotations', { offset: 72 });
+  const visible = visibleAnnotationsForReader();
+  if (visible.length) jumpToAnnotation(visible[0].id);
+  else scrollReaderTarget('#reader-annotations', { offset: 72 });
 };
 $('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
 $('#reader-rail-translate').onclick = () => handleReaderTab('translation');
-$('#reader-fetch-original').onclick = fetchOriginalContent;
+const readerFetchOriginal = $('#reader-fetch-original');
+if (readerFetchOriginal) readerFetchOriginal.onclick = fetchOriginalContent;
 $('#reader-delete').onclick = deleteCurrentEntry;
 $('#reader-copy-link').onclick = () => {
-  copyReaderLink();
+  copyReaderContent();
 };
+$('#reader-prefs-toggle').onclick = () => setReaderPrefsOpen(!state.readerPrefsOpen);
+$('#reader-prefs-close').onclick = () => setReaderPrefsOpen(false);
 const readerAssetsToggle = $('#reader-assets-toggle');
 if (readerAssetsToggle) readerAssetsToggle.onclick = () => setReaderAssetsExpanded(!state.readerAssetsExpanded);
 $('#reader-toc').onclick = (e) => {
@@ -7376,7 +9191,11 @@ $$('.reader-tab').forEach(btn => {
   btn.onclick = () => handleReaderTab(btn.dataset.tab);
 });
 document.addEventListener('mouseup', (e) => {
-  if (e.target.closest('#annotation-popover, #agent-pane, #my-dashboard-page, #contributor-page')) return;
+  if (e.target.closest('#annotation-popover, #article-link-menu, #agent-pane, #my-dashboard-page, #contributor-page')) return;
+  if (articleContentLinkFromTarget(e.target)) {
+    suppressAnnotationPopoverForLink();
+    return;
+  }
   setTimeout(maybeOpenAnnotationPopover, 0);
 });
 document.addEventListener('selectionchange', () => {
@@ -7384,8 +9203,8 @@ document.addEventListener('selectionchange', () => {
   if ($('#annotation-popover')?.contains(document.activeElement)) return;
   hideAnnotationPopover();
 });
-$('#annotation-popover-cancel').onclick = hideAnnotationPopover;
 $('#annotation-popover-copy').onclick = copyAnnotationSelection;
+$('#annotation-popover-send-ai').onclick = sendAnnotationDraftToAgent;
 $('#annotation-popover-submit').onclick = submitAnnotationDraft;
 $('#annotation-popover-input').onkeydown = (e) => {
   if (e.key === 'Escape') {
@@ -7406,27 +9225,27 @@ function setAnnotationSurfaceFilter(value) {
 $('#annotation-surface-filter').onchange = (e) => {
   setAnnotationSurfaceFilter(e.target.value);
 };
-$('#side-annotation-surface-filter').onchange = (e) => {
-  setAnnotationSurfaceFilter(e.target.value);
-};
 $$('[data-context-panel]').forEach(btn => {
   btn.onclick = () => setContextPanel(btn.dataset.contextPanel, { expand: true });
 });
 $('#context-close').onclick = () => setAgentCollapsed(true);
-$('#article-info-body').onclick = (e) => {
-  const copy = e.target.closest('[data-info-copy]');
-  if (copy) {
-    copyText(copy.dataset.infoCopy || readerUrlFor().href, '文章链接已复制');
-    return;
-  }
-  const fetchBtn = e.target.closest('[data-info-fetch-original]');
-  if (fetchBtn && !fetchBtn.disabled) {
-    fetchOriginalContent();
-    return;
-  }
-  const asset = e.target.closest('[data-info-asset]');
-  if (asset) jumpToArticleAsset(asset.dataset.infoAsset);
-};
+const articleInfoBody = $('#article-info-body');
+if (articleInfoBody) {
+  articleInfoBody.onclick = (e) => {
+    const copy = e.target.closest('[data-info-copy]');
+    if (copy) {
+      copyText(copy.dataset.infoCopy || readerUrlFor().href, '文章链接已复制');
+      return;
+    }
+    const fetchBtn = e.target.closest('[data-info-fetch-original]');
+    if (fetchBtn && !fetchBtn.disabled) {
+      fetchOriginalContent();
+      return;
+    }
+    const asset = e.target.closest('[data-info-asset]');
+    if (asset) jumpToArticleAsset(asset.dataset.infoAsset);
+  };
+}
 $('#annotation-discussed-toggle').onclick = () => {
   state.annotationOnlyDiscussed = !state.annotationOnlyDiscussed;
   storage.setItem('qm_annotation_only_discussed', state.annotationOnlyDiscussed ? '1' : '0');
@@ -7456,6 +9275,11 @@ function handleAnnotationListClick(e) {
     jumpToAnnotation(focus.dataset.annotationFocus);
     return;
   }
+  const sendAi = e.target.closest('[data-annotation-send-ai]');
+  if (sendAi) {
+    sendAnnotationToAgent(sendAi.dataset.annotationSendAi);
+    return;
+  }
   const link = e.target.closest('[data-annotation-link]');
   if (link) {
     copyAnnotationLink(link.dataset.annotationLink);
@@ -7478,6 +9302,9 @@ function handleAnnotationListClick(e) {
 }
 $('#annotations-list').onclick = handleAnnotationListClick;
 $('#side-annotations-list').onclick = handleAnnotationListClick;
+$$('.annotation-margin').forEach(el => {
+  el.addEventListener('click', handleAnnotationListClick);
+});
 
 function handleAnnotationReplySubmit(e) {
   const form = e.target.closest('[data-annotation-reply-form]');
@@ -7487,6 +9314,9 @@ function handleAnnotationReplySubmit(e) {
 }
 $('#annotations-list').onsubmit = handleAnnotationReplySubmit;
 $('#side-annotations-list').onsubmit = handleAnnotationReplySubmit;
+$$('.annotation-margin').forEach(el => {
+  el.addEventListener('submit', handleAnnotationReplySubmit);
+});
 
 function handleAnnotationReplyInput(e) {
   const input = e.target.closest('.annotation-reply-form textarea');
@@ -7496,6 +9326,17 @@ function handleAnnotationReplyInput(e) {
 }
 $('#annotations-list').oninput = handleAnnotationReplyInput;
 $('#side-annotations-list').oninput = handleAnnotationReplyInput;
+$$('.annotation-margin').forEach(el => {
+  el.addEventListener('input', handleAnnotationReplyInput);
+});
+$('#annotation-side-focus').onclick = () => {
+  if (!state.activeEntry) return;
+  if (state.activeAnnotationId) {
+    jumpToAnnotation(state.activeAnnotationId);
+    return;
+  }
+  document.getElementById('reader-annotations')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+};
 $('#reader').onclick = (e) => {
   const mark = e.target.closest('.text-annotation-mark');
   if (mark) {
@@ -7534,6 +9375,11 @@ $('#comments-list').onclick = (e) => {
   const link = e.target.closest('[data-comment-link]');
   if (link) {
     copyCommentLink(link.dataset.commentLink);
+    return;
+  }
+  const sendAi = e.target.closest('[data-comment-send-ai]');
+  if (sendAi) {
+    sendCommentToAgent(sendAi.dataset.commentSendAi);
     return;
   }
   const edit = e.target.closest('[data-comment-edit]');
@@ -7587,7 +9433,7 @@ $('#agent-form').onsubmit = (e) => {
 };
 $('#agent-input').oninput = (e) => {
   e.target.style.height = 'auto';
-  e.target.style.height = `${Math.min(e.target.scrollHeight, 130)}px`;
+  e.target.style.height = `${Math.min(e.target.scrollHeight, 170)}px`;
   updateAgentControls();
 };
 $('#agent-input').onkeydown = (e) => {
@@ -7596,13 +9442,18 @@ $('#agent-input').onkeydown = (e) => {
     sendAgentMessage(e.currentTarget.value);
   }
 };
-$('#agent-close').onclick = () => setAgentCollapsed(true);
-$('#agent-open').onclick = () => setContextPanel(state.contextPanel || 'annotations', { expand: true });
-$('#agent-copy-thread').onclick = copyAgentThread;
+const agentClose = $('#agent-close');
+if (agentClose) agentClose.onclick = () => setAgentCollapsed(true);
+$('#agent-open').onclick = () => setContextPanel(state.contextPanel, { expand: true });
+const agentCopyThread = $('#agent-copy-thread');
+if (agentCopyThread) agentCopyThread.onclick = copyAgentThread;
 $('#agent-settings').onclick = () => openAiConfigModal('settings');
-$('#agent-profile-select').onchange = (e) => setAiProfileForPurpose('agent', e.target.value);
-$('#translation-profile-select').onchange = (e) => setAiProfileForPurpose('translation', e.target.value);
-$('#rewrite-profile-select').onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
+const agentProfileSelect = $('#agent-profile-select');
+if (agentProfileSelect) agentProfileSelect.onchange = (e) => setAiProfileForPurpose('agent', e.target.value);
+const translationProfileSelect = $('#translation-profile-select');
+if (translationProfileSelect) translationProfileSelect.onchange = (e) => setAiProfileForPurpose('translation', e.target.value);
+const rewriteProfileSelect = $('#rewrite-profile-select');
+if (rewriteProfileSelect) rewriteProfileSelect.onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
 $('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
 $('#account-settings-open').onclick = (e) => {
   e.stopPropagation();
@@ -7619,6 +9470,10 @@ $('#account-menu-profile').onclick = () => {
 $('#account-menu-admin').onclick = () => {
   setAccountMenuOpen(false);
   openAdminPage();
+};
+$('#account-menu-password').onclick = () => {
+  setAccountMenuOpen(false);
+  openChangePasswordModal();
 };
 $('#account-menu-logout').onclick = () => logout();
 $('#my-comments-close').onclick = closeMyCommentsModal;
@@ -7649,6 +9504,9 @@ $('#profile-links-editor').onclick = (e) => {
 $('#profile-links-editor').oninput = () => {
   state.profileLinksDraft = collectProfileLinks();
 };
+$$('[data-profile-reader-tab]').forEach(btn => {
+  btn.onclick = () => setProfileDefaultReaderTab(btn.dataset.profileReaderTab);
+});
 $('#profile-avatar-input').onchange = async (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
@@ -7743,9 +9601,56 @@ $('#ai-quick-models').onclick = (e) => {
 $('#ai-max-tokens').oninput = (e) => { e.target.value = e.target.value.replace(/[^\d]/g, ''); };
 $('#ai-fetch-models').onclick = fetchAiModels;
 $('#ai-test').onclick = testAiConnection;
-$$('.agent-prompt').forEach(btn => {
-  btn.onclick = () => sendAgentMessage(btn.dataset.prompt || btn.textContent);
-});
+$('.agent-prompts').onclick = (e) => {
+  if (e.target.closest('[data-agent-prompt-manage]')) {
+    openAgentPromptManager();
+    return;
+  }
+  const btn = e.target.closest('.agent-prompt');
+  if (!btn || btn.disabled) return;
+  sendAgentMessage(btn.dataset.prompt || btn.textContent);
+};
+$('#agent-messages').onclick = (e) => {
+  const btn = e.target.closest('.agent-prompt');
+  if (!btn) return;
+  sendAgentMessage(btn.dataset.prompt || btn.textContent);
+};
+$('#agent-prompt-close').onclick = closeAgentPromptManager;
+$('#agent-prompt-modal').onclick = (e) => { if (e.target.id === 'agent-prompt-modal') closeAgentPromptManager(); };
+$('#agent-prompt-form').onsubmit = (e) => {
+  e.preventDefault();
+  saveAgentPromptFromForm();
+};
+$('#agent-prompt-new').onclick = () => setAgentPromptForm(null);
+$('#agent-prompt-search').oninput = (e) => {
+  state.agentPromptQuery = e.target.value;
+  renderAgentPromptManager();
+};
+$('#agent-prompt-list').onclick = async (e) => {
+  const use = e.target.closest('[data-agent-prompt-use]');
+  if (use) {
+    const item = agentPromptById(use.dataset.agentPromptUse);
+    if (item) {
+      closeAgentPromptManager();
+      sendAgentMessage(item.prompt);
+    }
+    return;
+  }
+  const edit = e.target.closest('[data-agent-prompt-edit]');
+  if (edit) {
+    const item = agentPromptById(edit.dataset.agentPromptEdit);
+    if (item) setAgentPromptForm(item);
+    return;
+  }
+  const del = e.target.closest('[data-agent-prompt-delete]');
+  if (del) await deleteAgentPrompt(del.dataset.agentPromptDelete);
+};
+$('#reader-immersive').onclick = () => setReaderImmersive(!state.readerImmersive);
+$('#reader-font-size-down').onclick = () => setReaderPref('fontSize', state.readerPrefs.fontSize - 1);
+$('#reader-font-size-up').onclick = () => setReaderPref('fontSize', state.readerPrefs.fontSize + 1);
+$('#reader-line-height').oninput = (e) => setReaderPref('lineHeight', e.target.value);
+$('#reader-measure').oninput = (e) => setReaderPref('measure', e.target.value);
+$('#reader-font-family').onchange = (e) => setReaderPref('font', e.target.value);
 $('#manage-btn').onclick = () => { renderManage(); $('#manage-modal').classList.remove('hidden'); };
 $('#manage-close').onclick = () => $('#manage-modal').classList.add('hidden');
 $('#manage-modal').onclick = (e) => { if (e.target.id === 'manage-modal') $('#manage-modal').classList.add('hidden'); };
@@ -7756,6 +9661,12 @@ $$('.auth-tab').forEach(btn => { btn.onclick = () => setAuthMode(btn.dataset.mod
 $('#auth-form').onsubmit = (e) => {
   e.preventDefault();
   submitAuth();
+};
+$('#change-password-close').onclick = closeChangePasswordModal;
+$('#change-password-modal').onclick = (e) => { if (e.target.id === 'change-password-modal') closeChangePasswordModal(); };
+$('#change-password-form').onsubmit = (e) => {
+  e.preventDefault();
+  submitChangePassword();
 };
 $('#submit-link-open').onclick = openSubmitLinkModal;
 $('#submit-link-close').onclick = closeSubmitLinkModal;
@@ -7795,24 +9706,148 @@ window.addEventListener('error', (e) => {
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.account-strip')) setAccountMenuOpen(false);
   if (!e.target.closest('#article-link-menu')) hideArticleLinkMenu();
+  if (!e.target.closest('#reader-preferences, #reader-prefs-toggle')) setReaderPrefsOpen(false);
 });
 
-document.addEventListener('keydown', (e) => {
-  if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+function isShortcutEditableTarget(target) {
+  const el = target && target.nodeType === Node.ELEMENT_NODE ? target : target?.parentElement;
+  if (!el) return false;
+  return Boolean(el.closest('input, textarea, select, [contenteditable="true"]'));
+}
+
+function readerNavClass(direction, phase) {
+  const dir = direction > 0 ? 'next' : 'prev';
+  return `reader-nav-${phase}-${dir}`;
+}
+
+function clearReaderNavClasses(reader = $('#reader')) {
+  if (!reader) return;
+  reader.classList.remove(
+    'reader-nav-exit-next',
+    'reader-nav-exit-prev',
+    'reader-nav-enter-next',
+    'reader-nav-enter-prev',
+    'reader-nav-edge-next',
+    'reader-nav-edge-prev',
+  );
+}
+
+function pulseReaderNavEdge(direction) {
+  const reader = $('#reader');
+  if (!reader) return;
+  const cls = readerNavClass(direction, 'edge');
+  clearReaderNavClasses(reader);
+  reader.classList.add(cls);
+  setTimeout(() => reader.classList.remove(cls), 260);
+}
+
+async function openVisibleEntryWithMotion(entry, direction) {
+  if (!entry || state.readerNavBusy) return;
+  state.readerNavBusy = true;
+  const reader = $('#reader');
+  clearReaderNavClasses(reader);
+  reader?.classList.add(readerNavClass(direction, 'exit'));
+  try {
+    await delay(120);
+    await openEntry(entry);
+    const nextReader = $('#reader');
+    clearReaderNavClasses(nextReader);
+    nextReader?.classList.add(readerNavClass(direction, 'enter'));
+    setTimeout(() => clearReaderNavClasses(nextReader), 280);
+  } finally {
+    state.readerNavBusy = false;
+  }
+}
+
+function moveVisibleEntry(delta, { notifyEdge = false } = {}) {
   const list = visibleEntries();
-  const idx = list.findIndex(x => x.id === state.activeEntry?.id);
-  if (e.key === 'j' && idx < list.length - 1) openEntry(list[idx + 1]);
-  if (e.key === 'k' && idx > 0) openEntry(list[idx - 1]);
+  if (!list.length) {
+    if (notifyEdge) toast('当前列表没有文章');
+    return;
+  }
+  const idx = list.findIndex(item => item.id === state.activeEntry?.id);
+  const fallback = delta > 0 ? 0 : list.length - 1;
+  if (idx < 0 && state.activeEntry) {
+    if (notifyEdge) toast('当前文章不在当前列表');
+    return;
+  }
+  const nextIndex = idx < 0 ? fallback : idx + delta;
+  if (nextIndex < 0 || nextIndex >= list.length) {
+    if (notifyEdge) toast(delta > 0 ? '已是当前列表最后一篇' : '已是当前列表第一篇');
+    pulseReaderNavEdge(delta);
+    return;
+  }
+  const next = list[nextIndex];
+  if (!next || next.id === state.activeEntry?.id) {
+    if (notifyEdge) toast(delta > 0 ? '已是当前列表最后一篇' : '已是当前列表第一篇');
+    pulseReaderNavEdge(delta);
+    return;
+  }
+  openVisibleEntryWithMotion(next, delta);
+}
+
+function moveReaderVersion(delta) {
+  if (!state.activeEntry) return;
+  const idx = READER_NAV_TABS.indexOf(state.readerTab);
+  const next = READER_NAV_TABS[((idx < 0 ? 0 : idx) + delta + READER_NAV_TABS.length) % READER_NAV_TABS.length];
+  handleReaderTab(next);
+}
+
+document.addEventListener('keydown', (e) => {
+  const editable = isShortcutEditableTarget(e.target);
   if (e.key === 'Escape') {
+    if (state.readerImmersive) setReaderImmersive(false);
+    setReaderPrefsOpen(false);
     document.getElementById('app').classList.remove('reading');
     setAccountMenuOpen(false);
     $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
     $('#submit-link-modal').classList.add('hidden');
+    $('#agent-prompt-modal').classList.add('hidden');
     hideArticleLinkMenu();
     if (state.workspacePage === 'dashboard') closeMyCommentsModal();
     else if (state.workspacePage === 'contributor') closeContributorModal();
     else if (state.workspacePage === 'admin') closeAdminPage();
+    return;
+  }
+  if (editable || e.metaKey || e.ctrlKey) return;
+  if (e.key === 'j' || (e.key === 'ArrowDown' && e.target.closest('#entry-pane'))) {
+    e.preventDefault();
+    moveVisibleEntry(1, { notifyEdge: e.key === 'j' });
+    return;
+  }
+  if (e.key === 'k' || (e.key === 'ArrowUp' && e.target.closest('#entry-pane'))) {
+    e.preventDefault();
+    moveVisibleEntry(-1, { notifyEdge: e.key === 'k' });
+    return;
+  }
+  if (state.activeEntry && e.key === 'ArrowRight') {
+    e.preventDefault();
+    moveVisibleEntry(1, { notifyEdge: true });
+    return;
+  }
+  if (state.activeEntry && e.key === 'ArrowLeft') {
+    e.preventDefault();
+    moveVisibleEntry(-1, { notifyEdge: true });
+    return;
+  }
+  if (!state.activeEntry) return;
+  const key = e.key.toLowerCase();
+  if (key === 's') {
+    e.preventDefault();
+    $('#reader-star')?.click();
+  } else if (key === 'l') {
+    e.preventDefault();
+    setReaderReaction('like');
+  } else if (key === 'a') {
+    e.preventDefault();
+    setContextPanel('agent', { expand: true });
+  } else if (key === 'c') {
+    e.preventDefault();
+    $('#reader-copy-link')?.click();
+  } else if (key === 'i') {
+    e.preventDefault();
+    setReaderImmersive(!state.readerImmersive);
   }
 });
 
@@ -7822,6 +9857,7 @@ window.addEventListener('popstate', () => {
 
 window.addEventListener('resize', () => {
   hideArticleLinkMenu();
+  normalizeReaderWorkbenchLayout();
   if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
 });
@@ -7830,10 +9866,14 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
 /* ---------- Init ---------- */
 (async function init() {
   document.body.dataset.theme = storage.getItem('fr_theme') || 'light';
+  hydrateLucideIcons();
   loadAiProfilesForScope();
+  renderAgentPrompts();
+  applyReaderPrefs();
   renderAiSettings();
   renderAuthState();
   setSidebarCollapsed(state.sidebarCollapsed);
+  setLeftCollapsed(state.leftCollapsed);
   setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   setupListResizer();
   setContextPaneWidth(state.contextPaneWidth, { persist: false });
