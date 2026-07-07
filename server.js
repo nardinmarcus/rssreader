@@ -1879,6 +1879,9 @@ function entryPlainText(entry) {
 
 function shouldAutoFetchOriginal(entry) {
   if (!entry || !/^https?:\/\//i.test(entry.link || '')) return false;
+  if (entry.sourceId === 'hackernews') {
+    return !entry.originalFetchedAt && !/news\.ycombinator\.com\/item\?/i.test(entry.link || '');
+  }
   const contentText = plainText(entry.content);
   const summaryText = plainText(entry.summary);
   const textLength = (contentText || summaryText).length;
