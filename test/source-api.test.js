@@ -150,6 +150,45 @@ test('source management API enforces visibility, validation, ordering, and persi
   }
 });
 
+test('an administrator password changed in the UI survives a server restart', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir();
+  const changedPassword = 'changed-password-456';
+  let server = null;
+  try {
+    server = await startServer(dataDir);
+    const cookie = await adminCookie(server.baseUrl);
+    const changed = await jsonRequest(server.baseUrl, '/api/me/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        currentPassword: 'test-password-123',
+        newPassword: changedPassword,
+      }),
+    });
+    assert.equal(changed.response.status, 200, JSON.stringify(changed.body));
+
+    await stopServer(server);
+    server = await startServer(dataDir);
+
+    const bootstrapLogin = await jsonRequest(server.baseUrl, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'test-password-123' }),
+    });
+    assert.equal(bootstrapLogin.response.status, 401);
+
+    const changedLogin = await jsonRequest(server.baseUrl, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: changedPassword }),
+    });
+    assert.equal(changedLogin.response.status, 200, JSON.stringify(changedLogin.body));
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('Namoo creation draft runs through the authenticated API and persists the mock model result', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir();
   const capturePath = path.join(dataDir, 'mock-ai-request.json');

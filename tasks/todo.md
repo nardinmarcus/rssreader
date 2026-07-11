@@ -64,3 +64,30 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Deployed one `namoo-reader` container at `127.0.0.1:3088`, with HTTPS 200 at `https://rss.namooca.com`, 530 active SQLite articles, stable source preference hash and first-entry ID after restart, and zero recent error log lines.
 - Production backup: `/opt/rssreader-backups/namoo-reader-20260711-033134`.
 - Remaining acceptance item: configure one real AI provider in production and pass `/api/ai/test`. The deterministic mock-model API flow already passes end to end, but production currently reports no server or browser API key.
+
+---
+
+# Administrator login recovery
+
+## Plan
+
+- [x] Reproduce the login response and verify the configured production account without exposing credentials.
+- [x] Preserve an existing administrator password when the service restarts.
+- [x] Add regression coverage for changing the password and restarting the server.
+- [x] Deploy the fix, rotate to a one-time recovery password, and verify login plus persistence after restart.
+- [x] Record the recovery lesson and live verification evidence.
+
+## Verification contract
+
+1. Authentication baseline -> verify: configured credentials return HTTP 200 and a mismatched password returns the reported HTTP 401 error.
+2. Password persistence -> verify: a password changed through `/api/me/password` remains valid after server restart and the bootstrap password remains invalid.
+3. Production recovery -> verify: the one-time recovery password logs in over HTTPS, sets a secure session cookie, and still works after a controlled container restart.
+
+## Review
+
+- Root cause: startup admin seeding unconditionally replaced the stored password hash with `ADMIN_PASSWORD`, so a password changed in the web UI could be silently reverted after restart.
+- Changed existing-account seeding to preserve the stored password while still maintaining the configured administrator name and role; `ADMIN_PASSWORD` is now bootstrap-only.
+- Added an API regression test that changes the administrator password, restarts the server, rejects the bootstrap password, and accepts the changed password.
+- Passed the focused regression, all 25 automated tests, syntax checks, and `git diff --check`.
+- Deployed the rebuilt image to the existing single `namoo-reader` container. After a second controlled restart, internal and public HTTPS login returned 200, the old bootstrap password returned 401, and the session cookie remained Secure, HttpOnly, and SameSite=Lax.
+- Consistent SQLite backup: `/opt/rssreader-backups/login-fix-20260711-124510/qmreader-login-fix-20260711-124510.sqlite`.

@@ -21,3 +21,5 @@
 - A VM startup command may time out after the service has already become healthy; check `orb status` and `docker info` before treating the timeout as a failed start or retrying it.
 - Node 26 stdin scripts cannot mix CommonJS `require()` with top-level `await`; wrap operational smoke scripts in an async IIFE so module-format detection remains unambiguous.
 - Do not use `docker exec node scripts/refresh-worker.js` as a live-server refresh path without a subsequent restart: it bypasses the parent process's `reloadFetcherAfterWorker()` hook, so SQLite and `cache.json` update while the serving process keeps stale in-memory cache.
+- Treat an environment-provided administrator password as a bootstrap secret, not a permanent source of truth. Once the account exists, startup seeding must preserve password changes made through the authenticated UI; prove this with a change-password-and-restart regression test.
+- Never embed a quoted Node heredoc inside another single-quoted SSH script. Send the heredoc directly to `ssh host 'docker exec ... node -'` and keep restart/verification as a separate command so shell parsing fails before any state mutation.

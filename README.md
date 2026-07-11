@@ -67,7 +67,7 @@ ADMIN_PASSWORD=replace-with-a-strong-password
 ADMIN_NAME=大月 Namoo
 ```
 
-服务启动时会创建或更新这个管理员。不要把 `.env`、SQLite、缓存和日志提交到 Git。
+服务首次启动时会用这组配置创建管理员；后续启动只维护管理员身份和公开名称，不会覆盖在网页中修改过的密码。不要把 `.env`、SQLite、缓存和日志提交到 Git。
 
 ## AI 配置
 
@@ -91,7 +91,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 | `PORT` | `8080` | Node 监听端口 |
 | `SITE_URL` | `https://rss.namooca.com` | 公开站点地址和统计域名 |
 | `ADMIN_EMAIL` | 空 | 管理员邮箱 |
-| `ADMIN_PASSWORD` | 空 | 管理员密码 |
+| `ADMIN_PASSWORD` | 空 | 首次创建管理员时使用的引导密码 |
 | `ADMIN_NAME` | `大月 Namoo` | 管理员公开名称 |
 | `COOKIE_SECURE` | 空 | 设置为 `1` 时只通过 HTTPS 发送 session cookie |
 | `RSSHUB_INSTANCES` | 三个公共实例 | 逗号分隔的 RSSHub 地址，按顺序回退 |
