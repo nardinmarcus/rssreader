@@ -92,3 +92,32 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Passed the focused regression, all 25 automated tests, syntax checks, and `git diff --check`.
 - Deployed the rebuilt image to the existing single `namoo-reader` container. After a second controlled restart, internal and public HTTPS login returned 200, the old bootstrap password returned 401, and the session cookie remained Secure, HttpOnly, and SameSite=Lax.
 - Consistent SQLite backup: `/opt/rssreader-backups/login-fix-20260711-124510/qmreader-login-fix-20260711-124510.sqlite`.
+
+---
+
+# Sidebar drag ordering and category visibility
+
+## Plan
+
+- [x] Reproduce the arrow-only ordering, disappearing zero-unread counts, and off-screen categories in production.
+- [x] Replace arrow controls with direct drag-and-drop ordering inside the active category.
+- [x] Keep article, news, and podcast category selectors visible at the top of the source list.
+- [x] Show each source's total stored article count without competing with ordering controls.
+- [x] Add a regression guard, deploy to the existing container, and verify the real rendered sidebar.
+
+## Verification contract
+
+1. Ordering -> verify: an administrator can drag a source across multiple positions inside one category and the order survives reload.
+2. Counts -> verify: source totals remain visible before, during, and after dragging, including a source with zero unread entries.
+3. Categories -> verify: article, news, and podcast selectors are simultaneously visible without scrolling through another category's sources.
+
+## Review
+
+- Root cause: `renderSidebar()` implemented the requested ordering as two arrow buttons, rendered an empty value when unread count reached zero, and stacked 38 article sources before the news and podcast headings.
+- Replaced the arrows with whole-row drag ordering and before/after drop indicators. A multi-position drop reuses the existing adjacent-move API until the visible source reaches the requested position, including across disabled sources.
+- Added sticky article/news/podcast category tabs. Full-width sidebars show labels and enabled-source counts; collapsed sidebars retain short category selectors.
+- Source rows now display the server-provided persisted `entryCount` total with fixed flex sizing, so zero and multi-digit counts remain visible without competing with sorting controls.
+- The regression test failed on the arrow implementation and now passes. All 26 automated tests, syntax checks, and `git diff --check` pass.
+- Local browser verification moved OpenAI from first to third, preserved the order after reload, exposed all three categories, displayed zero totals, and passed the collapsed-sidebar check.
+- Production verification repeated the multi-position drag and reload, then restored the original order. The source-preference hash returned to `2c9934273da0fb527ef7424f3c543afbc370d44496b9386d84c38f3b5413deaa`, recent error logs remained empty, and the public homepage returned HTTP 200.
+- Production backup: `/opt/rssreader-backups/sidebar-drag-20260711-172608`.

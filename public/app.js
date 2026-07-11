@@ -695,6 +695,7 @@ const state = {
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
   leftCollapsed: storage.getItem('qm_left_collapsed') === '1',
   sidebarMoreOpen: storage.getItem('qm_sidebar_more_open') === '1',
+  sidebarCategory: normalizeSidebarCategory(storage.getItem('qm_sidebar_category')),
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   contextPaneWidth: readStoredNumber('qm_context_pane_width'),
   me: null,
@@ -714,6 +715,8 @@ const state = {
 };
 const sourceRefreshHintAt = new Map();
 const sourceRefreshPolls = new Map();
+let sidebarDragSourceId = '';
+let sidebarReordering = false;
 
 function routeStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -1955,50 +1958,131 @@ function unreadCountFor(pred) {
   return state.entries.filter(e => pred(e) && !state.read.has(e.id)).length;
 }
 
+function entryCountForSource(source) {
+  const count = Number(source && source.entryCount);
+  return Number.isFinite(count) && count >= 0 ? count : 0;
+}
+
+function normalizeSidebarCategory(category) {
+  return Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category) ? category : 'article';
+}
+
+function setSidebarCategory(category) {
+  state.sidebarCategory = normalizeSidebarCategory(category);
+  storage.setItem('qm_sidebar_category', state.sidebarCategory);
+}
+
+function clearSidebarDragIndicators(wrap = $('#feed-groups')) {
+  if (!wrap) return;
+  $$('.feed-row.drag-before, .feed-row.drag-after, .feed-row.dragging', wrap).forEach(row => {
+    row.classList.remove('drag-before', 'drag-after', 'dragging');
+  });
+}
+
 function renderSidebar() {
   const groups = { article: [], news: [], podcast: [] };
   for (const s of state.sources) if (s.enabled) groups[s.category]?.push(s);
 
+  if (state.filterSource) {
+    const selected = state.sources.find(source => source.id === state.filterSource);
+    if (selected) setSidebarCategory(selected.category);
+  } else if (state.filterCategory) {
+    setSidebarCategory(state.filterCategory);
+  }
+  const activeCategory = normalizeSidebarCategory(state.sidebarCategory);
+
   const wrap = $('#feed-groups');
   wrap.innerHTML = '';
-  for (const [cat, list] of Object.entries(groups)) {
-    if (!list.length) continue;
-    const label = document.createElement('div');
-    label.className = 'group-label';
-    label.textContent = CATEGORY_LABELS[cat];
-    label.style.cursor = 'pointer';
-    label.title = `查看全部${CATEGORY_LABELS[cat]}`;
-    label.onclick = () => selectCategory(cat);
-    wrap.appendChild(label);
 
-    for (const [sourceIndex, s] of list.entries()) {
-      const row = document.createElement('div');
-      row.className = 'feed-row';
-      const btn = document.createElement('button');
-      btn.className = 'feed-item' + (state.filterSource === s.id ? ' active' : '');
-      const unread = unreadCountFor(e => e.sourceId === s.id);
-      btn.innerHTML = `${faviconHtml(s.siteUrl, s.name)}
-        <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
-        ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
-        <span class="fcount">${unread || ''}</span>`;
-      btn.onclick = () => selectSource(s.id);
-      row.appendChild(btn);
-      if (isAdmin()) {
-        const controls = document.createElement('span');
-        controls.className = 'feed-order-controls';
-        controls.innerHTML = `
-          <button type="button" data-source-move="up" title="上移 ${escapeHtml(s.name)}" aria-label="上移 ${escapeHtml(s.name)}" ${sourceIndex === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" data-source-move="down" title="下移 ${escapeHtml(s.name)}" aria-label="下移 ${escapeHtml(s.name)}" ${sourceIndex === list.length - 1 ? 'disabled' : ''}>↓</button>`;
-        controls.querySelectorAll('[data-source-move]').forEach(moveButton => {
-          moveButton.onclick = event => {
-            event.stopPropagation();
-            moveSidebarSource(s.id, moveButton.dataset.sourceMove, moveButton);
-          };
-        });
-        row.appendChild(controls);
-      }
-      wrap.appendChild(row);
+  const categoryTabs = document.createElement('div');
+  categoryTabs.className = 'sidebar-category-tabs';
+  categoryTabs.setAttribute('role', 'tablist');
+  categoryTabs.setAttribute('aria-label', '信息源分类');
+  for (const [category, label] of Object.entries(CATEGORY_LABELS)) {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'sidebar-category-tab' + (category === activeCategory ? ' active' : '');
+    tab.dataset.sidebarCategory = category;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', category === activeCategory ? 'true' : 'false');
+    tab.title = `查看${label}信息源`;
+    tab.innerHTML = `
+      <span class="sidebar-category-label">${escapeHtml(label)}</span>
+      <span class="sidebar-category-count">${groups[category].length}</span>
+      <span class="sidebar-category-short" aria-hidden="true">${escapeHtml(label.slice(0, 1))}</span>`;
+    tab.onclick = () => selectCategory(category);
+    categoryTabs.appendChild(tab);
+  }
+  wrap.appendChild(categoryTabs);
+
+  const list = groups[activeCategory];
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'sidebar-category-empty';
+    empty.textContent = `${CATEGORY_LABELS[activeCategory]}分类暂无已启用信息源`;
+    wrap.appendChild(empty);
+  }
+
+  for (const s of list) {
+    const row = document.createElement('div');
+    row.className = 'feed-row';
+    row.dataset.sourceId = s.id;
+    row.dataset.category = activeCategory;
+
+    if (isAdmin()) {
+      row.draggable = true;
+      row.title = `拖动调整 ${s.name} 的顺序`;
+      const handle = document.createElement('span');
+      handle.className = 'feed-drag-handle';
+      handle.setAttribute('aria-hidden', 'true');
+      handle.textContent = '⋮⋮';
+      row.appendChild(handle);
+
+      row.addEventListener('dragstart', event => {
+        if (sidebarReordering) {
+          event.preventDefault();
+          return;
+        }
+        sidebarDragSourceId = s.id;
+        row.classList.add('dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', s.id);
+        }
+      });
+      row.addEventListener('dragover', event => {
+        const dragged = state.sources.find(source => source.id === sidebarDragSourceId);
+        if (!dragged || dragged.id === s.id || dragged.category !== activeCategory) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        clearSidebarDragIndicators(wrap);
+        const rect = row.getBoundingClientRect();
+        row.classList.add(event.clientY < rect.top + rect.height / 2 ? 'drag-before' : 'drag-after');
+      });
+      row.addEventListener('drop', event => {
+        event.preventDefault();
+        const sourceId = (event.dataTransfer && event.dataTransfer.getData('text/plain')) || sidebarDragSourceId;
+        const placement = row.classList.contains('drag-after') ? 'after' : 'before';
+        clearSidebarDragIndicators(wrap);
+        sidebarDragSourceId = '';
+        reorderSidebarSource(sourceId, s.id, placement);
+      });
+      row.addEventListener('dragend', () => {
+        sidebarDragSourceId = '';
+        clearSidebarDragIndicators(wrap);
+      });
     }
+
+    const btn = document.createElement('button');
+    btn.className = 'feed-item' + (state.filterSource === s.id ? ' active' : '');
+    const total = entryCountForSource(s);
+    btn.innerHTML = `${faviconHtml(s.siteUrl, s.name)}
+      <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
+      ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
+      <span class="fcount" title="${total} 篇文章" aria-label="${total} 篇文章">${total}</span>`;
+    btn.onclick = () => selectSource(s.id);
+    row.appendChild(btn);
+    wrap.appendChild(row);
   }
 
   $('#count-all').textContent = state.entries.length || '';
@@ -2013,23 +2097,50 @@ function renderSidebar() {
   $$('.view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
 }
 
-async function moveSidebarSource(sourceId, direction, button = null) {
-  if (!isAdmin()) return;
-  if (button) button.disabled = true;
+async function reorderSidebarSource(sourceId, targetId, placement = 'before') {
+  if (!isAdmin() || sidebarReordering) return;
+  const source = state.sources.find(item => item.id === sourceId && item.enabled);
+  const target = state.sources.find(item => item.id === targetId && item.enabled);
+  if (!source || !target || source.id === target.id || source.category !== target.category) return;
+
+  const initial = state.sources.filter(item => item.enabled && item.category === source.category);
+  const sourceIndex = initial.findIndex(item => item.id === source.id);
+  const targetIndex = initial.findIndex(item => item.id === target.id);
+  let desiredIndex = targetIndex + (placement === 'after' ? 1 : 0);
+  if (sourceIndex < desiredIndex) desiredIndex -= 1;
+  if (sourceIndex === desiredIndex) return;
+
+  sidebarReordering = true;
   try {
-    const data = await api(`/api/sources/${encodeURIComponent(sourceId)}/move`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ direction }),
-    });
-    if (Array.isArray(data.sources)) state.sources = data.sources;
+    let moved = false;
+    for (let attempt = 0; attempt <= state.sources.length; attempt += 1) {
+      const visible = state.sources.filter(item => item.enabled && item.category === source.category);
+      const currentIndex = visible.findIndex(item => item.id === source.id);
+      if (currentIndex === desiredIndex) break;
+      const direction = currentIndex < desiredIndex ? 'down' : 'up';
+      const data = await api(`/api/sources/${encodeURIComponent(source.id)}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction }),
+      });
+      if (Array.isArray(data.sources)) state.sources = data.sources;
+      if (!data.moved) throw new Error('已经到达当前分类边界');
+      moved = true;
+    }
+
+    const final = state.sources.filter(item => item.enabled && item.category === source.category);
+    if (final.findIndex(item => item.id === source.id) !== desiredIndex) {
+      throw new Error('未能保存目标顺序');
+    }
     renderSidebar();
     if (!$('#manage-modal')?.classList.contains('hidden')) renderManage();
     if (state.workspacePage === 'admin') renderManage('#admin-manage-list', '#admin-manage-status');
-    toast(data.moved ? '信息源顺序已保存' : '已经到达当前分类边界');
+    if (moved) toast('信息源顺序已保存');
   } catch (error) {
     toast('调整顺序失败: ' + error.message, 5000);
     renderSidebar();
+  } finally {
+    sidebarReordering = false;
   }
 }
 
@@ -7948,8 +8059,9 @@ function selectSource(id) {
   reload();
 }
 function selectCategory(cat) {
+  setSidebarCategory(cat);
   state.view = 'all';
-  state.filterCategory = state.filterCategory === cat ? null : cat;
+  state.filterCategory = normalizeSidebarCategory(cat);
   state.filterSource = null;
   state.assetFilter = null;
   state.assetSort = 'latest';

@@ -111,3 +111,19 @@ test('brand icons contain the expected formats and dimensions', () => {
     assert.equal(png.readUInt32BE(20), expectedSize);
   }
 });
+
+test('sidebar exposes category tabs, total counts, and drag ordering without arrow controls', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+
+  assert.match(app, /sidebar-category-tabs/);
+  assert.match(app, /row\.draggable = true/);
+  assert.match(app, /dragstart/);
+  assert.match(app, /dragover/);
+  assert.match(app, /drop/);
+  assert.match(app, /entryCountForSource/);
+  assert.doesNotMatch(app, /data-source-move=/);
+  assert.match(styles, /\.feed-item \.fcount[^}]*flex:\s*none/s);
+  assert.match(styles, /\.feed-row\.drag-before/);
+  assert.match(styles, /\.feed-row\.drag-after/);
+});
