@@ -45,7 +45,7 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - [x] Receive user review of the written specification.
 - [x] Produce the detailed implementation plan.
 - [x] Receive user approval of the implementation plan.
-- [ ] Implement, verify, and deploy the approved changes.
+- [x] Implement, verify, and deploy the approved changes.
 
 ## Verification contract
 
@@ -60,10 +60,11 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Added authenticated source management APIs and browser-tested the admin label, priority, enabled, and fetch-status filters, plus enable/disable and up/down controls.
 - Replaced the writing prompt with the six-part Namoo creation draft, preserved source links, and enforced explicit placeholders for first-hand experience and personal judgment.
 - Replaced public branding, metadata, favicon, touch icon, screenshots, Compose naming, documentation, analytics defaults, and admin defaults while preserving the approved light and dark themes.
-- Passed 24 automated tests, syntax checks, the Chinese punctuation gate, zero-vulnerability production audit, Docker Compose validation, local browser tests, and a final VPS Docker image build.
+- Passed 25 automated tests, syntax checks, the Chinese punctuation gate, zero-vulnerability production audit, Docker Compose validation, local browser tests, and a final VPS Docker image build.
 - Deployed one `namoo-reader` container at `127.0.0.1:3088`, with HTTPS 200 at `https://rss.namooca.com`, 530 active SQLite articles, stable source preference hash and first-entry ID after restart, and zero recent error log lines.
 - Production backup: `/opt/rssreader-backups/namoo-reader-20260711-033134`.
-- Remaining acceptance item: configure one real AI provider in production and pass `/api/ai/test`. The deterministic mock-model API flow already passes end to end, but production currently reports no server or browser API key.
+- Configured a browser-scoped DeepSeek profile using `deepseek-v4-flash`; the live `/api/ai/test` flow reported a successful connection. The API Key remains in the trusted browser and is not stored in the server database or repository.
+- Completed real-model production acceptance on entry `1936c586ef4a`: generated and persisted a 27-block Chinese translation, a 9-heading Namoo creation draft, and a two-message article conversation. The chat survived a browser reload, the database contained all three asset types, recent AI error logs were empty, and the public homepage remained HTTP 200.
 
 ---
 
