@@ -1,6 +1,6 @@
 # Contributing
 
-QMReader is primarily maintained for 向阳乔木's reading workflow, but focused contributions are welcome.
+Namoo Reader is primarily maintained for 大月 Namoo's AI reading and creation workflow, but focused contributions are welcome.
 
 ## Good Contribution Areas
 
@@ -26,6 +26,7 @@ node --check lib/store.js
 node --check lib/sources.js
 node --check scripts/refresh-worker.js
 node --check public/app.js
+npm test
 ```
 
 4. If the change affects live behavior, describe how you verified it locally or on a test deployment.

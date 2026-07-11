@@ -1,7 +1,7 @@
 services:
-  qmreader:
+  namoo-reader:
     build: .
-    container_name: qiaomu-qmreader
+    container_name: namoo-reader
     restart: unless-stopped
     env_file:
       - .env

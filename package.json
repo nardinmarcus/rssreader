@@ -1,12 +1,12 @@
 {
-  "name": "qmreader",
+  "name": "namoo-reader",
   "version": "1.0.0",
-  "description": "Neutral online RSS reader powered by RSSHub and direct feeds",
+  "description": "Personal AI RSS reading and creation-draft workflow for Namoo",
   "license": "MIT",
-  "homepage": "https://rss.qiaomu.ai",
+  "homepage": "https://rss.namooca.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joeseesun/qmreader.git"
+    "url": "https://github.com/nardinmarcus/rssreader.git"
   },
   "keywords": [
     "rss",
@@ -20,6 +20,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "test": "node --test test/*.test.js",
     "icons:generate": "node scripts/generate-lucide-icons.js",
     "refresh:worker": "node scripts/refresh-worker.js --kind=refresh"
   },

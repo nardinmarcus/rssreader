@@ -10,6 +10,14 @@ const store = require('./lib/store');
 const app = express();
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
+const SITE_URL = (() => {
+  try {
+    return new URL(String(process.env.SITE_URL || 'https://rss.namooca.com').trim()).toString().replace(/\/$/, '');
+  } catch {
+    return 'https://rss.namooca.com';
+  }
+})();
+const SITE_HOSTNAME = new URL(SITE_URL).hostname;
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAILY_REFRESH_HOUR_SHANGHAI = 8;
@@ -27,36 +35,36 @@ const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_I
   .split(',')
   .map(id => id.trim())
   .filter(Boolean));
-const SESSION_COOKIE = 'qm_session';
+const SESSION_COOKIE = 'namoo_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
 const REFRESH_WORKER_PATH = path.join(__dirname, 'scripts', 'refresh-worker.js');
-const DEFAULT_TITLE = 'QMReader · RSS 阅读器';
-const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。';
+const DEFAULT_TITLE = 'Namoo Reader · RSS 阅读器';
+const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const UMAMI_WEBSITE_ID = String(process.env.UMAMI_WEBSITE_ID || '').trim();
-const UMAMI_SRC = String(process.env.UMAMI_SRC || 'https://umami.qiaomu.ai/script.js').trim();
+const UMAMI_SRC = String(process.env.UMAMI_SRC || '').trim();
 const ARTICLE_SHORT_ID_LENGTH = 12;
 const ASSET_DIRECTORY_META = {
   translation: {
     label: '中文翻译',
-    description: 'QMReader 已沉淀中文双语对照翻译的公开 RSS 文章目录。',
+    description: 'Namoo Reader 已沉淀中文双语对照翻译的公开 RSS 文章目录。',
   },
   rewrite: {
-    label: '乔木风格重写',
-    description: 'QMReader 已沉淀乔木风格中文重写的公开 RSS 文章目录。',
+    label: 'Namoo 创作草稿',
+    description: 'Namoo Reader 已沉淀围绕原文事实、创作角度和真人补充位生成的公开创作草稿目录。',
   },
   comments: {
     label: '人工点评',
-    description: 'QMReader 已沉淀人工点评的公开 RSS 文章目录。',
+    description: 'Namoo Reader 已沉淀人工点评的公开 RSS 文章目录。',
   },
   annotations: {
     label: '划线点评',
-    description: 'QMReader 已沉淀文章划线点评和段落讨论的公开 RSS 文章目录。',
+    description: 'Namoo Reader 已沉淀文章划线点评和段落讨论的公开 RSS 文章目录。',
   },
   chat: {
     label: '文章对话',
-    description: 'QMReader 已沉淀公开 AI 文章对话的 RSS 文章目录。',
+    description: 'Namoo Reader 已沉淀公开 AI 文章对话的 RSS 文章目录。',
   },
 };
 
@@ -138,7 +146,7 @@ async function fetchFaviconCandidate(url) {
   try {
     const response = await fetch(url, {
       redirect: 'follow',
-      headers: { 'User-Agent': 'QMReader favicon proxy/1.0' },
+      headers: { 'User-Agent': 'Namoo Reader favicon proxy/1.0' },
       signal: controller.signal,
     });
     if (!response.ok) return null;
@@ -231,7 +239,7 @@ function translationBlockText(pair) {
 }
 
 function publicUrl(req, target = req.originalUrl || '/') {
-  const host = req.get('host') || 'rss.qiaomu.ai';
+  const host = req.get('host') || SITE_HOSTNAME;
   const proto = req.protocol || (req.get('x-forwarded-proto') || 'https').split(',')[0];
   return `${proto}://${host}${target}`;
 }
@@ -372,28 +380,28 @@ function assetDirectoryMeta(req) {
   if (!type) {
     if (q) {
       return {
-        title: `${sortPrefix}公开资产搜索：${q} · QMReader`,
-        description: `搜索“${q}”相关的公开资产，包含中文翻译、乔木风格重写、划线点评、人工点评和文章对话。${sortDescription}${searchSuffix}`,
+        title: `${sortPrefix}公开资产搜索：${q} · Namoo Reader`,
+        description: `搜索“${q}”相关的公开资产，包含中文翻译、Namoo 创作草稿、划线点评、人工点评和文章对话。${sortDescription}${searchSuffix}`,
       };
     }
     return {
-      title: stats.assetCount ? `${sortPrefix}公开资产（${stats.assetCount} 条） · QMReader` : `${sortPrefix}公开资产 · QMReader`,
+      title: stats.assetCount ? `${sortPrefix}公开资产（${stats.assetCount} 条） · Namoo Reader` : `${sortPrefix}公开资产 · Namoo Reader`,
       description: stats.assetCount
-        ? `QMReader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、乔木风格重写、划线点评、人工点评和文章对话。${sortDescription}${latestSuffix}`
+        ? `Namoo Reader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、Namoo 创作草稿、划线点评、人工点评和文章对话。${sortDescription}${latestSuffix}`
         : DEFAULT_DESCRIPTION,
     };
   }
   const meta = ASSET_DIRECTORY_META[type];
   if (q) {
     return {
-      title: `${sortPrefix}${meta.label}资产搜索：${q} · QMReader`,
+      title: `${sortPrefix}${meta.label}资产搜索：${q} · Namoo Reader`,
       description: `搜索“${q}”相关的${meta.label}资产。${sortDescription}${searchSuffix}`,
     };
   }
   return {
-    title: stats.assetCount ? `${sortPrefix}${meta.label}资产（${stats.assetCount} 条） · QMReader` : `${sortPrefix}${meta.label}资产 · QMReader`,
+    title: stats.assetCount ? `${sortPrefix}${meta.label}资产（${stats.assetCount} 条） · Namoo Reader` : `${sortPrefix}${meta.label}资产 · Namoo Reader`,
     description: stats.assetCount
-      ? `QMReader 已沉淀 ${stats.assetCount} 条${meta.label}资产，覆盖 ${stats.entryCount} 篇文章，可通过网页或 RSS 浏览。${sortDescription}${latestSuffix}`
+      ? `Namoo Reader 已沉淀 ${stats.assetCount} 条${meta.label}资产，覆盖 ${stats.entryCount} 篇文章，可通过网页或 RSS 浏览。${sortDescription}${latestSuffix}`
       : meta.description,
   };
 }
@@ -417,10 +425,10 @@ function contributorDirectoryMeta(req = null) {
     : '';
   return {
     contributors,
-    title: contributors.length ? `${sortTitle}（${contributors.length} 人） · QMReader` : `${sortTitle} · QMReader`,
+    title: contributors.length ? `${sortTitle}（${contributors.length} 人） · Namoo Reader` : `${sortTitle} · Namoo Reader`,
     description: contributors.length
-      ? `QMReader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、重写、划线点评、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
-      : '浏览在 QMReader 沉淀过公开翻译、重写、划线点评、点评和文章对话的贡献榜。',
+      ? `Namoo Reader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、创作草稿、划线点评、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : '浏览在 Namoo Reader 沉淀过公开翻译、创作草稿、划线点评、点评和文章对话的贡献榜。',
     latestAt,
   };
 }
@@ -477,13 +485,13 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
     : '';
   const sortSentence = assetSort === 'helpful' ? '当前按读者有用反馈优先浏览。' : '';
   const title = typeMeta
-    ? `${sortPrefix}${displayName} 的${typeMeta.label}（${visibleAssetCount} 条） · QMReader`
-    : `${sortPrefix}${displayName} 的公开资产（${assetCount} 条） · QMReader`;
+    ? `${sortPrefix}${displayName} 的${typeMeta.label}（${visibleAssetCount} 条） · Namoo Reader`
+    : `${sortPrefix}${displayName} 的公开资产（${assetCount} 条） · Namoo Reader`;
   const description = typeMeta
-    ? `${displayName} 在 QMReader 沉淀了 ${visibleAssetCount} 条${typeMeta.label}资产。${helpfulSentence}${sortSentence}${typeLatestAt ? `最新更新 ${formatShanghaiMinute(typeLatestAt)}。` : ''}`
+    ? `${displayName} 在 Namoo Reader 沉淀了 ${visibleAssetCount} 条${typeMeta.label}资产。${helpfulSentence}${sortSentence}${typeLatestAt ? `最新更新 ${formatShanghaiMinute(typeLatestAt)}。` : ''}`
     : assetCount
-      ? `${displayName} 在 QMReader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条乔木风格重写、${annotationCount} 条划线点评、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
-      : `${displayName} 的 QMReader 个人主页。`;
+      ? `${displayName} 在 Namoo Reader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条 Namoo 创作草稿、${annotationCount} 条划线点评、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : `${displayName} 的 Namoo Reader 个人主页。`;
   return {
     contributor: { ...contributor, displayName },
     translations,
@@ -602,7 +610,7 @@ function socialMetaTags(req, entry) {
     `<meta name="description" content="${escapeHtml(description)}" />`,
     shouldNoindexRequest(req, entry) ? `<meta name="robots" content="noindex,follow" />` : '',
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
-    `<meta property="og:site_name" content="QMReader" />`,
+    `<meta property="og:site_name" content="Namoo Reader" />`,
     `<meta property="og:type" content="${entry ? 'article' : contributorPage ? 'profile' : 'website'}" />`,
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
@@ -670,7 +678,7 @@ function shareStructuredData(req, { entry, focus, directoryMeta, contributorPage
   return {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
-    name: 'QMReader',
+    name: 'Namoo Reader',
     url,
     description,
   };
@@ -745,7 +753,7 @@ function contributorPageStructuredData(req, contributorPage, { title, descriptio
   return {
     '@context': 'https://schema.org',
     '@type': 'ProfilePage',
-    name: title.replace(/\s·\sQMReader$/, ''),
+    name: title.replace(/\s·\sNamoo Reader$/, ''),
     description,
     url,
     isPartOf: siteStructuredData(req),
@@ -770,7 +778,7 @@ function contributorPageStructuredData(req, contributorPage, { title, descriptio
 function siteStructuredData(req) {
   return {
     '@type': 'WebSite',
-    name: 'QMReader',
+    name: 'Namoo Reader',
     url: publicUrl(req, '/'),
   };
 }
@@ -798,7 +806,7 @@ function assetDirectoryStructuredData(req, directoryMeta, { title, description, 
   return {
     '@context': 'https://schema.org',
     '@type': 'CollectionPage',
-    name: title.replace(/\s·\sQMReader$/, ''),
+    name: title.replace(/\s·\sNamoo Reader$/, ''),
     description,
     url,
     isPartOf: siteStructuredData(req),
@@ -831,10 +839,10 @@ function entryStructuredData(req, entry, { focus, title, description, modifiedTi
     datePublished: entry.published || undefined,
     dateModified: modifiedTime || entryLastModified(entry) || entry.published || undefined,
     image: image || undefined,
-    author: structuredAuthor(entry.author || sourceNameForEntry(entry) || 'QMReader'),
+    author: structuredAuthor(entry.author || sourceNameForEntry(entry) || 'Namoo Reader'),
     publisher: {
       '@type': 'Organization',
-      name: 'QMReader',
+      name: 'Namoo Reader',
       url: publicUrl(req, '/'),
     },
     inLanguage: entry.titleZh || entry.summaryZh ? 'zh-CN' : undefined,
@@ -859,7 +867,7 @@ function entryAssetStructuredPart(req, entry, focus) {
     url: itemUrl,
     dateCreated: timestampIso(preview.at) || undefined,
     dateModified: timestampIso(preview.at) || undefined,
-    author: structuredAuthor(preview.author || preview.model || 'QMReader'),
+    author: structuredAuthor(preview.author || preview.model || 'Namoo Reader'),
     isPartOf: entryPublicUrl(req, entry),
   };
   if (type === 'comments' || type === 'annotations') return { '@type': 'Comment', ...base };
@@ -875,8 +883,8 @@ function entryAssetStructuredPart(req, entry, focus) {
 }
 
 function structuredAuthor(name) {
-  const text = clipText(name || 'QMReader', 80);
-  const isOrg = /ai|deepseek|openai|anthropic|claude|gemini|gpt|qmreader/i.test(text);
+  const text = clipText(name || 'Namoo Reader', 80);
+  const isOrg = /ai|deepseek|openai|anthropic|claude|gemini|gpt|namoo reader/i.test(text);
   return {
     '@type': isOrg ? 'Organization' : 'Person',
     name: text,
@@ -898,16 +906,16 @@ function assetShareTitle(entry, focus = '', preview = null) {
     : '';
   const articleTitle = clipText(snapshotTitle || entry.titleZh || entry.title || '文章', 72);
   const label = ASSET_DIRECTORY_META[focus]?.label || '';
-  if (!label) return `${articleTitle} · QMReader`;
+  if (!label) return `${articleTitle} · Namoo Reader`;
   const identity = assetShareIdentity(focus, preview);
-  return `${identity || label} · ${articleTitle} · QMReader`;
+  return `${identity || label} · ${articleTitle} · Namoo Reader`;
 }
 
 function assetShareIdentity(focus = '', preview = null) {
   if (!preview) return '';
   const author = clipText(preview.author || preview.model || '', 24);
   if (focus === 'translation') return author ? `${author}的中文翻译` : '中文翻译';
-  if (focus === 'rewrite') return author ? `${author}的乔木重写` : '乔木风格重写';
+  if (focus === 'rewrite') return author ? `${author}的创作草稿` : 'Namoo 创作草稿';
   if (focus === 'annotations') return author ? `${author}的划线点评` : '划线点评';
   if (focus === 'comments') return author ? `${author}的点评` : '人工点评';
   if (focus === 'chat') {
@@ -920,7 +928,7 @@ function assetShareIdentity(focus = '', preview = null) {
 
 function assetFeedTitle(entry, type, preview = null) {
   return assetShareTitle(entry, type, preview)
-    .replace(/\s·\sQMReader$/, '')
+    .replace(/\s·\sNamoo Reader$/, '')
     .replace(/\s·\s/, '：');
 }
 
@@ -1185,7 +1193,7 @@ function rssAlternateTag(req) {
   const sort = isAssetDirectoryRequest(req) ? requestAssetSort(req) : 'latest';
   const meta = type ? ASSET_DIRECTORY_META[type] : null;
   const sortPrefix = sort === 'helpful' ? '有用 · ' : '';
-  const title = meta ? `QMReader ${sortPrefix}${meta.label}资产 RSS` : `QMReader ${sortPrefix}公开资产 RSS`;
+  const title = meta ? `Namoo Reader ${sortPrefix}${meta.label}资产 RSS` : `Namoo Reader ${sortPrefix}公开资产 RSS`;
   return `<link rel="alternate" type="application/rss+xml" title="${escapeHtml(title)}" href="${escapeHtml(assetFeedUrl(req, type, sort))}" />`;
 }
 
@@ -1281,7 +1289,7 @@ function publicAssetFeedItems(req, type = '') {
             source,
             at,
             helpfulCount,
-            guid: `qmreader:${entry.id}:${itemType}:${preview.id || at}`,
+            guid: `namoo-reader:${entry.id}:${itemType}:${preview.id || at}`,
           };
         }));
     })
@@ -1315,7 +1323,7 @@ function contributorFeedItems(req, contributorPage) {
       description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
       source: [preview.author, preview.model].filter(Boolean).join(' · '),
       at: Number(preview.at) || 0,
-      guid: `qmreader:contributor:${contributorPage.contributor.id}:translation:${item.id}`,
+      guid: `namoo-reader:contributor:${contributorPage.contributor.id}:translation:${item.id}`,
     };
   });
   const rewrites = (contributorPage.rewrites || []).map(item => {
@@ -1337,7 +1345,7 @@ function contributorFeedItems(req, contributorPage) {
       description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
       source: [preview.author, preview.model].filter(Boolean).join(' · '),
       at: Number(preview.at) || 0,
-      guid: `qmreader:contributor:${contributorPage.contributor.id}:rewrite:${item.id}`,
+      guid: `namoo-reader:contributor:${contributorPage.contributor.id}:rewrite:${item.id}`,
     };
   });
   const comments = (contributorPage.comments || []).map(comment => {
@@ -1359,7 +1367,7 @@ function contributorFeedItems(req, contributorPage) {
       description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
       source: preview.author,
       at: Number(preview.at) || 0,
-      guid: `qmreader:contributor:${contributorPage.contributor.id}:comments:${comment.id}`,
+      guid: `namoo-reader:contributor:${contributorPage.contributor.id}:comments:${comment.id}`,
     };
   });
   const annotations = (contributorPage.annotations || []).map(annotation => {
@@ -1382,7 +1390,7 @@ function contributorFeedItems(req, contributorPage) {
       description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
       source: preview.author,
       at: Number(preview.at) || 0,
-      guid: `qmreader:contributor:${contributorPage.contributor.id}:annotations:${annotation.id}`,
+      guid: `namoo-reader:contributor:${contributorPage.contributor.id}:annotations:${annotation.id}`,
     };
   });
   const messages = (contributorPage.messages || []).map(message => {
@@ -1405,7 +1413,7 @@ function contributorFeedItems(req, contributorPage) {
       description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
       source: [preview.author, preview.model].filter(Boolean).join(' · '),
       at: Number(preview.at) || 0,
-      guid: `qmreader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
+      guid: `namoo-reader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
     };
   });
   return [...translations, ...rewrites, ...annotations, ...comments, ...messages]
@@ -1450,7 +1458,7 @@ function renderAssetFeed(req, type = '') {
   const meta = assetType ? ASSET_DIRECTORY_META[assetType] : null;
   const items = publicAssetFeedItems(req, assetType);
   const sortPrefix = sort === 'helpful' ? '有用 · ' : '';
-  const title = meta ? `${sortPrefix}${meta.label}资产 · QMReader` : `${sortPrefix}QMReader 公开资产`;
+  const title = meta ? `${sortPrefix}${meta.label}资产 · Namoo Reader` : `${sortPrefix}Namoo Reader 公开资产`;
   const description = `${meta ? meta.description : DEFAULT_DESCRIPTION}${sort === 'helpful' ? ' 当前订阅按读者“有用”反馈优先排序。' : ''}`;
   const selfUrl = assetFeedUrl(req, assetType, sort);
   const directoryUrl = assetDirectoryUrl(req, assetType, sort);
@@ -1461,9 +1469,9 @@ function renderContributorFeed(req, contributorPage) {
   const displayName = contributorPage.contributor.displayName || '读者';
   const items = contributorFeedItems(req, contributorPage);
   return renderRssChannel({
-    title: `${displayName} 的公开资产 · QMReader`,
+    title: `${displayName} 的公开资产 · Namoo Reader`,
     link: contributorPageUrl(req, contributorPage.contributor.id),
-    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、重写、划线点评、点评和文章对话。`,
+    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、创作草稿、划线点评、点评和文章对话。`,
     selfUrl: contributorFeedUrl(req, contributorPage.contributor.id),
     items,
   });
@@ -1594,9 +1602,9 @@ function renderLlmsTxt(req) {
     return `- ${title}\n  URL: ${entryPublicUrl(req, entry)}\n  Assets: ${types || '公开资产'}`;
   });
   return [
-    '# QMReader',
+    '# Namoo Reader',
     '',
-    'QMReader is a public Chinese RSS reading and knowledge asset site curated around article translation, Qiaomu-style rewrites, inline text annotations, human comments, and article-context AI conversations.',
+    'Namoo Reader is a public Chinese RSS reading and knowledge asset site curated around article translation, Namoo creation drafts, inline text annotations, human comments, and article-context AI conversations.',
     '',
     'Primary language: zh-CN',
     `Canonical site: ${publicUrl(req, '/')}`,
@@ -1605,7 +1613,7 @@ function renderLlmsTxt(req) {
     'Important public directories:',
     `- All public assets: ${assetDirectoryUrl(req)}`,
     `- Chinese translations: ${assetDirectoryUrl(req, 'translation')}`,
-    `- Qiaomu-style rewrites: ${assetDirectoryUrl(req, 'rewrite')}`,
+    `- Namoo creation drafts: ${assetDirectoryUrl(req, 'rewrite')}`,
     `- Inline annotations: ${assetDirectoryUrl(req, 'annotations')}`,
     `- Human comments: ${assetDirectoryUrl(req, 'comments')}`,
     `- Article conversations: ${assetDirectoryUrl(req, 'chat')}`,
@@ -1614,7 +1622,7 @@ function renderLlmsTxt(req) {
     'RSS feeds:',
     `- All public assets: ${assetFeedUrl(req)}`,
     `- Chinese translations: ${assetFeedUrl(req, 'translation')}`,
-    `- Qiaomu-style rewrites: ${assetFeedUrl(req, 'rewrite')}`,
+    `- Namoo creation drafts: ${assetFeedUrl(req, 'rewrite')}`,
     `- Inline annotations: ${assetFeedUrl(req, 'annotations')}`,
     `- Human comments: ${assetFeedUrl(req, 'comments')}`,
     `- Article conversations: ${assetFeedUrl(req, 'chat')}`,
@@ -1643,7 +1651,7 @@ function umamiScriptTag() {
     return '';
   }
   if (!/^https:\/\//i.test(src)) return '';
-  return `<script defer src="${escapeHtml(src)}" data-website-id="${escapeHtml(UMAMI_WEBSITE_ID)}" data-domains="rss.qiaomu.ai"></script>`;
+  return `<script defer src="${escapeHtml(src)}" data-website-id="${escapeHtml(UMAMI_WEBSITE_ID)}" data-domains="${escapeHtml(SITE_HOSTNAME)}"></script>`;
 }
 
 app.get('/', (req, res) => {
@@ -2005,7 +2013,7 @@ function queueSubmittedRewrite(entry) {
       const latest = fetcher.getEntryById(entry.id) || entry;
       const prepared = await prepareEntryForAiAsset(latest, 'Submitted link rewrite');
       await deepseek.rewriteEntry(prepared.entry, {
-        author: '向阳乔木',
+        author: String(process.env.ADMIN_NAME || '大月 Namoo').trim() || '大月 Namoo',
         temperature: 0.6,
         maxTokens: 9000,
       });
@@ -2037,7 +2045,7 @@ function seedAdminFromEnv() {
     store.ensureAdminUser({
       email,
       password,
-      displayName: process.env.ADMIN_NAME || '向阳乔木',
+      displayName: process.env.ADMIN_NAME || '大月 Namoo',
     });
     console.log(`Admin user ready: ${email}`);
   } catch (error) {
@@ -2543,8 +2551,9 @@ function scheduleFreshnessRefresh() {
 }
 
 app.get('/api/sources', (req, res) => {
+  const includeDisabled = Boolean(req.user && req.user.role === 'admin');
   res.json({
-    sources: fetcher.getSourcesMeta(),
+    sources: fetcher.getSourcesMeta({ includeDisabled }),
     refreshing,
     progress: refreshProgress,
     autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
@@ -2931,7 +2940,7 @@ app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
         type: 'asset_helpful',
         objectType: type,
         entryId: entry.id,
-        fallbackMessage: `有人觉得你的${type === 'translation' ? '中文翻译' : '中文改写'}有用`,
+        fallbackMessage: `有人觉得你的${type === 'translation' ? '中文翻译' : '创作草稿'}有用`,
       });
     }
     res.json({
@@ -3255,18 +3264,69 @@ app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
   const src = fetcher.getSourceById(req.params.id);
   if (!src) return res.status(404).json({ error: 'source not found' });
   const enabled = !fetcher.isEnabled(src);
-  fetcher.setEnabled(src.id, enabled);
-  fetcher.flushDisk();
+  if (enabled && !src.manual && (!Array.isArray(src.feeds) || !src.feeds.length)) {
+    return res.status(400).json({ error: '这个信息源没有可用的订阅地址' });
+  }
+  const source = fetcher.setEnabled(src.id, enabled);
   if (enabled) startBackgroundJob({
     kind: 'refresh',
     sourceId: src.id,
     sourceIds: [src.id],
   });
-  res.json({ id: src.id, enabled });
+  res.json({
+    id: src.id,
+    enabled,
+    source,
+    sources: fetcher.getSourcesMeta({ includeDisabled: true }),
+  });
+});
+
+app.patch('/api/sources/:id', requireAdmin, (req, res) => {
+  try {
+    const current = fetcher.getSourceById(req.params.id);
+    if (!current) return res.status(404).json({ error: 'source not found' });
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const hasEnabled = Object.prototype.hasOwnProperty.call(body, 'enabled');
+    const hasPriority = Object.prototype.hasOwnProperty.call(body, 'editorialPriority');
+    if (!hasEnabled && !hasPriority) {
+      return res.status(400).json({ error: 'enabled or editorialPriority is required' });
+    }
+    if (hasEnabled && body.enabled === true && !current.manual && (!Array.isArray(current.feeds) || !current.feeds.length)) {
+      return res.status(400).json({ error: '这个信息源没有可用的订阅地址' });
+    }
+    const source = fetcher.updateSourcePreference(current.id, {
+      ...(hasEnabled ? { enabled: body.enabled } : {}),
+      ...(hasPriority ? { editorialPriority: body.editorialPriority } : {}),
+    });
+    if (!current.enabled && source.enabled) {
+      startBackgroundJob({
+        kind: 'refresh',
+        sourceId: source.id,
+        sourceIds: [source.id],
+      });
+    }
+    res.json({ source, sources: fetcher.getSourcesMeta({ includeDisabled: true }) });
+  } catch (e) {
+    sendError(res, e, 'source preference update failed');
+  }
+});
+
+app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
+  try {
+    const result = fetcher.moveSource(req.params.id, req.body && req.body.direction);
+    res.json({
+      moved: result.moved,
+      neighborId: result.neighborId || '',
+      source: result.source,
+      sources: fetcher.getSourcesMeta({ includeDisabled: true }),
+    });
+  } catch (e) {
+    sendError(res, e, 'source move failed');
+  }
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`QMReader listening on http://${HOST}:${PORT}`);
+  console.log(`Namoo Reader listening on http://${HOST}:${PORT}`);
   seedAdminFromEnv();
   fetcher.loadDisk();
   scheduleStartupRefresh();

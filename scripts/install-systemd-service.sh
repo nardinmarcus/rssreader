@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SERVICE_NAME="${SERVICE_NAME:-qmreader}"
-APP_DIR="${APP_DIR:-/opt/qiaomu-apps/qmreader}"
+SERVICE_NAME="${SERVICE_NAME:-namoo-reader}"
+APP_DIR="${APP_DIR:-/opt/rssreader}"
 PORT="${PORT:-3088}"
 HOST="${HOST:-127.0.0.1}"
 STARTUP_REFRESH_DELAY_MS="${STARTUP_REFRESH_DELAY_MS:--1}"
@@ -35,7 +35,7 @@ cd "${APP_DIR}"
 
 cat > "${UNIT_PATH}" <<UNIT
 [Unit]
-Description=QMReader RSS asset site
+Description=Namoo Reader RSS and creation site
 After=network-online.target
 Wants=network-online.target
 

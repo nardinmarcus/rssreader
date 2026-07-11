@@ -57,7 +57,8 @@ if (process.send) {
     .split(',')
     .map(id => id.trim())
     .filter(Boolean);
-  run({ kind, sourceId, sourceIds }).then(result => {
+  const fetchOnly = ['1', 'true', 'yes'].includes(parseArg('fetch-only').toLowerCase());
+  run({ kind, sourceId, sourceIds, fetchOnly }).then(result => {
     if (result) console.log(JSON.stringify(result, null, 2));
   }).finally(() => {
     setTimeout(() => process.exit(process.exitCode || 0), 20);

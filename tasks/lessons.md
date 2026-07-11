@@ -1,0 +1,23 @@
+# Deployment lessons
+
+- For every remote deployment command, make the remote boundary explicit with `ssh myvps` in the command itself; a local `workdir` does not imply remote execution. Verify the target hostname and directory before running a mutating command.
+- A container smoke test must exercise background workers, not only the HTTP homepage. Scan runtime `fork`/`spawn` paths and assert those files exist in the built image.
+- Do not recommend a separate infrastructure service before quantifying how much the app actually depends on it. Preserve the user's explicit single-container operating boundary; prefer configuration and public fallbacks when the dependency is limited.
+- When a user asks for brand personalization, preserve an already-liked visual system unless they explicitly request a redesign. Separate identity changes (name, favicon, logo, copy) from theme and layout changes.
+- A logo concept needs crafted geometry, not a literal letter plus a decorative symbol. Evaluate the same mark at favicon, sidebar, and empty-state sizes before presenting it as a viable direction.
+- Avoid Markdown hard breaks implemented as trailing spaces in tracked documentation; use blank lines for structure and require `git diff --check` before committing a spec.
+- A test-only data directory must cover every module that constructs runtime data paths, not only the database layer; otherwise cache or migration tests can silently read the real repository `data/` directory.
+- RSS parsers can return namespaced author elements as nested objects or arrays, so normalize external scalar fields to bounded strings before binding them to SQLite.
+- SVG masks that contain user-space paths must declare both `maskUnits` and `maskContentUnits` as `userSpaceOnUse`; always inspect the raster export because a valid SVG can still render a missing cutout.
+- Do not assume different SVG rasterizers agree on masks. Compare the exported PNG with a browser-compatible renderer; on this project, `rsvg-convert` preserves the negative-space logo while CairoSVG corrupts the mask.
+- Brand audits must inspect rendered empty states and fallback avatars, not only names, metadata, and image files; single-letter placeholders can preserve the old identity without matching the full legacy brand.
+- Avoid complex shell quoting for search patterns when a simpler literal `rg` query is sufficient; a failed audit command is both slower and easier to misread as an empty result.
+- End-to-end assertions should follow the product's canonical generated labels rather than a guessed shorter label; first inspect the actual semantic output before tightening a regex.
+- Hover-only controls must not use `display: none` when keyboard access matters; keep them in layout with zero opacity and enable pointer events on hover or focus so `focus-within` can actually be reached.
+- A browser screenshot byte buffer may be JPEG even when the destination filename ends in `.png`; inspect the magic bytes and convert explicitly before committing documentation assets.
+- A browser action can mutate state before its click wait times out; verify the resulting order or toggle state before retrying, or a retry may undo a successful operation.
+- `docker compose config` still requires every service-level `env_file` to exist; for secret-free CI validation, create a temporary `.env` from `.env.example`, run the check, and remove it immediately.
+- Keep remote config mutation and validation in separate shell commands; nested local, SSH, and `awk` quoting can fail before any remote action, while exact `grep -F` checks avoid accidental local expansion.
+- A VM startup command may time out after the service has already become healthy; check `orb status` and `docker info` before treating the timeout as a failed start or retrying it.
+- Node 26 stdin scripts cannot mix CommonJS `require()` with top-level `await`; wrap operational smoke scripts in an async IIFE so module-format detection remains unambiguous.
+- Do not use `docker exec node scripts/refresh-worker.js` as a live-server refresh path without a subsequent restart: it bypasses the parent process's `reloadFetcherAfterWorker()` hook, so SQLite and `cache.json` update while the serving process keeps stale in-memory cache.

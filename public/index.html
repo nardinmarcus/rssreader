@@ -3,24 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QMReader · RSS 阅读器</title>
-  <link rel="alternate" type="application/rss+xml" title="QMReader 公开资产 RSS" href="https://rss.qiaomu.ai/assets.xml" />
+  <title>Namoo Reader · RSS 阅读器</title>
+  <link rel="alternate" type="application/rss+xml" title="Namoo Reader 公开资产 RSS" href="https://rss.namooca.com/assets.xml" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="shortcut icon" href="/favicon.svg" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/vendor/persona/widget.css?v=1" />
   <link rel="stylesheet" href="/styles.css?v=155" />
-  <meta name="description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
-  <link rel="canonical" href="https://rss.qiaomu.ai/" />
-  <meta property="og:site_name" content="QMReader" />
+  <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
+  <link rel="canonical" href="https://rss.namooca.com/" />
+  <meta property="og:site_name" content="Namoo Reader" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="QMReader · RSS 阅读器" />
-  <meta property="og:description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
-  <meta property="og:url" content="https://rss.qiaomu.ai/" />
+  <meta property="og:title" content="Namoo Reader · RSS 阅读器" />
+  <meta property="og:description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
+  <meta property="og:url" content="https://rss.namooca.com/" />
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="QMReader · RSS 阅读器" />
-  <meta name="twitter:description" content="围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。" />
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"QMReader","url":"https://rss.qiaomu.ai/","description":"围绕 RSS 文章沉淀中文翻译、乔木风格重写、人工点评和文章对话的公开阅读站。"}</script>
-  <script defer src="https://umami.qiaomu.ai/script.js" data-website-id="79a3c342-fbc5-405b-9f41-6ce57a78c80d" data-domains="rss.qiaomu.ai"></script>
+  <meta name="twitter:title" content="Namoo Reader · RSS 阅读器" />
+  <meta name="twitter:description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Namoo Reader","url":"https://rss.namooca.com/","description":"围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。"}</script>
 </head>
 <body data-theme="light">
   <div id="app">
@@ -28,8 +28,8 @@
     <aside id="sidebar">
       <div class="brand">
         <button id="brand-home" class="brand-home" type="button" title="返回全部" aria-label="返回全部">
-          <span class="brand-logo">Q</span>
-          <span class="brand-name">QMReader</span>
+          <img class="brand-logo" src="/favicon.svg" alt="" />
+          <span class="brand-name">Namoo Reader</span>
         </button>
         <button id="sidebar-toggle" class="icon-btn" title="收起左侧栏" aria-label="收起左侧栏"><span data-qm-icon="panel-left-close"></span></button>
         <button id="theme-toggle" class="icon-btn" title="切换主题" aria-label="切换主题"><span data-qm-icon="sun-moon"></span></button>
@@ -66,7 +66,7 @@
             <span>中译</span><strong id="asset-stat-translation">0</strong>
           </button>
           <button class="asset-stat asset-stat-rewrite" type="button" data-asset-filter="rewrite">
-            <span>重写</span><strong id="asset-stat-rewrite">0</strong>
+            <span>草稿</span><strong id="asset-stat-rewrite">0</strong>
           </button>
           <button class="asset-stat asset-stat-annotations" type="button" data-asset-filter="annotations">
             <span>划线</span><strong id="asset-stat-annotations">0</strong>
@@ -84,7 +84,7 @@
 
       <div class="account-strip">
         <button id="auth-open" class="account-card" type="button">
-          <span class="account-avatar" id="guest-avatar">Q</span>
+          <span class="account-avatar" id="guest-avatar">N</span>
           <span class="account-text">
             <strong>登录 / 注册</strong>
             <span>同步阅读与贡献</span>
@@ -141,7 +141,7 @@
     <!-- ===== Reader ===== -->
     <section id="reader-pane">
       <div id="reader-empty" class="reader-empty">
-        <div class="empty-logo">Q</div>
+        <div class="empty-logo">N</div>
         <p>选择一篇文章开始阅读</p>
       </div>
       <article id="reader" class="reader hidden">
@@ -162,7 +162,7 @@
             <span class="reader-signal-icon" data-qm-icon="highlighter"></span>
             <span id="reader-rail-annotation-count" class="reader-signal-count">0</span>
           </button>
-          <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="中文改写" aria-label="中文改写">
+          <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="创作草稿" aria-label="创作草稿">
             <span class="reader-signal-icon" data-qm-icon="sparkles"></span>
           </button>
           <button id="reader-rail-translate" class="reader-signal-btn" type="button" title="中文翻译" aria-label="中文翻译">
@@ -234,7 +234,7 @@
         <div id="reader-audio"></div>
         <div class="reader-tabs" role="tablist" aria-label="文章阅读模式">
           <button class="reader-tab active" type="button" data-tab="original">原文</button>
-          <button class="reader-tab" type="button" data-tab="rewrite">中文改写</button>
+          <button class="reader-tab" type="button" data-tab="rewrite">创作草稿</button>
         </div>
         <details id="reader-toc" class="reader-toc hidden">
           <summary>目录</summary>
@@ -246,19 +246,19 @@
         </section>
         <section id="reader-rewrite-panel" class="reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="rewrite">
           <div class="reader-section-head">
-            <span id="rewrite-section-label">中文改写</span>
+            <span id="rewrite-section-label">Namoo 创作草稿</span>
             <div class="reader-section-actions">
               <button id="rewrite-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
-              <button id="rewrite-copy" class="icon-btn reader-section-icon hidden" type="button" title="复制中文改写" aria-label="复制中文改写"><span data-qm-icon="copy"></span></button>
+              <button id="rewrite-copy" class="icon-btn reader-section-icon hidden" type="button" title="复制创作草稿" aria-label="复制创作草稿"><span data-qm-icon="copy"></span></button>
               <button id="reader-rewrite" class="ghost-btn primary reader-rewrite-action" type="button">生成</button>
             </div>
           </div>
           <div id="rewrite-meta" class="asset-meta-line hidden"></div>
           <div id="rewrite-content" class="rewrite-content"></div>
           <div id="rewrite-empty" class="asset-empty hidden">
-            <p>这篇文章还没有中文改写。</p>
+            <p>这篇文章还没有 Namoo 创作草稿。</p>
           </div>
-          <aside id="annotation-margin-rewrite" class="annotation-margin" aria-label="中文改写划线讨论"></aside>
+          <aside id="annotation-margin-rewrite" class="annotation-margin" aria-label="创作草稿划线讨论"></aside>
         </section>
         <section id="reader-translation" class="reader-translation reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="translation">
           <div class="reader-section-head">
@@ -286,7 +286,7 @@
               <select id="annotation-surface-filter" class="annotation-surface-filter" aria-label="筛选划线点评">
                 <option value="all">全部</option>
                 <option value="original">原文</option>
-                <option value="rewrite">中文改写</option>
+                <option value="rewrite">创作草稿</option>
                 <option value="translation">中文翻译</option>
               </select>
               <button id="annotation-discussed-toggle" class="ghost-btn" type="button" aria-pressed="false">只看讨论段落</button>
@@ -354,7 +354,7 @@
             <div class="profile-editor">
               <label class="profile-avatar-picker" title="上传头像">
                 <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" />
-                <span id="profile-avatar-preview" class="profile-avatar-preview">Q</span>
+                <span id="profile-avatar-preview" class="profile-avatar-preview">N</span>
               </label>
               <div class="profile-fields">
                 <label>
@@ -368,7 +368,7 @@
                 <div class="profile-reader-setting">
                   <span class="profile-setting-label">打开文章</span>
                   <div class="profile-reader-tabs" role="radiogroup" aria-label="打开文章默认显示">
-                    <button class="profile-reader-tab active" type="button" role="radio" data-profile-reader-tab="rewrite" aria-checked="true">中文改写</button>
+                    <button class="profile-reader-tab active" type="button" role="radio" data-profile-reader-tab="rewrite" aria-checked="true">创作草稿</button>
                     <button class="profile-reader-tab" type="button" role="radio" data-profile-reader-tab="original" aria-checked="false">原文</button>
                   </div>
                 </div>
@@ -402,7 +402,7 @@
         <section id="dashboard-contributions-panel" class="dashboard-panel hidden">
           <div class="my-asset-tabs" role="tablist" aria-label="我的资产类型">
             <button class="my-asset-tab active" type="button" data-my-asset-tab="translation">中译 <span id="my-translation-count">0</span></button>
-            <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">重写 <span id="my-rewrite-count">0</span></button>
+            <button class="my-asset-tab" type="button" data-my-asset-tab="rewrite">草稿 <span id="my-rewrite-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="annotations">划线 <span id="my-annotations-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="comments">点评 <span id="my-comments-count">0</span></button>
             <button class="my-asset-tab" type="button" data-my-asset-tab="chat">对话 <span id="my-chat-count">0</span></button>
@@ -419,7 +419,7 @@
         <header class="workspace-page-head">
           <div>
             <h1 id="contributor-title">贡献主页</h1>
-            <p id="contributor-subtitle">公开沉淀的翻译、重写、点评、文章对话和点赞文章。</p>
+            <p id="contributor-subtitle">公开沉淀的翻译、创作草稿、点评、文章对话和点赞文章。</p>
           </div>
           <div class="contributor-page-actions">
             <button id="contributor-follow" class="ghost-btn contributor-follow hidden" type="button">关注</button>
@@ -430,7 +430,7 @@
         <section id="contributor-profile" class="contributor-profile hidden"></section>
         <div class="my-asset-tabs" role="tablist" aria-label="贡献主页资产类型">
           <button class="my-asset-tab active" type="button" data-contributor-tab="translation">中译 <span id="contributor-translation-count">0</span></button>
-          <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">重写 <span id="contributor-rewrite-count">0</span></button>
+          <button class="my-asset-tab" type="button" data-contributor-tab="rewrite">草稿 <span id="contributor-rewrite-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="annotations">划线 <span id="contributor-annotations-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="comments">点评 <span id="contributor-comments-count">0</span></button>
           <button class="my-asset-tab" type="button" data-contributor-tab="chat">对话 <span id="contributor-chat-count">0</span></button>
@@ -459,6 +459,7 @@
           <button id="admin-manage-modal-btn" class="ghost-btn" type="button">弹窗管理源</button>
         </section>
         <section id="admin-manage-status" class="manage-status"></section>
+        <section id="admin-source-filters" class="source-manage-filters"></section>
         <section id="admin-manage-list" class="manage-list admin-manage-list"></section>
       </section>
     </section>
@@ -525,6 +526,7 @@
     <div class="modal-box">
       <header><h2>管理订阅源</h2><button class="icon-btn" id="manage-close" aria-label="关闭管理订阅源"><span data-qm-icon="x"></span></button></header>
       <div id="manage-status" class="manage-status"></div>
+      <div id="manage-source-filters" class="source-manage-filters"></div>
       <div id="manage-list" class="manage-list"></div>
     </div>
   </div>

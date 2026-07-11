@@ -1,6 +1,6 @@
 # Code of Conduct
 
-QMReader follows a simple maintainer-led contribution model:
+Namoo Reader follows a simple maintainer-led contribution model:
 
 - Be respectful and specific.
 - Discuss code, behavior, and evidence rather than personal attacks.

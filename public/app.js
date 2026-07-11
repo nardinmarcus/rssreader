@@ -1,4 +1,4 @@
-/* QMReader front-end */
+/* Namoo Reader front-end */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
@@ -31,8 +31,8 @@ const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
 const DASHBOARD_TABS = ['profile', 'ai', 'contributions'];
-const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '中文改写', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
-const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '中文改写', translation: '中文翻译' };
+const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
+const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '创作草稿', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
@@ -104,7 +104,7 @@ const AI_READING_TASKS = [
     group: '写作',
     items: [
       ['分享文案', '帮我写一段适合发到 X / 即刻的中文分享文案，短一点但有观点。'],
-      ['选题角度', '如果向阳乔木要基于这篇文章写一篇中文内容，最有传播潜力的切入角度有哪些？给 3 个。'],
+      ['选题角度', '如果大月 Namoo 要基于这篇文章创作，最值得深入的切入角度有哪些？给 3 个，并标出需要本人判断的部分。'],
     ],
   },
   {
@@ -119,7 +119,7 @@ const DEFAULT_AGENT_PROMPTS = AI_READING_TASKS
   .flatMap(group => group.items.map(([label, prompt]) => ({ label, prompt })))
   .slice(0, 8);
 const AGENT_PROMPT_LIMIT = 24;
-const PERSONA_AGENT_VERSION = 'persona-qmreader-v1';
+const PERSONA_AGENT_VERSION = 'persona-namoo-reader-v1';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const LUCIDE_DEFAULT_ATTRS = {
   xmlns: 'http://www.w3.org/2000/svg',
@@ -431,44 +431,44 @@ function isPaperEntry(entry = state.activeEntry) {
 function rewriteUiCopy(entry = state.activeEntry) {
   if (isPaperEntry(entry)) {
     return {
-      tab: '论文解读',
-      section: '论文解读',
-      asset: '论文解读',
-      action: '生成解读',
-      generating: '解读中…',
-      stale: '更新解读',
-      redo: '重写解读',
-      empty: '这篇论文还没有 AI 解读。',
-      copyTitle: '复制论文解读',
-      copied: '论文解读已复制',
-      generateTitle: '生成乔木风格论文解读',
-      updateTitle: '更新乔木风格论文解读',
-      redoTitle: '重新生成乔木风格论文解读',
-      saved: '论文解读已保存',
-      cached: '已显示缓存解读',
-      fetched: '已获取论文页面并保存解读',
-      failedPrefix: '解读失败: ',
+      tab: '论文草稿',
+      section: '论文创作草稿',
+      asset: '论文创作草稿',
+      action: '生成草稿',
+      generating: '生成中…',
+      stale: '更新草稿',
+      redo: '重新生成',
+      empty: '这篇论文还没有 Namoo 创作草稿。',
+      copyTitle: '复制论文创作草稿',
+      copied: '论文创作草稿已复制',
+      generateTitle: '生成 Namoo 论文创作草稿',
+      updateTitle: '更新 Namoo 论文创作草稿',
+      redoTitle: '重新生成 Namoo 论文创作草稿',
+      saved: '论文创作草稿已保存',
+      cached: '已显示缓存草稿',
+      fetched: '已获取论文页面并保存创作草稿',
+      failedPrefix: '草稿生成失败: ',
       railIcon: 'file-search',
     };
   }
   return {
-    tab: '中文改写',
-    section: '中文改写',
-    asset: '中文改写',
-    action: '生成',
-    generating: '改写中…',
-    stale: '更新',
-    redo: '重写',
-    empty: '这篇文章还没有中文改写。',
-    copyTitle: '复制中文改写',
-    copied: '重写已复制',
-    generateTitle: '生成中文改写',
-    updateTitle: '更新中文改写',
-    redoTitle: '重新生成中文改写',
-    saved: '中文改写已保存',
-    cached: '已显示缓存重写',
-    fetched: '已获取原文并保存中文改写',
-    failedPrefix: '重写失败: ',
+    tab: '创作草稿',
+    section: 'Namoo 创作草稿',
+    asset: '创作草稿',
+    action: '生成草稿',
+    generating: '生成中…',
+    stale: '更新草稿',
+    redo: '重新生成',
+    empty: '这篇文章还没有 Namoo 创作草稿。',
+    copyTitle: '复制 Namoo 创作草稿',
+    copied: '创作草稿已复制',
+    generateTitle: '生成 Namoo 创作草稿',
+    updateTitle: '更新 Namoo 创作草稿',
+    redoTitle: '重新生成 Namoo 创作草稿',
+    saved: '创作草稿已保存',
+    cached: '已显示缓存草稿',
+    fetched: '已获取原文并保存创作草稿',
+    failedPrefix: '草稿生成失败: ',
     railIcon: 'sparkles',
   };
 }
@@ -620,6 +620,7 @@ const state = {
   q: '',
   refreshing: false,
   refreshProgress: { done: 0, total: 0 },
+  sourceManageFilters: { label: '', priority: '', enabled: 'all', status: 'all' },
   sourceRefreshStatusTimer: null,
   autoRewrite: { running: false, last: null },
   activeEntry: null,
@@ -851,20 +852,20 @@ function splitArticleLocator(locator) {
 function listRouteTitle(view = state.view, assetFilter = state.assetFilter, q = state.q) {
   if (view === 'contributors') {
     const sortPrefix = state.contributorSort === 'helpful' ? '有用 · ' : state.contributorSort === 'assets' ? '资产 · ' : '';
-    return q ? `${sortPrefix}贡献榜 · “${q}” · QMReader` : `${sortPrefix}贡献榜 · QMReader`;
+    return q ? `${sortPrefix}贡献榜 · “${q}” · Namoo Reader` : `${sortPrefix}贡献榜 · Namoo Reader`;
   }
   if (view === 'assets') {
     const sortPrefix = state.assetSort === 'helpful' ? '有用 · ' : '';
     const prefix = `${sortPrefix}${assetFilter ? `${assetDirectoryLabel(assetFilter)}资产` : '公开资产'}`;
-    return q ? `${prefix} · “${q}” · QMReader` : `${prefix} · QMReader`;
+    return q ? `${prefix} · “${q}” · Namoo Reader` : `${prefix} · Namoo Reader`;
   }
-  return 'QMReader · RSS 阅读器';
+  return 'Namoo Reader · RSS 阅读器';
 }
 
 function readerRouteTitle(entry = state.activeEntry, focus = state.readerFocus) {
   const title = entry ? (entry.titleZh || entry.title || '文章') : '文章';
   const prefix = focus && ASSET_FOCUS_LABELS[focus] ? `${ASSET_FOCUS_LABELS[focus]} · ` : '';
-  return `${prefix}${title} · QMReader`;
+  return `${prefix}${title} · Namoo Reader`;
 }
 
 function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = state.readerFocus, assetId = state.readerAssetId) {
@@ -1086,7 +1087,7 @@ function syncListUrl({ replace = false } = {}) {
 
 function clearReaderUrl({ replace = true } = {}) {
   const url = readerUrlFor(null);
-  document.title = 'QMReader · RSS 阅读器';
+  document.title = 'Namoo Reader · RSS 阅读器';
   if (url.href === window.location.href) return;
   const method = replace ? 'replaceState' : 'pushState';
   history[method]({ entryId: null }, '', url);
@@ -1180,7 +1181,7 @@ function escapeJsString(value) {
 }
 
 function avatarInitial(user) {
-  return ((user && (user.displayName || user.email)) || 'Q').trim().slice(0, 1).toUpperCase() || 'Q';
+  return ((user && (user.displayName || user.email)) || 'N').trim().slice(0, 1).toUpperCase() || 'N';
 }
 
 function avatarHtml(user, className = 'account-avatar') {
@@ -1643,7 +1644,10 @@ async function api(path, opts) {
 }
 async function loadSources() {
   const data = await api('/api/sources');
-  state.sources = data.sources;
+  state.sources = Array.isArray(data.sources) ? data.sources : [];
+  if (state.filterSource && !state.sources.some(source => source.id === state.filterSource)) {
+    state.filterSource = null;
+  }
   state.refreshing = Boolean(data.refreshing);
   state.refreshProgress = data.progress || { done: 0, total: 0 };
   state.autoRewrite = data.autoRewrite || { running: false, last: null };
@@ -1967,7 +1971,9 @@ function renderSidebar() {
     label.onclick = () => selectCategory(cat);
     wrap.appendChild(label);
 
-    for (const s of list) {
+    for (const [sourceIndex, s] of list.entries()) {
+      const row = document.createElement('div');
+      row.className = 'feed-row';
       const btn = document.createElement('button');
       btn.className = 'feed-item' + (state.filterSource === s.id ? ' active' : '');
       const unread = unreadCountFor(e => e.sourceId === s.id);
@@ -1976,7 +1982,22 @@ function renderSidebar() {
         ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
         <span class="fcount">${unread || ''}</span>`;
       btn.onclick = () => selectSource(s.id);
-      wrap.appendChild(btn);
+      row.appendChild(btn);
+      if (isAdmin()) {
+        const controls = document.createElement('span');
+        controls.className = 'feed-order-controls';
+        controls.innerHTML = `
+          <button type="button" data-source-move="up" title="上移 ${escapeHtml(s.name)}" aria-label="上移 ${escapeHtml(s.name)}" ${sourceIndex === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" data-source-move="down" title="下移 ${escapeHtml(s.name)}" aria-label="下移 ${escapeHtml(s.name)}" ${sourceIndex === list.length - 1 ? 'disabled' : ''}>↓</button>`;
+        controls.querySelectorAll('[data-source-move]').forEach(moveButton => {
+          moveButton.onclick = event => {
+            event.stopPropagation();
+            moveSidebarSource(s.id, moveButton.dataset.sourceMove, moveButton);
+          };
+        });
+        row.appendChild(controls);
+      }
+      wrap.appendChild(row);
     }
   }
 
@@ -1990,6 +2011,26 @@ function renderSidebar() {
   renderSidebarMore();
 
   $$('.view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
+}
+
+async function moveSidebarSource(sourceId, direction, button = null) {
+  if (!isAdmin()) return;
+  if (button) button.disabled = true;
+  try {
+    const data = await api(`/api/sources/${encodeURIComponent(sourceId)}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction }),
+    });
+    if (Array.isArray(data.sources)) state.sources = data.sources;
+    renderSidebar();
+    if (!$('#manage-modal')?.classList.contains('hidden')) renderManage();
+    if (state.workspacePage === 'admin') renderManage('#admin-manage-list', '#admin-manage-status');
+    toast(data.moved ? '信息源顺序已保存' : '已经到达当前分类边界');
+  } catch (error) {
+    toast('调整顺序失败: ' + error.message, 5000);
+    renderSidebar();
+  }
 }
 
 function renderSidebarMore() {
@@ -2093,7 +2134,7 @@ function contributorSearchText(contributor) {
     `${contributor.helpfulCount || 0} 有用`,
     `${contributor.helpfulAssets || 0} 受认可`,
     `${contributor.translationCount || 0} 中译`,
-    `${contributor.rewriteCount || 0} 重写`,
+    `${contributor.rewriteCount || 0} 草稿`,
     `${contributor.annotationCount || 0} 划线`,
     `${contributor.commentCount || 0} 点评`,
     `${contributor.chatCount || 0} 对话`,
@@ -2142,7 +2183,7 @@ function entryAssetItems(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
   const items = [];
   if (assets.translation) items.push({ type: 'translation', label: '中文翻译', count: 0, title: '查看中文翻译' });
-  if (assets.rewrite) items.push({ type: 'rewrite', label: '中文改写', count: 0, title: '查看中文改写' });
+  if (assets.rewrite) items.push({ type: 'rewrite', label: '创作草稿', count: 0, title: '查看创作草稿' });
   if (assets.annotations) items.push({ type: 'annotations', label: '划线点评', count: Number(assets.annotations) || 0, title: '查看划线点评' });
   if (assets.comments) items.push({ type: 'comments', label: '人工点评', count: Number(assets.comments) || 0, title: '查看人工点评' });
   if (assets.chatMessages) items.push({ type: 'chat', label: '文章对话', count: Number(assets.chatMessages) || 0, title: '查看文章对话' });
@@ -2178,7 +2219,7 @@ function assetBadgesHtml(entry, { interactive = false, copyable = false } = {}) 
 
 const ASSET_TYPE_LABELS = {
   translation: '中译',
-  rewrite: '重写',
+  rewrite: '草稿',
   annotations: '划线',
   comments: '点评',
   chat: '对话',
@@ -2186,7 +2227,7 @@ const ASSET_TYPE_LABELS = {
 
 const ASSET_DIRECTORY_LABELS = {
   translation: '中文翻译',
-  rewrite: '中文改写',
+  rewrite: '创作草稿',
   annotations: '划线点评',
   comments: '人工点评',
   chat: '文章对话',
@@ -2198,7 +2239,7 @@ function assetDirectoryLabel(type) {
 
 const ASSET_FILTERS = {
   translation: { label: '中译', count: entry => assetCountForType(entry, 'translation'), title: '查看有中文翻译的文章' },
-  rewrite: { label: '重写', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有中文改写的文章' },
+  rewrite: { label: '草稿', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有创作草稿的文章' },
   annotations: { label: '划线', count: entry => assetCountForType(entry, 'annotations'), title: '查看有划线点评的文章' },
   comments: { label: '点评', count: entry => assetCountForType(entry, 'comments'), title: '查看有人工点评的文章' },
   chat: { label: '对话', count: entry => assetCountForType(entry, 'chat'), title: '查看有文章对话的文章' },
@@ -2619,7 +2660,7 @@ function renderHomeAssetActivityList(el) {
   const items = homeAssetActivityItems(30);
   el.classList.add('home-asset-activity-list');
   if (!items.length) {
-    el.innerHTML = '<div class="list-empty">还没有公开资产动态<br/>翻译、重写、点评或对话后会出现在这里</div>';
+    el.innerHTML = '<div class="list-empty">还没有公开资产动态<br/>翻译、创作草稿、点评或对话后会出现在这里</div>';
     return;
   }
   const { totalAssets, entries, helpfulTotal } = assetDashboardStats();
@@ -3308,7 +3349,7 @@ async function submitReaderLink() {
     renderList();
     renderSidebar();
     if (data.entry) await openEntry(data.entry);
-    toast('已收录到读者提交，正在生成中文改写');
+    toast('已收录到读者提交，正在生成 Namoo 创作草稿');
   } catch (err) {
     toast('提交失败: ' + err.message, 5000);
   } finally {
@@ -3330,7 +3371,7 @@ async function submitAuth() {
     });
     setCurrentUser(data.user || null);
     closeAuth();
-    await loadUserEntryStates();
+    await Promise.all([loadUserEntryStates(), loadSources(), loadEntries()]);
     loadAiProfilesForScope();
     renderAuthState();
     renderEntryStateUi();
@@ -3396,6 +3437,7 @@ async function logout() {
   closeChangePasswordModal();
   if (wasDashboardOpen) closeMyCommentsModal();
   applyGuestEntryStates();
+  await Promise.all([loadSources(), loadEntries()]);
   loadAiProfilesForScope();
   renderAuthState();
   renderEntryStateUi();
@@ -3438,7 +3480,7 @@ function renderContributorDirectory() {
         <div class="contributor-stats">
           <span><strong>${assetCount}</strong> 资产</span>
           <span><strong>${Number(contributor.translationCount || 0)}</strong> 中译</span>
-          <span><strong>${Number(contributor.rewriteCount || 0)}</strong> 改写</span>
+          <span><strong>${Number(contributor.rewriteCount || 0)}</strong> 草稿</span>
           <span><strong>${Number(contributor.commentCount || 0)}</strong> 点评</span>
           <span><strong>${Number(contributor.chatCount || 0)}</strong> 对话</span>
           ${helpfulCount > 0 ? `<span class="contributor-stat-helpful"><strong>${helpfulCount}</strong> 有用</span>` : ''}
@@ -3486,7 +3528,7 @@ function renderList() {
       : state.view === 'assets' && state.assetFilter
       ? `还没有${assetScope}<br/>换个类型或先沉淀一篇文章`
       : state.view === 'assets'
-      ? '还没有沉淀资产<br/>先翻译、重写、点评或对话一篇文章'
+      ? '还没有沉淀资产<br/>先翻译、生成创作草稿、点评或对话一篇文章'
       : state.view === 'history'
       ? '还没有浏览记录<br/>打开几篇文章后会出现在这里'
       : state.view === 'hot'
@@ -4200,7 +4242,7 @@ function personaInitialMessages() {
   return (state.agentMessages || [])
     .filter(message => message && (message.role === 'user' || message.role === 'assistant') && String(message.content || '').trim())
     .map((message, index) => ({
-      id: message.id || `qmreader-${state.activeEntry?.id || 'entry'}-${index}`,
+      id: message.id || `namoo-reader-${state.activeEntry?.id || 'entry'}-${index}`,
       role: message.role,
       content: String(message.content || ''),
       createdAt: personaMessageDate(message.createdAt),
@@ -4264,7 +4306,7 @@ async function personaCustomFetch(_url, init = {}, payload = {}) {
 
 function createPersonaPromptPlugin() {
   return {
-    id: 'qmreader-prompt-row',
+    id: 'namoo-reader-prompt-row',
     renderComposer({ defaultRenderer, onSubmit, streaming }) {
       const root = document.createElement('div');
       root.className = 'persona-qm-composer';
@@ -4849,7 +4891,7 @@ async function submitArticleLinkToSite() {
     updateListTitle();
     renderList();
     renderSidebar();
-    toast('已收录到本站，正在生成中文改写');
+    toast('已收录到本站，正在生成 Namoo 创作草稿');
   } catch (err) {
     toast('收录失败: ' + err.message, 5000);
   } finally {
@@ -6578,7 +6620,7 @@ async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {
   }
   setWorkspacePage('dashboard');
   setDashboardTab(tab, { persist: true, push: false });
-  document.title = '个人后台 · QMReader';
+  document.title = '个人后台 · Namoo Reader';
   if (push) history.pushState({ dashboard: true, tab: state.dashboardTab }, '', dashboardUrlFor(state.dashboardTab));
   renderProfileEditor();
   loadNotifications();
@@ -6634,7 +6676,7 @@ function myAssetItemsForCurrentTab() {
 function userAssetDisplay(type, item) {
   if (type === 'likes') return { label: '点赞文章', body: item.summaryZh || item.summary || item.entry?.summaryZh || item.entry?.summary || '' };
   if (type === 'translation') return { label: '中文翻译', body: item.contentSnippet || item.summaryZh || '' };
-  if (type === 'rewrite') return { label: '中文改写', body: item.bodySnippet || '' };
+  if (type === 'rewrite') return { label: '创作草稿', body: item.bodySnippet || '' };
   if (type === 'annotations') return { label: `划线 · ${ANNOTATION_SURFACE_LABELS[item.surface] || '原文'}`, body: `「${item.quoteSnippet || item.quote || ''}」\n${item.bodySnippet || item.body || ''}` };
   if (type === 'chat') return { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' };
   return commentDisplayParts(item.body || item.bodySnippet || '');
@@ -6818,11 +6860,11 @@ function syncContributorUrl({ replace = true } = {}) {
 
 function contributorPageTitle() {
   const profile = state.contributor.profile;
-  if (!profile) return '贡献主页 · QMReader';
+  if (!profile) return '贡献主页 · Namoo Reader';
   const sortPrefix = state.contributor.sort === 'helpful' ? '有用 · ' : '';
   const tab = normalizeUserAssetTab(state.contributor.tab);
   const label = tab === 'translation' ? '公开资产' : userAssetLabel(tab);
-  return `${sortPrefix}${profile.displayName} 的${label} · QMReader`;
+  return `${sortPrefix}${profile.displayName} 的${label} · Namoo Reader`;
 }
 
 function renderContributorProfile() {
@@ -6866,7 +6908,7 @@ function renderContributorAssets() {
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的贡献主页` : '贡献主页';
   $('#contributor-subtitle').textContent = profile
-    ? `公开沉淀的翻译、重写、划线点评、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
+    ? `公开沉淀的翻译、创作草稿、划线点评、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
     : '正在读取公开资产…';
   renderContributorProfile();
   if (rssLink) {
@@ -7744,7 +7786,7 @@ function closeReaderFromRoute() {
   renderAdminEntryControls();
   document.getElementById('app').classList.remove('reading');
   applyReaderPrefs();
-  document.title = 'QMReader · RSS 阅读器';
+  document.title = 'Namoo Reader · RSS 阅读器';
   renderList();
   renderAgent();
 }
@@ -8095,19 +8137,19 @@ function autoRewriteStatusParts() {
   const last = auto.last || {};
   const running = Boolean(auto.running || last.running);
   const failed = [
-    ...(last.error ? [{ title: '自动重写任务', error: last.error }] : []),
+    ...(last.error ? [{ title: '自动草稿任务', error: last.error }] : []),
     ...(Array.isArray(last.failed) ? last.failed : []),
   ];
   if (running) {
     return {
-      label: '自动重写中',
+      label: '自动生成草稿中',
       value: '后台运行',
       meta: (last.sourceIds || []).map(sourceName).join('、') || '重点源',
       failed,
     };
   }
   if (!last.startedAt) {
-    return { label: '自动重写', value: '待命', meta: '刷新后处理重点源', failed };
+    return { label: '自动草稿', value: '待命', meta: '刷新后处理重点源', failed };
   }
   const value = last.error
     ? opsStatusText(last.error)
@@ -8115,7 +8157,7 @@ function autoRewriteStatusParts() {
     ? opsStatusText(last.skipped)
     : `${Number(last.rewritten) || 0} 新 · ${Number(last.cached) || 0} 缓存 · ${failed.length} 失败`;
   return {
-    label: '自动重写完成',
+    label: '自动草稿完成',
     value,
     meta: [formatAssetTime(last.finishedAt || last.startedAt), (last.sourceIds || []).map(sourceName).join('、')].filter(Boolean).join(' · '),
     failed,
@@ -8178,7 +8220,7 @@ async function runAutoRewriteFromManage() {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
-    toast('自动重写已启动');
+    toast('自动生成创作草稿已启动');
     for (let i = 0; i < 80; i++) {
       await new Promise(r => setTimeout(r, 1500));
       const data = await loadSources();
@@ -8190,44 +8232,132 @@ async function runAutoRewriteFromManage() {
     renderManage();
     if (state.workspacePage === 'admin') renderAdminPage();
   } catch (error) {
-    toast('启动自动重写失败: ' + error.message, 5000);
+    toast('启动自动草稿失败: ' + error.message, 5000);
     await loadSources().catch(() => null);
     renderManageStatus();
     if (state.workspacePage === 'admin') renderManageStatus('#admin-manage-status');
   }
 }
 
+const EDITORIAL_PRIORITY_LABELS = { high: '高优先', normal: '普通', low: '低优先' };
+
+function sourceManageFilterTarget(listTarget) {
+  return listTarget === '#admin-manage-list' ? '#admin-source-filters' : '#manage-source-filters';
+}
+
+function renderSourceManageFilters(listTarget, statusTarget) {
+  const container = $(sourceManageFilterTarget(listTarget));
+  if (!container) return;
+  const filters = state.sourceManageFilters;
+  const labels = [...new Set(state.sources.flatMap(source => source.labels || []))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  container.innerHTML = `
+    <select data-source-filter="label" aria-label="按标签筛选">
+      <option value="">全部标签</option>
+      ${labels.map(label => `<option value="${escapeHtml(label)}" ${filters.label === label ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+    </select>
+    <select data-source-filter="priority" aria-label="按编辑优先级筛选">
+      <option value="">全部优先级</option>
+      ${Object.entries(EDITORIAL_PRIORITY_LABELS).map(([value, label]) => `<option value="${value}" ${filters.priority === value ? 'selected' : ''}>${label}</option>`).join('')}
+    </select>
+    <select data-source-filter="enabled" aria-label="按启用状态筛选">
+      <option value="all" ${filters.enabled === 'all' ? 'selected' : ''}>全部启用状态</option>
+      <option value="enabled" ${filters.enabled === 'enabled' ? 'selected' : ''}>已启用</option>
+      <option value="disabled" ${filters.enabled === 'disabled' ? 'selected' : ''}>已关闭</option>
+    </select>
+    <select data-source-filter="status" aria-label="按抓取状态筛选">
+      <option value="all" ${filters.status === 'all' ? 'selected' : ''}>全部抓取状态</option>
+      <option value="ok" ${filters.status === 'ok' ? 'selected' : ''}>正常</option>
+      <option value="error" ${filters.status === 'error' ? 'selected' : ''}>错误</option>
+      <option value="other" ${filters.status === 'other' ? 'selected' : ''}>待抓取或缓存</option>
+    </select>`;
+  container.querySelectorAll('[data-source-filter]').forEach(select => {
+    select.onchange = () => {
+      state.sourceManageFilters[select.dataset.sourceFilter] = select.value;
+      renderManage(listTarget, statusTarget);
+    };
+  });
+}
+
+function sourceMatchesManageFilters(source) {
+  const filters = state.sourceManageFilters;
+  if (filters.label && !(source.labels || []).includes(filters.label)) return false;
+  if (filters.priority && source.editorialPriority !== filters.priority) return false;
+  if (filters.enabled === 'enabled' && !source.enabled) return false;
+  if (filters.enabled === 'disabled' && source.enabled) return false;
+  if (filters.status === 'ok' && source.status !== 'ok') return false;
+  if (filters.status === 'error' && source.status !== 'error') return false;
+  if (filters.status === 'other' && (source.status === 'ok' || source.status === 'error')) return false;
+  return true;
+}
+
+async function updateManagedSource(source, patch, target, statusTarget) {
+  try {
+    const data = await api(`/api/sources/${encodeURIComponent(source.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (Array.isArray(data.sources)) state.sources = data.sources;
+    if (patch.enabled === false && state.filterSource === source.id) state.filterSource = null;
+    const updated = data.source || source;
+    if (Object.prototype.hasOwnProperty.call(patch, 'enabled')) {
+      toast(`${source.name} ${updated.enabled ? '已启用（抓取中…）' : '已关闭'}`);
+    } else {
+      toast(`${source.name} 已设为${EDITORIAL_PRIORITY_LABELS[updated.editorialPriority] || updated.editorialPriority}`);
+    }
+    renderSidebar();
+    renderManage(target, statusTarget);
+    await reload({ keepReader: true });
+    if (patch.enabled === true) {
+      setTimeout(async () => {
+        await loadSources().catch(() => null);
+        renderSidebar();
+        renderManage(target, statusTarget);
+      }, 4000);
+    }
+  } catch (error) {
+    toast('更新信息源失败: ' + error.message, 5000);
+    renderManage(target, statusTarget);
+  }
+}
+
 function renderManage(target = '#manage-list', statusTarget = '#manage-status') {
   renderManageStatus(statusTarget);
+  renderSourceManageFilters(target, statusTarget);
   const el = $(target);
   if (!el) return;
   el.innerHTML = '';
-  const sorted = [...state.sources].sort((a, b) => (b.enabled - a.enabled) || a.category.localeCompare(b.category));
+  const sorted = [...state.sources]
+    .sort((a, b) => (a.displayOrder - b.displayOrder) || a.name.localeCompare(b.name))
+    .filter(sourceMatchesManageFilters);
+  if (!sorted.length) {
+    el.innerHTML = '<div class="manage-empty">没有符合当前筛选条件的信息源</div>';
+    return;
+  }
   for (const s of sorted) {
     const row = document.createElement('div');
     row.className = 'manage-row';
     const statusTxt = s.enabled
       ? (s.status === 'ok' ? `${s.entryCount} 篇` : s.status === 'error' ? '抓取失败' : s.status === 'stale' ? '缓存' : '待抓取')
-      : '已禁用';
+      : '已关闭';
+    const labels = (s.labels || []).map(label => `<span class="m-tag">${escapeHtml(label)}</span>`).join('');
     row.innerHTML = `
       ${faviconHtml(s.siteUrl, s.name)}
       <div class="m-info">
-        <div class="m-name">${escapeHtml(s.name)} <span style="font-weight:400;color:var(--text-2);font-size:11px">${CATEGORY_LABELS[s.category]}</span></div>
+        <div class="m-name">${escapeHtml(s.name)} <span>${escapeHtml(CATEGORY_LABELS[s.category] || s.category)}</span></div>
+        ${labels ? `<div class="m-tags">${labels}</div>` : ''}
         ${s.note || s.description ? `<div class="m-note">${escapeHtml(s.note || s.description)}</div>` : ''}
       </div>
+      <select class="m-priority" aria-label="${escapeHtml(s.name)} 编辑优先级">
+        ${Object.entries(EDITORIAL_PRIORITY_LABELS).map(([value, label]) => `<option value="${value}" ${s.editorialPriority === value ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
       <span class="m-status ${s.status === 'error' ? 'error' : s.status === 'ok' ? 'ok' : ''}">${statusTxt}</span>
-      <button class="switch ${s.enabled ? 'on' : ''}" title="${s.enabled ? '点击禁用' : '点击启用'}"></button>`;
-    row.querySelector('.switch').onclick = async (ev) => {
-      ev.stopPropagation();
-      const r = await api(`/api/sources/${s.id}/toggle`, { method: 'POST' });
-      s.enabled = r.enabled;
-      toast(`${s.name} ${r.enabled ? '已启用（抓取中…）' : '已禁用'}`);
-      renderManage(target, statusTarget);
-      setTimeout(async () => {
-        await loadSources();
-        renderManage(target, statusTarget);
-        reload({ keepReader: true });
-      }, r.enabled ? 4000 : 0);
+      <button class="switch ${s.enabled ? 'on' : ''}" type="button" aria-label="${s.enabled ? '关闭' : '启用'} ${escapeHtml(s.name)}" title="${s.enabled ? '点击关闭' : '点击启用'}"></button>`;
+    const priority = row.querySelector('.m-priority');
+    priority.onchange = () => updateManagedSource(s, { editorialPriority: priority.value }, target, statusTarget);
+    row.querySelector('.switch').onclick = event => {
+      event.stopPropagation();
+      updateManagedSource(s, { enabled: !s.enabled }, target, statusTarget);
     };
     el.appendChild(row);
   }
@@ -8253,7 +8383,7 @@ async function openAdminPage({ push = true } = {}) {
   }
   setWorkspacePage('admin');
   state.activeEntry = null;
-  document.title = '系统后台 · QMReader';
+  document.title = '系统后台 · Namoo Reader';
   renderAdminPage();
   if (push) {
     const url = adminUrlFor();
@@ -8326,7 +8456,7 @@ function setAiProfileForPurpose(purpose, profileId) {
 
 function aiAlertText() {
   if (state.aiConfigReason === 'translation') return '生成双语对照翻译需要先保存一个可用的 AI 配置。';
-  if (state.aiConfigReason === 'rewrite') return '生成中文改写需要先保存一个可用的 AI 配置，保存后会继续当前文章。';
+  if (state.aiConfigReason === 'rewrite') return '生成 Namoo 创作草稿需要先保存一个可用的 AI 配置，保存后会继续当前文章。';
   if (state.aiConfigReason === 'agent') return '文章对话需要先保存一个可用的 AI 配置，当前问题会保留。';
   return '';
 }
@@ -8521,7 +8651,7 @@ async function deleteAiProfile() {
   if (!profile || state.aiProfiles.length <= 1) return;
   const ok = await showConfirmDialog({
     title: '删除 AI 配置',
-    message: `确定删除「${profile.name}」吗？使用这个配置的翻译、改写和对话会切回默认配置。`,
+    message: `确定删除「${profile.name}」吗？使用这个配置的翻译、创作草稿和对话会切回默认配置。`,
     confirmText: '删除',
     danger: true,
   });
