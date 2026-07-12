@@ -91,22 +91,8 @@
           </span>
         </button>
         <button id="account-info" class="account-card account-info hidden" type="button"></button>
-        <button id="account-settings-open" class="icon-btn account-settings hidden" type="button" title="账户设置" aria-label="账户设置">
-          <span data-qm-icon="settings"></span><b id="notification-count" class="hidden">0</b>
-        </button>
-        <div id="account-menu" class="account-menu hidden" role="menu" aria-label="账户菜单">
-          <button id="account-menu-dashboard" type="button" role="menuitem">我的后台</button>
-          <button id="account-menu-profile" type="button" role="menuitem">我的贡献</button>
-          <button id="account-menu-admin" class="hidden" type="button" role="menuitem">系统后台</button>
-          <button id="account-menu-password" type="button" role="menuitem">修改密码</button>
-          <button id="account-menu-logout" type="button" role="menuitem">退出登录</button>
-        </div>
       </div>
 
-      <div class="sidebar-footer hidden">
-        <button id="refresh-btn" class="ghost-btn"><span data-qm-icon="refresh-cw"></span><span class="button-label">刷新全部</span></button>
-        <button id="manage-btn" class="ghost-btn"><span data-qm-icon="settings"></span><span class="button-label">管理源</span></button>
-      </div>
     </aside>
 
     <!-- ===== Entry list ===== -->
@@ -248,6 +234,7 @@
           <div class="reader-section-head">
             <span id="rewrite-section-label">Namoo 创作草稿</span>
             <div class="reader-section-actions">
+              <select id="rewrite-profile-select" class="ai-profile-select" title="选择用于创作草稿的模型" aria-label="选择用于创作草稿的模型"></select>
               <button id="rewrite-helpful" class="asset-helpful-btn hidden" type="button" aria-pressed="false">有用</button>
               <button id="rewrite-copy" class="icon-btn reader-section-icon hidden" type="button" title="复制创作草稿" aria-label="复制创作草稿"><span data-qm-icon="copy"></span></button>
               <button id="reader-rewrite" class="ghost-btn primary reader-rewrite-action" type="button">生成</button>
@@ -335,8 +322,8 @@
       <section id="my-dashboard-page" class="workspace-page dashboard-page hidden">
         <header class="workspace-page-head">
           <div>
-            <h1>个人后台</h1>
-            <p>编辑公开主页、查看通知和管理你沉淀过的资产。</p>
+            <h1>我的空间</h1>
+            <p>管理个人资料、阅读偏好、贡献和账户安全；管理员可在此管理站点。</p>
           </div>
           <div class="my-assets-header-actions">
             <a id="my-public-profile-link" class="ghost-btn my-public-profile-link hidden" href="#" target="_blank" rel="noopener">公开页</a>
@@ -344,10 +331,18 @@
             <button class="icon-btn" id="my-comments-close" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
           </div>
         </header>
-        <div class="dashboard-tabs" role="tablist" aria-label="个人后台">
-          <button class="dashboard-tab active" type="button" data-dashboard-tab="profile">个人资料</button>
-          <button class="dashboard-tab" type="button" data-dashboard-tab="ai">AI 设置</button>
-          <button class="dashboard-tab" type="button" data-dashboard-tab="contributions">我的贡献</button>
+        <div class="dashboard-tabs" role="tablist" aria-label="我的空间">
+          <div class="dashboard-tab-group">
+            <span class="dashboard-tab-label">个人</span>
+            <button class="dashboard-tab active" type="button" data-dashboard-tab="profile">个人资料</button>
+            <button class="dashboard-tab" type="button" data-dashboard-tab="reading">阅读与 AI</button>
+            <button class="dashboard-tab" type="button" data-dashboard-tab="contributions">我的贡献</button>
+            <button class="dashboard-tab" type="button" data-dashboard-tab="security">账户安全</button>
+          </div>
+          <div id="dashboard-admin-tab-group" class="dashboard-tab-group hidden">
+            <span class="dashboard-tab-label">站点管理</span>
+            <button class="dashboard-tab" type="button" data-dashboard-tab="sources">订阅源</button>
+          </div>
         </div>
         <section id="dashboard-profile-panel" class="dashboard-panel">
           <section class="profile-dashboard">
@@ -382,11 +377,6 @@
                 </div>
               </div>
             </div>
-            <div class="profile-admin-actions hidden" id="profile-admin-actions">
-              <span>管理员</span>
-              <button id="profile-refresh-btn" class="ghost-btn" type="button">刷新全部</button>
-              <button id="profile-manage-btn" class="ghost-btn" type="button">管理源</button>
-            </div>
             <div class="profile-notifications">
               <div class="profile-panel-head">
                 <span>通知</span>
@@ -396,7 +386,7 @@
             </div>
           </section>
         </section>
-        <section id="dashboard-ai-panel" class="dashboard-panel hidden">
+        <section id="dashboard-reading-panel" class="dashboard-panel hidden">
           <div id="dashboard-ai-mount" class="dashboard-ai-mount"></div>
         </section>
         <section id="dashboard-contributions-panel" class="dashboard-panel hidden">
@@ -413,6 +403,63 @@
             <button class="my-asset-sort-btn" type="button" data-my-asset-sort="helpful">有用</button>
           </div>
           <div id="my-comments-list" class="my-comments-list"></div>
+        </section>
+        <section id="dashboard-security-panel" class="dashboard-panel hidden">
+          <section class="workspace-security-card">
+            <div class="workspace-section-head">
+              <div>
+                <h2>修改密码</h2>
+                <p>先验证当前密码，再保存新密码。</p>
+              </div>
+            </div>
+            <form id="change-password-form" class="auth-form workspace-password-form">
+              <input id="change-password-current" type="password" autocomplete="current-password" placeholder="当前密码" required />
+              <input id="change-password-new" type="password" autocomplete="new-password" placeholder="新密码（至少 8 位）" required />
+              <input id="change-password-confirm" type="password" autocomplete="new-password" placeholder="再次输入新密码" required />
+              <button id="change-password-submit" class="ghost-btn primary" type="submit">保存新密码</button>
+            </form>
+          </section>
+          <section class="workspace-security-card workspace-danger-zone">
+            <div class="workspace-section-head">
+              <div>
+                <h2>退出登录</h2>
+                <p>退出当前设备上的 Namoo Reader 账号。</p>
+              </div>
+              <button id="workspace-logout" class="ghost-btn" type="button">退出登录</button>
+            </div>
+          </section>
+        </section>
+        <section id="dashboard-sources-panel" class="dashboard-panel hidden">
+          <section class="workspace-admin-card">
+            <div class="workspace-section-head">
+              <div>
+                <h2>订阅源</h2>
+                <p>内置源可调整启用、优先级和排序；自定义源可新增、编辑和归档。</p>
+              </div>
+              <button id="custom-source-add" class="ghost-btn primary" type="button">添加自定义订阅源</button>
+            </div>
+            <form id="custom-source-form" class="custom-source-form hidden">
+              <div class="custom-source-form-head">
+                <strong id="custom-source-form-title">添加自定义订阅源</strong>
+                <button id="custom-source-cancel" class="icon-btn" type="button" title="取消" aria-label="取消"><span data-qm-icon="x"></span></button>
+              </div>
+              <div class="custom-source-grid">
+                <label><span>名称</span><input id="custom-source-name" type="text" maxlength="80" placeholder="例如：公司技术博客" required /></label>
+                <label><span>分类</span><select id="custom-source-category"><option value="article">文章</option><option value="news">资讯</option><option value="podcast">播客</option></select></label>
+                <label class="custom-source-wide"><span>订阅地址</span><input id="custom-source-feed-url" type="url" placeholder="https://example.com/feed.xml" required /></label>
+                <label class="custom-source-wide"><span>网站地址（可选）</span><input id="custom-source-site-url" type="url" placeholder="https://example.com" /></label>
+                <label><span>标签（用逗号分隔）</span><input id="custom-source-labels" type="text" maxlength="249" placeholder="研究, AI" /></label>
+                <label><span>说明（可选）</span><input id="custom-source-description" type="text" maxlength="400" placeholder="订阅源的用途或覆盖内容" /></label>
+              </div>
+              <div class="custom-source-form-actions">
+                <button id="custom-source-save" class="ghost-btn primary" type="submit">添加并刷新</button>
+                <span>保存后会立即尝试抓取，以便确认订阅地址。</span>
+              </div>
+            </form>
+          </section>
+          <section id="workspace-source-status" class="manage-status"></section>
+          <section id="workspace-source-filters" class="source-manage-filters"></section>
+          <section id="workspace-manage-list" class="manage-list workspace-manage-list"></section>
         </section>
       </section>
       <section id="contributor-page" class="workspace-page contributor-page hidden">
@@ -442,25 +489,6 @@
           <button class="contributor-asset-sort-btn" type="button" data-contributor-asset-sort="helpful">有用</button>
         </div>
         <div id="contributor-list" class="my-comments-list"></div>
-      </section>
-      <section id="admin-page" class="workspace-page admin-page hidden">
-        <header class="workspace-page-head">
-          <div>
-            <h1>系统后台</h1>
-            <p>管理员专用。刷新全站、管理订阅源和查看后台任务状态。</p>
-          </div>
-          <div class="admin-page-actions">
-            <button id="admin-back-dashboard" class="ghost-btn" type="button">个人后台</button>
-            <button id="admin-close" class="icon-btn" type="button" title="返回阅读器" aria-label="返回阅读器"><span data-qm-icon="arrow-left"></span></button>
-          </div>
-        </header>
-        <section class="admin-control-strip">
-          <button id="admin-refresh-btn" class="ghost-btn primary" type="button">刷新全部</button>
-          <button id="admin-manage-modal-btn" class="ghost-btn" type="button">弹窗管理源</button>
-        </section>
-        <section id="admin-manage-status" class="manage-status"></section>
-        <section id="admin-source-filters" class="source-manage-filters"></section>
-        <section id="admin-manage-list" class="manage-list admin-manage-list"></section>
       </section>
     </section>
 
@@ -521,16 +549,6 @@
     </button>
   </div>
 
-  <!-- ===== Manage sources modal ===== -->
-  <div id="manage-modal" class="modal hidden">
-    <div class="modal-box">
-      <header><h2>管理订阅源</h2><button class="icon-btn" id="manage-close" aria-label="关闭管理订阅源"><span data-qm-icon="x"></span></button></header>
-      <div id="manage-status" class="manage-status"></div>
-      <div id="manage-source-filters" class="source-manage-filters"></div>
-      <div id="manage-list" class="manage-list"></div>
-    </div>
-  </div>
-
   <div id="auth-modal" class="modal hidden">
     <div class="modal-box auth-box">
       <header><h2 id="auth-title">登录</h2><button class="icon-btn" id="auth-close" aria-label="关闭登录弹窗"><span data-qm-icon="x"></span></button></header>
@@ -543,24 +561,6 @@
         <input id="auth-password" type="password" autocomplete="current-password" placeholder="密码（至少 8 位）" required />
         <input id="auth-name" class="hidden" type="text" maxlength="40" autocomplete="nickname" placeholder="显示名" />
         <button id="auth-submit" class="ghost-btn" type="submit">登录</button>
-      </form>
-    </div>
-  </div>
-
-  <div id="change-password-modal" class="modal hidden">
-    <div class="modal-box auth-box">
-      <header>
-        <div>
-          <h2>修改密码</h2>
-          <p>需要先验证当前密码。</p>
-        </div>
-        <button id="change-password-close" class="icon-btn" type="button" aria-label="关闭修改密码"><span data-qm-icon="x"></span></button>
-      </header>
-      <form id="change-password-form" class="auth-form">
-        <input id="change-password-current" type="password" autocomplete="current-password" placeholder="当前密码" required />
-        <input id="change-password-new" type="password" autocomplete="new-password" placeholder="新密码（至少 8 位）" required />
-        <input id="change-password-confirm" type="password" autocomplete="new-password" placeholder="再次输入新密码" required />
-        <button id="change-password-submit" class="ghost-btn primary" type="submit">保存新密码</button>
       </form>
     </div>
   </div>
@@ -632,7 +632,7 @@
       <header>
         <div>
           <h2>AI 模型配置</h2>
-          <p>API Key 只保存在当前浏览器，用于你的翻译和文章对话调用。</p>
+          <p>站点默认 AI 由服务器统一管理并供自动草稿复用；个人 API Key 仅作为可选覆盖。</p>
         </div>
         <button class="icon-btn" id="ai-config-close" aria-label="关闭 AI 模型配置"><span data-qm-icon="x"></span></button>
       </header>

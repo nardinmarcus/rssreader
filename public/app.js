@@ -30,7 +30,7 @@ const DEFAULT_READER_OPEN_TAB = 'rewrite';
 const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
-const DASHBOARD_TABS = ['profile', 'ai', 'contributions'];
+const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'sources'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '创作草稿', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
@@ -56,6 +56,7 @@ const COMMENT_TEMPLATE_LABELS = {
 };
 const COMMENT_SORTS = ['helpful', 'latest'];
 const DEFAULT_REWRITE_MODEL = 'deepseek-v4-flash';
+const SITE_AI_PROFILE_ID = 'site-default';
 const READER_PREF_DEFAULTS = {
   fontSize: 16.5,
   lineHeight: 1.88,
@@ -651,6 +652,7 @@ const state = {
   profileLinksDraft: [],
   profileAvatarDraft: '',
   dashboardTab: normalizeDashboardTab(storage.getItem('qm_dashboard_tab')),
+  editingCustomSourceId: '',
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
   contributor: { id: '', profile: null, translations: [], rewrites: [], annotations: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
@@ -700,6 +702,7 @@ const state = {
   contextPaneWidth: readStoredNumber('qm_context_pane_width'),
   me: null,
   authMode: 'login',
+  siteAi: null,
   aiProfiles: [],
   activeAiProfileId: '',
   rewriteAiProfileId: '',
@@ -1041,21 +1044,16 @@ function dashboardUrlFor(tab = state.dashboardTab) {
 }
 
 function adminUrlFor() {
-  const url = new URL(window.location.href);
-  url.pathname = '/admin';
-  url.search = '';
-  url.hash = '';
-  return url;
+  return dashboardUrlFor('sources');
 }
 
 function setWorkspacePage(page = '') {
-  const next = page === 'dashboard' || page === 'contributor' || page === 'admin' ? page : '';
+  const next = page === 'dashboard' || page === 'contributor' ? page : '';
   state.workspacePage = next;
   const app = $('#app');
   app.classList.toggle('workspace-page-open', Boolean(next));
   $('#my-dashboard-page')?.classList.toggle('hidden', next !== 'dashboard');
   $('#contributor-page')?.classList.toggle('hidden', next !== 'contributor');
-  $('#admin-page')?.classList.toggle('hidden', next !== 'admin');
   if (next) {
     $('#reader').classList.add('hidden');
     $('#reader-empty').classList.add('hidden');
@@ -1459,6 +1457,51 @@ function aiPurposeProfileKey(purpose, scope = aiScope()) {
   return `qm_ai_${purpose}_profile:${scope}`;
 }
 
+function aiPurposeOverrideKey(purpose, scope = aiScope()) {
+  return `qm_ai_${purpose}_profile_override:${scope}`;
+}
+
+function setSiteAi(siteAi) {
+  state.siteAi = siteAi && siteAi.configured ? siteAi : null;
+}
+
+function siteAiProfile() {
+  const config = state.siteAi;
+  if (!config || !config.configured) return null;
+  return {
+    id: SITE_AI_PROFILE_ID,
+    name: '站点默认 AI',
+    provider: config.provider || DEFAULT_AI_PRESET_ID,
+    providerName: config.providerTitle || config.provider || '站点 AI',
+    providerType: config.providerType || 'openai_compatible',
+    apiKey: '',
+    baseUrl: '',
+    model: config.model || '',
+    temperature: clampTemperature(config.temperature),
+    maxTokens: clampMaxTokens(config.maxTokens),
+    useSiteAi: true,
+    isDefault: false,
+  };
+}
+
+function selectableAiProfiles() {
+  const site = siteAiProfile();
+  return site ? [site, ...state.aiProfiles] : state.aiProfiles;
+}
+
+function profileExists(profileId) {
+  return selectableAiProfiles().some(profile => profile.id === profileId);
+}
+
+function defaultAiProfileId(purpose, fallbackId) {
+  const overrideId = storage.getItem(aiPurposeOverrideKey(purpose));
+  if (overrideId && profileExists(overrideId)) return overrideId;
+  const site = siteAiProfile();
+  if (site) return site.id;
+  const storedId = storage.getItem(aiPurposeProfileKey(purpose));
+  return profileExists(storedId) ? storedId : fallbackId;
+}
+
 function migrateLegacyAiProfiles() {
   const profiles = [];
   const legacyConfigs = readJson('qm_ai_configs', '{}');
@@ -1505,12 +1548,9 @@ function loadAiProfilesForScope() {
   state.activeAiProfileId = profiles.some(profile => profile.id === activeId)
     ? activeId
     : (profiles.find(profile => profile.isDefault) || profiles[0]).id;
-  const rewriteId = storage.getItem(aiPurposeProfileKey('rewrite', scope));
-  const agentId = storage.getItem(aiPurposeProfileKey('agent', scope));
-  const translationId = storage.getItem(aiPurposeProfileKey('translation', scope));
-  state.translationAiProfileId = profiles.some(profile => profile.id === translationId) ? translationId : state.activeAiProfileId;
-  state.rewriteAiProfileId = profiles.some(profile => profile.id === rewriteId) ? rewriteId : state.activeAiProfileId;
-  state.agentAiProfileId = profiles.some(profile => profile.id === agentId) ? agentId : state.activeAiProfileId;
+  state.translationAiProfileId = defaultAiProfileId('translation', state.activeAiProfileId);
+  state.rewriteAiProfileId = defaultAiProfileId('rewrite', state.activeAiProfileId);
+  state.agentAiProfileId = defaultAiProfileId('agent', state.activeAiProfileId);
   state.editingAiProfileId = state.activeAiProfileId;
   state.loadedAiScope = scope;
   persistAiProfiles();
@@ -1526,7 +1566,7 @@ function persistAiProfiles() {
 }
 
 function profileByIdOrDefault(profileId = '') {
-  return state.aiProfiles.find(profile => profile.id === profileId)
+  return selectableAiProfiles().find(profile => profile.id === profileId)
     || state.aiProfiles.find(profile => profile.isDefault)
     || state.aiProfiles[0]
     || createProfileFromPreset(DEFAULT_AI_PRESET_ID, { isDefault: true });
@@ -1555,6 +1595,7 @@ function configFromProfile(profile) {
     model: String(profile.model || '').trim(),
     temperature: clampTemperature(profile.temperature),
     maxTokens: clampMaxTokens(profile.maxTokens),
+    useSiteAi: Boolean(profile.useSiteAi),
   };
 }
 
@@ -1567,7 +1608,7 @@ function aiConfigForPurpose(purpose = '') {
 }
 
 function hasUsableAiConfig(config = currentAiConfig()) {
-  return Boolean(config.apiKey && config.baseUrl && config.model);
+  return Boolean(config.useSiteAi ? state.siteAi?.configured : config.apiKey && config.baseUrl && config.model);
 }
 
 function aiHeaderValue(value, fallback = '') {
@@ -1579,6 +1620,12 @@ function aiHeaderValue(value, fallback = '') {
 }
 
 function aiHeadersFromConfig(config) {
+  if (config.useSiteAi) {
+    return {
+      'X-AI-Temperature': String(config.temperature ?? ''),
+      'X-AI-Max-Tokens': String(config.maxTokens ?? ''),
+    };
+  }
   return {
     'X-AI-Provider': aiHeaderValue(config.provider, 'custom'),
     'X-AI-Provider-Name': aiHeaderValue(config.providerName || config.profileName, config.provider || 'AI'),
@@ -1654,8 +1701,9 @@ async function loadSources() {
   state.refreshing = Boolean(data.refreshing);
   state.refreshProgress = data.progress || { done: 0, total: 0 };
   state.autoRewrite = data.autoRewrite || { running: false, last: null };
-  if (!$('#manage-modal')?.classList.contains('hidden')) renderManageStatus();
-  if (state.workspacePage === 'admin') renderManageStatus('#admin-manage-status');
+  if (state.workspacePage === 'dashboard' && state.dashboardTab === 'sources') {
+    renderManageStatus('#workspace-source-status');
+  }
   renderSourceRefreshButton();
   return data;
 }
@@ -1943,6 +1991,7 @@ function recordEntryView(entryId) {
 async function loadMe() {
   const data = await api('/api/me');
   setCurrentUser(data.user || null);
+  setSiteAi(data.siteAi);
   await loadUserEntryStates();
   loadAiProfilesForScope();
   renderAuthState();
@@ -2133,8 +2182,9 @@ async function reorderSidebarSource(sourceId, targetId, placement = 'before') {
       throw new Error('未能保存目标顺序');
     }
     renderSidebar();
-    if (!$('#manage-modal')?.classList.contains('hidden')) renderManage();
-    if (state.workspacePage === 'admin') renderManage('#admin-manage-list', '#admin-manage-status');
+    if (state.workspacePage === 'dashboard' && state.dashboardTab === 'sources') {
+      renderManage('#workspace-manage-list', '#workspace-source-status');
+    }
     if (moved) toast('信息源顺序已保存');
   } catch (error) {
     toast('调整顺序失败: ' + error.message, 5000);
@@ -2384,7 +2434,8 @@ function normalizeUserAssetSort(sort = '') {
 }
 
 function normalizeDashboardTab(tab = '') {
-  return DASHBOARD_TABS.includes(tab) ? tab : 'profile';
+  const normalized = tab === 'ai' ? 'reading' : tab;
+  return DASHBOARD_TABS.includes(normalized) ? normalized : 'profile';
 }
 
 function assetTypeCount(entries, type) {
@@ -3317,61 +3368,25 @@ function renderAuthState() {
   const loggedIn = Boolean(state.me);
   $('#auth-open')?.classList.toggle('hidden', loggedIn);
   $('#account-info')?.classList.toggle('hidden', !loggedIn);
-  $('#account-settings-open')?.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
-    setAccountMenuOpen(false);
-    closeChangePasswordModal();
+    resetChangePasswordForm();
   }
   if (loggedIn) {
     $('#account-info').innerHTML = `
       ${avatarHtml(state.me, 'account-avatar')}
       <span class="account-text">
         <strong>${escapeHtml(state.me.displayName || '读者')}</strong>
-        <span>${escapeHtml(isAdmin() ? '管理员' : '个人后台')}</span>
+        <span>${escapeHtml(isAdmin() ? '管理员 · 我的空间' : '我的空间')}</span>
       </span>
     `;
-    $('#account-info').title = '打开个人后台';
-    const unread = Number(state.me.notificationUnreadCount) || 0;
-    const badge = $('#notification-count');
-    if (badge) {
-      badge.textContent = unread > 99 ? '99+' : String(unread);
-      badge.classList.toggle('hidden', unread <= 0);
-    }
+    $('#account-info').title = '打开我的空间';
   }
-  $('#account-menu-admin')?.classList.toggle('hidden', !isAdmin());
-  $('.sidebar-footer').classList.add('hidden');
-  const adminActions = $('#profile-admin-actions');
-  if (adminActions) adminActions.classList.toggle('hidden', !isAdmin());
   renderAdminEntryControls();
-  renderSidebarAiSettings();
   updateAgentControls();
 }
 
-function setAccountMenuOpen(open) {
-  const menu = $('#account-menu');
-  const trigger = $('#account-settings-open');
-  if (!menu || !trigger) return;
-  const nextOpen = Boolean(open) && Boolean(state.me);
-  menu.classList.toggle('hidden', !nextOpen);
-  trigger.classList.toggle('active', nextOpen);
-  trigger.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
-}
-
-function toggleAccountMenu() {
-  const menu = $('#account-menu');
-  setAccountMenuOpen(menu ? menu.classList.contains('hidden') : true);
-}
-
 function renderSidebarAiSettings() {
-  const btn = $('#account-settings-open');
-  if (!btn) return;
-  const loggedIn = Boolean(state.me);
-  const config = currentAiConfig();
-  const profile = currentAiProfile();
-  const ready = loggedIn && hasUsableAiConfig(config);
-  btn.title = loggedIn
-    ? (ready ? `账户设置 · ${profile.name} · ${config.model}` : '账户设置')
-    : '登录后配置自己的 API Key';
+  // AI 配置入口位于“我的空间 → 阅读与 AI”，不再占用侧边栏账户区。
 }
 
 function setAuthMode(mode) {
@@ -3393,19 +3408,13 @@ function closeAuth() {
   $('#auth-modal').classList.add('hidden');
 }
 
-function openChangePasswordModal() {
-  if (!requireAuth('login')) return;
-  $('#change-password-current').value = '';
-  $('#change-password-new').value = '';
-  $('#change-password-confirm').value = '';
-  $('#change-password-submit').disabled = false;
-  $('#change-password-submit').textContent = '保存新密码';
-  $('#change-password-modal').classList.remove('hidden');
-  setTimeout(() => $('#change-password-current').focus(), 30);
-}
-
-function closeChangePasswordModal() {
-  $('#change-password-modal').classList.add('hidden');
+function resetChangePasswordForm() {
+  $('#change-password-form')?.reset();
+  const button = $('#change-password-submit');
+  if (button) {
+    button.disabled = false;
+    button.textContent = '保存新密码';
+  }
 }
 
 function requireAuth(mode = 'login') {
@@ -3481,6 +3490,7 @@ async function submitAuth() {
       body: JSON.stringify({ email, password, displayName }),
     });
     setCurrentUser(data.user || null);
+    setSiteAi(data.siteAi);
     closeAuth();
     await Promise.all([loadUserEntryStates(), loadSources(), loadEntries()]);
     loadAiProfilesForScope();
@@ -3527,7 +3537,7 @@ async function submitChangePassword() {
       body: JSON.stringify({ currentPassword, newPassword }),
     });
     if (data.user) setCurrentUser(data.user);
-    closeChangePasswordModal();
+    resetChangePasswordForm();
     renderAuthState();
     toast('密码已修改');
   } catch (err) {
@@ -3540,12 +3550,11 @@ async function submitChangePassword() {
 
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
-  const wasDashboardOpen = state.workspacePage === 'dashboard' || state.workspacePage === 'admin';
+  const wasDashboardOpen = state.workspacePage === 'dashboard';
   setCurrentUser(null);
   state.myComments = [];
   state.myChatMessages = [];
-  setAccountMenuOpen(false);
-  closeChangePasswordModal();
+  resetChangePasswordForm();
   if (wasDashboardOpen) closeMyCommentsModal();
   applyGuestEntryStates();
   await Promise.all([loadSources(), loadEntries()]);
@@ -6491,24 +6500,33 @@ function mountAiConfigPanel(target = 'modal') {
 }
 
 function renderDashboardTabs() {
-  const tab = normalizeDashboardTab(state.dashboardTab);
+  const requestedTab = normalizeDashboardTab(state.dashboardTab);
+  const tab = !isAdmin() && requestedTab === 'sources'
+    ? 'profile'
+    : requestedTab;
+  state.dashboardTab = tab;
+  $('#dashboard-admin-tab-group')?.classList.toggle('hidden', !isAdmin());
   $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
     const active = btn.dataset.dashboardTab === tab;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
   $('#dashboard-profile-panel')?.classList.toggle('hidden', tab !== 'profile');
-  $('#dashboard-ai-panel')?.classList.toggle('hidden', tab !== 'ai');
+  $('#dashboard-reading-panel')?.classList.toggle('hidden', tab !== 'reading');
   $('#dashboard-contributions-panel')?.classList.toggle('hidden', tab !== 'contributions');
-  if (tab === 'ai') {
+  $('#dashboard-security-panel')?.classList.toggle('hidden', tab !== 'security');
+  $('#dashboard-sources-panel')?.classList.toggle('hidden', tab !== 'sources' || !isAdmin());
+  if (tab === 'reading') {
     mountAiConfigPanel('dashboard');
     renderAiSettings();
   }
+  if (tab === 'sources' && isAdmin()) renderManage('#workspace-manage-list', '#workspace-source-status');
   renderMyPublicProfileActions();
 }
 
 function setDashboardTab(tab = 'profile', { push = false, persist = true } = {}) {
-  state.dashboardTab = normalizeDashboardTab(tab);
+  const requested = normalizeDashboardTab(tab);
+  state.dashboardTab = !isAdmin() && requested === 'sources' ? 'profile' : requested;
   if (persist) storage.setItem('qm_dashboard_tab', state.dashboardTab);
   renderDashboardTabs();
   if (push && state.workspacePage === 'dashboard') {
@@ -6578,8 +6596,6 @@ function renderProfileEditor() {
   renderProfileAvatarPreview();
   renderProfileLinksEditor();
   renderProfileDefaultReaderTab();
-  const adminActions = $('#profile-admin-actions');
-  if (adminActions) adminActions.classList.toggle('hidden', !isAdmin());
 }
 
 function renderNotifications() {
@@ -6731,7 +6747,7 @@ async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {
   }
   setWorkspacePage('dashboard');
   setDashboardTab(tab, { persist: true, push: false });
-  document.title = '个人后台 · Namoo Reader';
+  document.title = '我的空间 · Namoo Reader';
   if (push) history.pushState({ dashboard: true, tab: state.dashboardTab }, '', dashboardUrlFor(state.dashboardTab));
   renderProfileEditor();
   loadNotifications();
@@ -8141,43 +8157,6 @@ function selectContributorSort(sort = 'latest') {
 }
 
 /* ---------- Refresh ---------- */
-async function refreshAll() {
-  if (!isAdmin()) {
-    toast('需要管理员权限');
-    return;
-  }
-  const buttons = ['#refresh-btn', '#profile-refresh-btn', '#admin-refresh-btn']
-    .map(selector => $(selector))
-    .filter(Boolean);
-  const setButtons = (label, disabled = true) => {
-    buttons.forEach(btn => {
-      btn.disabled = disabled;
-      setButtonIconLabel(btn, disabled ? 'loader-circle' : 'refresh-cw', label, {
-        className: disabled ? 'app-icon app-icon-spin' : 'app-icon',
-      });
-    });
-  };
-  setButtons('刷新中…', true);
-  try {
-    await api('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    // poll until done
-    for (let i = 0; i < 120; i++) {
-      await new Promise(r => setTimeout(r, 1500));
-      const data = await loadSources();
-      setButtons(data.refreshing ? `${data.progress.done}/${data.progress.total}` : '刷新全部', Boolean(data.refreshing));
-      if (!data.refreshing) break;
-    }
-    await reload({ keepReader: true });
-    if (!$('#manage-modal')?.classList.contains('hidden')) renderManage();
-    if (state.workspacePage === 'admin') renderAdminPage();
-    toast('刷新完成');
-  } catch (e) {
-    toast('刷新失败: ' + e.message);
-  } finally {
-    setButtons('刷新全部', false);
-  }
-}
-
 async function refreshCurrentSource() {
   const source = state.filterSource ? sourceById(state.filterSource) : null;
   if (!source) return;
@@ -8276,10 +8255,10 @@ function autoRewriteStatusParts() {
   };
 }
 
-function renderManageStatus(target = '#manage-status') {
+function renderManageStatus(target = '#workspace-source-status') {
   const el = $(target);
   if (!el) return;
-  const actionId = el.id === 'admin-manage-status' ? 'admin-auto-rewrite' : 'manage-auto-rewrite';
+  const actionId = 'workspace-sources-auto-rewrite';
   const counts = manageStatusLine();
   const progress = state.refreshProgress || { done: 0, total: 0 };
   const refreshValue = state.refreshing
@@ -8321,7 +8300,7 @@ async function runAutoRewriteFromManage() {
     toast('需要管理员权限');
     return;
   }
-  const btn = $('#manage-auto-rewrite') || $('#admin-auto-rewrite');
+  const btn = $('#workspace-sources-auto-rewrite');
   if (btn) {
     btn.disabled = true;
     btn.textContent = '运行中';
@@ -8336,25 +8315,24 @@ async function runAutoRewriteFromManage() {
     for (let i = 0; i < 80; i++) {
       await new Promise(r => setTimeout(r, 1500));
       const data = await loadSources();
-      renderManageStatus();
-      if (state.workspacePage === 'admin') renderManageStatus('#admin-manage-status');
+      renderManageStatus('#workspace-source-status');
       if (!data.autoRewrite?.running) break;
     }
     await reload({ keepReader: true });
-    renderManage();
-    if (state.workspacePage === 'admin') renderAdminPage();
+    if (state.workspacePage === 'dashboard' && state.dashboardTab === 'sources') {
+      renderManage('#workspace-manage-list', '#workspace-source-status');
+    }
   } catch (error) {
     toast('启动自动草稿失败: ' + error.message, 5000);
     await loadSources().catch(() => null);
-    renderManageStatus();
-    if (state.workspacePage === 'admin') renderManageStatus('#admin-manage-status');
+    renderManageStatus('#workspace-source-status');
   }
 }
 
 const EDITORIAL_PRIORITY_LABELS = { high: '高优先', normal: '普通', low: '低优先' };
 
 function sourceManageFilterTarget(listTarget) {
-  return listTarget === '#admin-manage-list' ? '#admin-source-filters' : '#manage-source-filters';
+  return listTarget === '#workspace-manage-list' ? '#workspace-source-filters' : '#workspace-source-filters';
 }
 
 function renderSourceManageFilters(listTarget, statusTarget) {
@@ -8433,7 +8411,103 @@ async function updateManagedSource(source, patch, target, statusTarget) {
   }
 }
 
-function renderManage(target = '#manage-list', statusTarget = '#manage-status') {
+async function moveManagedSource(source, direction, target, statusTarget) {
+  try {
+    const data = await api(`/api/sources/${encodeURIComponent(source.id)}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ direction }),
+    });
+    if (!data.moved) {
+      toast('已经到达当前分类边界');
+      return;
+    }
+    if (Array.isArray(data.sources)) state.sources = data.sources;
+    renderSidebar();
+    renderManage(target, statusTarget);
+    toast('信息源顺序已保存');
+  } catch (error) {
+    toast('调整顺序失败: ' + error.message, 5000);
+  }
+}
+
+function splitCustomSourceLabels(value) {
+  return [...new Set(String(value || '').split(/[,，]/).map(label => label.trim()).filter(Boolean))].slice(0, 10);
+}
+
+function openCustomSourceEditor(source = null) {
+  if (!isAdmin()) return;
+  state.editingCustomSourceId = source && source.isCustom ? source.id : '';
+  const form = $('#custom-source-form');
+  if (!form) return;
+  $('#custom-source-form-title').textContent = state.editingCustomSourceId ? '编辑自定义订阅源' : '添加自定义订阅源';
+  $('#custom-source-save').textContent = state.editingCustomSourceId ? '保存并刷新' : '添加并刷新';
+  $('#custom-source-name').value = source?.name || '';
+  $('#custom-source-category').value = source?.category || 'article';
+  $('#custom-source-feed-url').value = source?.feedUrl || '';
+  $('#custom-source-site-url').value = source?.siteUrl || '';
+  $('#custom-source-labels').value = (source?.labels || []).join(', ');
+  $('#custom-source-description').value = source?.description || '';
+  form.classList.remove('hidden');
+  setTimeout(() => $('#custom-source-name')?.focus(), 0);
+}
+
+function closeCustomSourceEditor() {
+  state.editingCustomSourceId = '';
+  $('#custom-source-form')?.classList.add('hidden');
+  $('#custom-source-form')?.reset();
+}
+
+async function saveCustomSource() {
+  if (!isAdmin()) return;
+  const id = state.editingCustomSourceId;
+  const payload = {
+    name: $('#custom-source-name').value,
+    category: $('#custom-source-category').value,
+    feedUrl: $('#custom-source-feed-url').value,
+    siteUrl: $('#custom-source-site-url').value,
+    labels: splitCustomSourceLabels($('#custom-source-labels').value),
+    description: $('#custom-source-description').value,
+  };
+  const save = $('#custom-source-save');
+  save.disabled = true;
+  save.textContent = '保存中…';
+  try {
+    const data = await api(id ? `/api/sources/${encodeURIComponent(id)}` : '/api/sources', {
+      method: id ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (Array.isArray(data.sources)) state.sources = data.sources;
+    closeCustomSourceEditor();
+    renderSidebar();
+    renderManage('#workspace-manage-list', '#workspace-source-status');
+    toast(id ? '自定义订阅源已保存，正在刷新' : '自定义订阅源已添加，正在刷新');
+  } catch (error) {
+    toast('保存自定义订阅源失败: ' + error.message, 5000);
+  } finally {
+    save.disabled = false;
+    save.textContent = id ? '保存并刷新' : '添加并刷新';
+  }
+}
+
+async function archiveCustomSource(source) {
+  if (!source || !source.isCustom) return;
+  if (!window.confirm(`归档「${source.name}」？历史文章会保留，但不会继续抓取。`)) return;
+  try {
+    const data = await api(`/api/sources/${encodeURIComponent(source.id)}`, { method: 'DELETE' });
+    if (Array.isArray(data.sources)) state.sources = data.sources;
+    if (state.filterSource === source.id) state.filterSource = null;
+    closeCustomSourceEditor();
+    renderSidebar();
+    renderManage('#workspace-manage-list', '#workspace-source-status');
+    toast('订阅源已归档，历史文章已保留');
+  } catch (error) {
+    toast('归档订阅源失败: ' + error.message, 5000);
+  }
+}
+
+function renderManage(target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
   renderManageStatus(statusTarget);
   renderSourceManageFilters(target, statusTarget);
   const el = $(target);
@@ -8456,7 +8530,7 @@ function renderManage(target = '#manage-list', statusTarget = '#manage-status') 
     row.innerHTML = `
       ${faviconHtml(s.siteUrl, s.name)}
       <div class="m-info">
-        <div class="m-name">${escapeHtml(s.name)} <span>${escapeHtml(CATEGORY_LABELS[s.category] || s.category)}</span></div>
+        <div class="m-name">${escapeHtml(s.name)} <span>${escapeHtml(CATEGORY_LABELS[s.category] || s.category)}</span>${s.isCustom ? ' <b class="m-custom">自定义</b>' : ''}</div>
         ${labels ? `<div class="m-tags">${labels}</div>` : ''}
         ${s.note || s.description ? `<div class="m-note">${escapeHtml(s.note || s.description)}</div>` : ''}
       </div>
@@ -8464,26 +8538,26 @@ function renderManage(target = '#manage-list', statusTarget = '#manage-status') 
         ${Object.entries(EDITORIAL_PRIORITY_LABELS).map(([value, label]) => `<option value="${value}" ${s.editorialPriority === value ? 'selected' : ''}>${label}</option>`).join('')}
       </select>
       <span class="m-status ${s.status === 'error' ? 'error' : s.status === 'ok' ? 'ok' : ''}">${statusTxt}</span>
-      <button class="switch ${s.enabled ? 'on' : ''}" type="button" aria-label="${s.enabled ? '关闭' : '启用'} ${escapeHtml(s.name)}" title="${s.enabled ? '点击关闭' : '点击启用'}"></button>`;
+      <div class="m-actions">
+        <div class="m-order" aria-label="调整 ${escapeHtml(s.name)} 顺序">
+          <button type="button" class="icon-btn" data-managed-order="up" title="上移" aria-label="上移">↑</button>
+          <button type="button" class="icon-btn" data-managed-order="down" title="下移" aria-label="下移">↓</button>
+        </div>
+        ${s.isCustom ? `<button type="button" class="icon-btn" data-source-edit title="编辑 ${escapeHtml(s.name)}" aria-label="编辑 ${escapeHtml(s.name)}">${lucideIcon('pencil')}</button><button type="button" class="icon-btn m-archive" data-source-archive title="归档 ${escapeHtml(s.name)}" aria-label="归档 ${escapeHtml(s.name)}">${lucideIcon('archive')}</button>` : ''}
+        <button class="switch ${s.enabled ? 'on' : ''}" type="button" aria-label="${s.enabled ? '关闭' : '启用'} ${escapeHtml(s.name)}" title="${s.enabled ? '点击关闭' : '点击启用'}"></button>
+      </div>`;
     const priority = row.querySelector('.m-priority');
     priority.onchange = () => updateManagedSource(s, { editorialPriority: priority.value }, target, statusTarget);
     row.querySelector('.switch').onclick = event => {
       event.stopPropagation();
       updateManagedSource(s, { enabled: !s.enabled }, target, statusTarget);
     };
-    el.appendChild(row);
-  }
-}
-
-function renderAdminPage() {
-  if (!isAdmin()) return;
-  renderManage('#admin-manage-list', '#admin-manage-status');
-  const refreshBtn = $('#admin-refresh-btn');
-  if (refreshBtn) {
-    refreshBtn.disabled = Boolean(state.refreshing);
-    setButtonIconLabel(refreshBtn, state.refreshing ? 'loader-circle' : 'refresh-cw', state.refreshing ? '刷新中…' : '刷新全部', {
-      className: state.refreshing ? 'app-icon app-icon-spin' : 'app-icon',
+    row.querySelectorAll('[data-managed-order]').forEach(button => {
+      button.onclick = () => moveManagedSource(s, button.dataset.managedOrder, target, statusTarget);
     });
+    row.querySelector('[data-source-edit]')?.addEventListener('click', () => openCustomSourceEditor(s));
+    row.querySelector('[data-source-archive]')?.addEventListener('click', () => archiveCustomSource(s));
+    el.appendChild(row);
   }
 }
 
@@ -8493,20 +8567,15 @@ async function openAdminPage({ push = true } = {}) {
     else toast('需要管理员权限');
     return false;
   }
-  setWorkspacePage('admin');
-  state.activeEntry = null;
-  document.title = '系统后台 · Namoo Reader';
-  renderAdminPage();
-  if (push) {
-    const url = adminUrlFor();
-    if (url.href !== window.location.href) history.pushState({ workspacePage: 'admin' }, '', url);
+  const opened = await openMyCommentsModal({ push, tab: 'sources' });
+  if (opened && !push && window.location.pathname === '/admin') {
+    history.replaceState({ dashboard: true, tab: 'sources' }, '', dashboardUrlFor('sources'));
   }
-  return true;
+  return opened;
 }
 
 function closeAdminPage() {
-  setWorkspacePage('');
-  clearReaderUrl({ replace: true });
+  closeMyCommentsModal();
 }
 
 function getEditingAiProfile() {
@@ -8533,7 +8602,7 @@ function renderAiStatus() {
 function aiProfileSelectLabel(profile) {
   const model = String(profile && profile.model || '').trim();
   const name = String(profile && profile.name || profile && profile.providerName || 'AI 配置').trim();
-  const suffix = profile && profile.apiKey ? '' : ' · 未配置';
+  const suffix = profile && profile.useSiteAi ? ' · 站点' : profile && profile.apiKey ? '' : ' · 未配置';
   return `${name}${model ? ` · ${model}` : ''}${suffix}`;
 }
 
@@ -8541,11 +8610,12 @@ function renderAiProfileSelect(selector, purpose) {
   const select = $(selector);
   if (!select) return;
   const profile = aiProfileForPurpose(purpose);
-  select.innerHTML = state.aiProfiles.map(item => (
+  const profiles = selectableAiProfiles();
+  select.innerHTML = profiles.map(item => (
     `<option value="${escapeHtml(item.id)}">${escapeHtml(aiProfileSelectLabel(item))}</option>`
   )).join('');
   select.value = profile.id;
-  select.disabled = !state.me || state.aiProfiles.length === 0;
+  select.disabled = !state.me || profiles.length === 0;
   select.classList.toggle('hidden', !state.me && purpose !== 'agent');
 }
 
@@ -8556,8 +8626,10 @@ function renderAiProfileControls() {
 }
 
 function setAiProfileForPurpose(purpose, profileId) {
-  const profile = state.aiProfiles.find(item => item.id === profileId);
+  const profile = selectableAiProfiles().find(item => item.id === profileId);
   if (!profile) return;
+  if (profile.useSiteAi) storage.removeItem(aiPurposeOverrideKey(purpose));
+  else storage.setItem(aiPurposeOverrideKey(purpose), profile.id);
   if (purpose === 'translation') state.translationAiProfileId = profile.id;
   if (purpose === 'rewrite') state.rewriteAiProfileId = profile.id;
   if (purpose === 'agent') state.agentAiProfileId = profile.id;
@@ -8589,9 +8661,7 @@ function renderAiProfileList() {
     btn.onclick = () => {
       state.editingAiProfileId = profile.id;
       state.activeAiProfileId = profile.id;
-      if (state.aiConfigReason === 'translation') state.translationAiProfileId = profile.id;
-      if (state.aiConfigReason === 'rewrite') state.rewriteAiProfileId = profile.id;
-      if (state.aiConfigReason === 'agent') state.agentAiProfileId = profile.id;
+      if (state.aiConfigReason) setAiProfileForPurpose(state.aiConfigReason, profile.id);
       persistAiProfiles();
       renderAiSettings();
       updateAgentControls();
@@ -8731,9 +8801,7 @@ function saveAiProfileFromForm({ silent = false } = {}) {
   }
   state.aiProfiles = ensureSingleDefault(nextProfiles);
   state.activeAiProfileId = profile.id;
-  if (state.aiConfigReason === 'translation') state.translationAiProfileId = profile.id;
-  if (state.aiConfigReason === 'rewrite') state.rewriteAiProfileId = profile.id;
-  if (state.aiConfigReason === 'agent') state.agentAiProfileId = profile.id;
+  if (state.aiConfigReason) setAiProfileForPurpose(state.aiConfigReason, profile.id);
   state.editingAiProfileId = profile.id;
   persistAiProfiles();
   renderAiSettings();
@@ -8770,9 +8838,9 @@ async function deleteAiProfile() {
   if (!ok) return;
   state.aiProfiles = ensureSingleDefault(state.aiProfiles.filter(item => item.id !== profile.id));
   state.activeAiProfileId = (state.aiProfiles.find(item => item.isDefault) || state.aiProfiles[0]).id;
-  if (!state.aiProfiles.some(item => item.id === state.translationAiProfileId)) state.translationAiProfileId = state.activeAiProfileId;
-  if (!state.aiProfiles.some(item => item.id === state.rewriteAiProfileId)) state.rewriteAiProfileId = state.activeAiProfileId;
-  if (!state.aiProfiles.some(item => item.id === state.agentAiProfileId)) state.agentAiProfileId = state.activeAiProfileId;
+  if (!state.aiProfiles.some(item => item.id === state.translationAiProfileId)) state.translationAiProfileId = defaultAiProfileId('translation', state.activeAiProfileId);
+  if (!state.aiProfiles.some(item => item.id === state.rewriteAiProfileId)) state.rewriteAiProfileId = defaultAiProfileId('rewrite', state.activeAiProfileId);
+  if (!state.aiProfiles.some(item => item.id === state.agentAiProfileId)) state.agentAiProfileId = defaultAiProfileId('agent', state.activeAiProfileId);
   state.editingAiProfileId = state.activeAiProfileId;
   persistAiProfiles();
   renderAiSettings();
@@ -8801,7 +8869,7 @@ function openAiConfigModal(reason = '', pendingAction = '', pendingText = '') {
 function closeAiConfigModal() {
   $('#ai-config-modal').classList.add('hidden');
   state.aiConfigReason = '';
-  if (state.workspacePage === 'dashboard' && state.dashboardTab === 'ai') {
+  if (state.workspacePage === 'dashboard' && state.dashboardTab === 'reading') {
     mountAiConfigPanel('dashboard');
   }
   renderAiSettings();
@@ -9268,7 +9336,6 @@ $('#entry-list').onclick = async (e) => {
   if (!btn) return;
   await openAssetActivityButton(btn);
 };
-$('#refresh-btn').onclick = refreshAll;
 $('#source-refresh-btn').onclick = refreshCurrentSource;
 $('#reader-pane').addEventListener('pointerdown', (e) => {
   if (articleContentLinkFromTarget(e.target)) suppressAnnotationPopoverForLink();
@@ -9697,39 +9764,16 @@ if (translationProfileSelect) translationProfileSelect.onchange = (e) => setAiPr
 const rewriteProfileSelect = $('#rewrite-profile-select');
 if (rewriteProfileSelect) rewriteProfileSelect.onchange = (e) => setAiProfileForPurpose('rewrite', e.target.value);
 $('#account-info').onclick = () => openMyCommentsModal({ tab: 'profile' });
-$('#account-settings-open').onclick = (e) => {
-  e.stopPropagation();
-  toggleAccountMenu();
-};
-$('#account-menu-dashboard').onclick = () => {
-  setAccountMenuOpen(false);
-  openMyCommentsModal({ tab: 'profile' });
-};
-$('#account-menu-profile').onclick = () => {
-  setAccountMenuOpen(false);
-  if (state.me?.id) openContributor(state.me.id);
-};
-$('#account-menu-admin').onclick = () => {
-  setAccountMenuOpen(false);
-  openAdminPage();
-};
-$('#account-menu-password').onclick = () => {
-  setAccountMenuOpen(false);
-  openChangePasswordModal();
-};
-$('#account-menu-logout').onclick = () => logout();
 $('#my-comments-close').onclick = closeMyCommentsModal;
 $('#profile-save').onclick = saveProfile;
 $('#notifications-read').onclick = markMyNotificationsRead;
-$('#profile-refresh-btn').onclick = refreshAll;
-$('#profile-manage-btn').onclick = () => {
-  closeMyCommentsModal();
-  openAdminPage();
+$('#workspace-logout').onclick = logout;
+$('#custom-source-add').onclick = () => openCustomSourceEditor();
+$('#custom-source-cancel').onclick = closeCustomSourceEditor;
+$('#custom-source-form').onsubmit = (e) => {
+  e.preventDefault();
+  saveCustomSource();
 };
-$('#admin-refresh-btn').onclick = refreshAll;
-$('#admin-manage-modal-btn').onclick = () => { renderManage(); $('#manage-modal').classList.remove('hidden'); };
-$('#admin-back-dashboard').onclick = () => openMyCommentsModal({ tab: 'profile' });
-$('#admin-close').onclick = closeAdminPage;
 $('#profile-link-add').onclick = () => {
   state.profileLinksDraft = [...collectProfileLinks(), { title: '', url: '' }].slice(0, 12);
   renderProfileLinksEditor();
@@ -9893,9 +9937,6 @@ $('#reader-font-size-up').onclick = () => setReaderPref('fontSize', state.reader
 $('#reader-line-height').oninput = (e) => setReaderPref('lineHeight', e.target.value);
 $('#reader-measure').oninput = (e) => setReaderPref('measure', e.target.value);
 $('#reader-font-family').onchange = (e) => setReaderPref('font', e.target.value);
-$('#manage-btn').onclick = () => { renderManage(); $('#manage-modal').classList.remove('hidden'); };
-$('#manage-close').onclick = () => $('#manage-modal').classList.add('hidden');
-$('#manage-modal').onclick = (e) => { if (e.target.id === 'manage-modal') $('#manage-modal').classList.add('hidden'); };
 $('#auth-open').onclick = () => openAuth('login');
 $('#auth-close').onclick = closeAuth;
 $('#auth-modal').onclick = (e) => { if (e.target.id === 'auth-modal') closeAuth(); };
@@ -9904,8 +9945,6 @@ $('#auth-form').onsubmit = (e) => {
   e.preventDefault();
   submitAuth();
 };
-$('#change-password-close').onclick = closeChangePasswordModal;
-$('#change-password-modal').onclick = (e) => { if (e.target.id === 'change-password-modal') closeChangePasswordModal(); };
 $('#change-password-form').onsubmit = (e) => {
   e.preventDefault();
   submitChangePassword();
@@ -9946,7 +9985,6 @@ window.addEventListener('error', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.account-strip')) setAccountMenuOpen(false);
   if (!e.target.closest('#article-link-menu')) hideArticleLinkMenu();
   if (!e.target.closest('#reader-preferences, #reader-prefs-toggle')) setReaderPrefsOpen(false);
 });
@@ -10041,15 +10079,12 @@ document.addEventListener('keydown', (e) => {
     if (state.readerImmersive) setReaderImmersive(false);
     setReaderPrefsOpen(false);
     document.getElementById('app').classList.remove('reading');
-    setAccountMenuOpen(false);
-    $('#manage-modal').classList.add('hidden');
     $('#ai-config-modal').classList.add('hidden');
     $('#submit-link-modal').classList.add('hidden');
     $('#agent-prompt-modal').classList.add('hidden');
     hideArticleLinkMenu();
     if (state.workspacePage === 'dashboard') closeMyCommentsModal();
     else if (state.workspacePage === 'contributor') closeContributorModal();
-    else if (state.workspacePage === 'admin') closeAdminPage();
     return;
   }
   if (editable || e.metaKey || e.ctrlKey) return;

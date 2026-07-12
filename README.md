@@ -79,7 +79,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 ```
 
-登录用户也可以在个人后台保存自己的 AI profile。用户提供的 key 保存在浏览器 localStorage，请只在可信设备上使用。
+`DEEPSEEK_*`（或 `AI_*`）是站点默认 AI：手动翻译、创作草稿、文章对话和后台自动草稿会共用它。登录用户也可以在个人后台保存自己的 AI profile 作为覆盖；用户提供的 key 保存在浏览器 localStorage，请只在可信设备上使用。
 
 没有可用 AI key 时，RSS 抓取和原文阅读仍然工作，翻译、创作草稿和文章对话会提示先配置模型。
 
@@ -101,7 +101,6 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 | `ARTICLE_REFRESH_INTERVAL_MS` | `7200000` | 文章默认刷新间隔 |
 | `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | 播客默认刷新间隔 |
 | `AUTO_REWRITE_SOURCE_IDS` | 空 | 限定自动生成草稿的信息源 |
-| `AUTO_REWRITE_MODEL` | `deepseek-v4-flash` | 后台草稿模型 |
 | `UMAMI_SRC` | 空 | 可选 Umami 脚本地址 |
 | `UMAMI_WEBSITE_ID` | 空 | 可选 Umami 站点 ID |
 | `NAMOO_READER_DATA_DIR` | `./data` | 测试或自定义运行数据目录 |

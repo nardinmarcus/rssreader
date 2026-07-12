@@ -84,6 +84,37 @@ async function adminCookie(baseUrl) {
   return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
 
+test('site AI metadata is available without exposing the site API key', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir();
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      DEEPSEEK_API_KEY: 'site-key-must-not-leak',
+      DEEPSEEK_MODEL: 'deepseek-v4-flash',
+      DEEPSEEK_BASE_URL: 'https://api.deepseek.com/v1',
+    });
+    const login = await jsonRequest(server.baseUrl, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'test-password-123' }),
+    });
+    const result = await jsonRequest(server.baseUrl, '/api/me');
+
+    assert.equal(login.response.status, 200);
+    assert.equal(login.body.siteAi.configured, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(login.body.siteAi, 'apiKey'), false);
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.siteAi.configured, true);
+    assert.equal(result.body.siteAi.provider, 'deepseek');
+    assert.equal(result.body.siteAi.model, 'deepseek-v4-flash');
+    assert.equal(Object.prototype.hasOwnProperty.call(result.body.siteAi, 'apiKey'), false);
+    assert.equal(JSON.stringify(result.body).includes('site-key-must-not-leak'), false);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('source management API enforces visibility, validation, ordering, and persistence', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir();
   let server = null;
@@ -94,10 +125,61 @@ test('source management API enforces visibility, validation, ordering, and persi
     assert.equal(anonymous.body.sources.some(source => source.id === 'qiaomu-blog'), false);
     assert.equal(anonymous.body.sources.some(source => source.id === 'meta-ai'), false);
 
+    const anonymousCreate = await jsonRequest(server.baseUrl, '/api/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Not allowed', feedUrl: 'https://example.com/feed.xml' }),
+    });
+    assert.equal(anonymousCreate.response.status, 403);
+
     const cookie = await adminCookie(server.baseUrl);
     const admin = await jsonRequest(server.baseUrl, '/api/sources', { headers: { Cookie: cookie } });
     assert.equal(admin.body.sources.some(source => source.id === 'qiaomu-blog'), true);
     assert.equal(admin.body.sources.some(source => source.id === 'meta-ai'), true);
+
+    const invalidCustom = await jsonRequest(server.baseUrl, '/api/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ name: 'Broken custom source', feedUrl: 'file:///tmp/feed.xml' }),
+    });
+    assert.equal(invalidCustom.response.status, 400);
+
+    const createdCustom = await jsonRequest(server.baseUrl, '/api/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        name: 'Custom AI Brief',
+        feedUrl: 'http://127.0.0.1:1/feed.xml',
+        siteUrl: 'http://127.0.0.1:1',
+        category: 'news',
+        labels: ['研究', '自定义'],
+        description: 'Test-only custom feed',
+      }),
+    });
+    assert.equal(createdCustom.response.status, 201, JSON.stringify(createdCustom.body));
+    assert.equal(createdCustom.body.source.isCustom, true);
+    assert.equal(createdCustom.body.source.enabled, true);
+    assert.equal(createdCustom.body.source.category, 'news');
+    const customSourceId = createdCustom.body.source.id;
+    assert.match(customSourceId, /^custom-/);
+
+    const publicCustom = await jsonRequest(server.baseUrl, '/api/sources');
+    const publicCustomSource = publicCustom.body.sources.find(source => source.id === customSourceId);
+    assert.equal(publicCustomSource.name, 'Custom AI Brief');
+    assert.equal(Object.prototype.hasOwnProperty.call(publicCustomSource, 'feedUrl'), false);
+
+    const updatedCustom = await jsonRequest(server.baseUrl, `/api/sources/${customSourceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        name: 'Custom AI Brief Updated',
+        feedUrl: 'http://127.0.0.1:1/updated.xml',
+        labels: ['研究', '已编辑'],
+      }),
+    });
+    assert.equal(updatedCustom.response.status, 200, JSON.stringify(updatedCustom.body));
+    assert.equal(updatedCustom.body.source.name, 'Custom AI Brief Updated');
+    assert.equal(updatedCustom.body.sources.find(source => source.id === customSourceId).feedUrl, 'http://127.0.0.1:1/updated.xml');
 
     const invalidPriority = await jsonRequest(server.baseUrl, '/api/sources/openai', {
       method: 'PATCH',
@@ -138,12 +220,35 @@ test('source management API enforces visibility, validation, ordering, and persi
     const openai = persisted.body.sources.find(source => source.id === 'openai');
     const anthropic = persisted.body.sources.find(source => source.id === 'anthropic');
     const deepmind = persisted.body.sources.find(source => source.id === 'google-deepmind');
+    const custom = persisted.body.sources.find(source => source.id === customSourceId);
     assert.equal(openai.enabled, false);
     assert.equal(openai.editorialPriority, 'low');
     assert.ok(anthropic.displayOrder > deepmind.displayOrder);
+    assert.equal(custom.name, 'Custom AI Brief Updated');
+    assert.equal(custom.feedUrl, 'http://127.0.0.1:1/updated.xml');
 
     const publicAfterRestart = await jsonRequest(server.baseUrl, '/api/sources');
     assert.equal(publicAfterRestart.body.sources.some(source => source.id === 'openai'), false);
+
+    const builtInArchive = await jsonRequest(server.baseUrl, '/api/sources/openai', {
+      method: 'DELETE',
+      headers: { Cookie: secondCookie },
+    });
+    assert.equal(builtInArchive.response.status, 400);
+
+    const archived = await jsonRequest(server.baseUrl, `/api/sources/${customSourceId}`, {
+      method: 'DELETE',
+      headers: { Cookie: secondCookie },
+    });
+    assert.equal(archived.response.status, 200, JSON.stringify(archived.body));
+    assert.equal(archived.body.archived.id, customSourceId);
+    assert.equal(archived.body.sources.some(source => source.id === customSourceId), false);
+
+    await stopServer(server);
+    server = await startServer(dataDir);
+    const finalCookie = await adminCookie(server.baseUrl);
+    const afterArchiveRestart = await jsonRequest(server.baseUrl, '/api/sources', { headers: { Cookie: finalCookie } });
+    assert.equal(afterArchiveRestart.body.sources.some(source => source.id === customSourceId), false);
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });

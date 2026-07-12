@@ -1854,17 +1854,33 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ error: '需要管理员权限' });
 }
 
-function requestAiConfig(req) {
+function siteAiMetadata() {
+  const config = deepseek.getConfig();
   return {
-    apiKey: String(req.get('x-ai-key') || req.get('x-deepseek-key') || '').trim(),
-    provider: String(req.get('x-ai-provider') || 'deepseek').trim(),
-    providerName: String(req.get('x-ai-provider-name') || '').trim(),
-    providerType: String(req.get('x-ai-provider-type') || 'openai_compatible').trim(),
-    baseUrl: String(req.get('x-ai-base-url') || '').trim(),
-    model: String(req.get('x-ai-model') || '').trim(),
-    temperature: String(req.get('x-ai-temperature') || '').trim(),
-    maxTokens: String(req.get('x-ai-max-tokens') || '').trim(),
+    configured: config.configured,
+    provider: config.provider,
+    providerTitle: config.providerTitle,
+    providerType: config.providerType,
+    model: config.model,
+    temperature: config.temperature,
+    maxTokens: config.maxTokens,
   };
+}
+
+function requestAiConfig(req) {
+  const apiKey = String(req.get('x-ai-key') || req.get('x-deepseek-key') || '').trim();
+  const provider = String(req.get('x-ai-provider') || '').trim();
+  const providerType = String(req.get('x-ai-provider-type') || '').trim();
+  const config = {};
+  if (apiKey) config.apiKey = apiKey;
+  if (provider || apiKey) config.provider = provider || 'deepseek';
+  if (String(req.get('x-ai-provider-name') || '').trim()) config.providerName = String(req.get('x-ai-provider-name')).trim();
+  if (providerType || apiKey) config.providerType = providerType || 'openai_compatible';
+  if (String(req.get('x-ai-base-url') || '').trim()) config.baseUrl = String(req.get('x-ai-base-url')).trim();
+  if (String(req.get('x-ai-model') || '').trim()) config.model = String(req.get('x-ai-model')).trim();
+  if (String(req.get('x-ai-temperature') || '').trim()) config.temperature = String(req.get('x-ai-temperature')).trim();
+  if (String(req.get('x-ai-max-tokens') || '').trim()) config.maxTokens = String(req.get('x-ai-max-tokens')).trim();
+  return config;
 }
 
 function requestAuthor(req) {
@@ -2551,9 +2567,9 @@ function scheduleFreshnessRefresh() {
 }
 
 app.get('/api/sources', (req, res) => {
-  const includeDisabled = Boolean(req.user && req.user.role === 'admin');
+  const isAdmin = Boolean(req.user && req.user.role === 'admin');
   res.json({
-    sources: fetcher.getSourcesMeta({ includeDisabled }),
+    sources: fetcher.getSourcesMeta({ includeDisabled: isAdmin, includeConfig: isAdmin }),
     refreshing,
     progress: refreshProgress,
     autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
@@ -2571,7 +2587,7 @@ app.post('/api/sources/:id/refresh-hint', (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  res.json({ user: req.user || null });
+  res.json({ user: req.user || null, siteAi: siteAiMetadata() });
 });
 
 app.patch('/api/me/profile', requireLogin, (req, res) => {
@@ -2624,7 +2640,7 @@ app.post('/api/auth/register', (req, res) => {
     });
     const session = store.createSession(user.id, SESSION_TTL_MS);
     setSessionCookie(req, res, session.token, session.expiresAt);
-    res.json({ user });
+    res.json({ user, siteAi: siteAiMetadata() });
   } catch (e) {
     sendError(res, e, 'register failed');
   }
@@ -2635,7 +2651,7 @@ app.post('/api/auth/login', (req, res) => {
     const user = store.authenticateUser(req.body && req.body.email, req.body && req.body.password);
     const session = store.createSession(user.id, SESSION_TTL_MS);
     setSessionCookie(req, res, session.token, session.expiresAt);
-    res.json({ user });
+    res.json({ user, siteAi: siteAiMetadata() });
   } catch (e) {
     sendError(res, e, 'login failed');
   }
@@ -3260,6 +3276,25 @@ app.post('/api/refresh', requireLogin, async (req, res) => {
   res.json({ started: result.started, running: result.running, job: result.job, progress: result.progress, autoRewrite: result.autoRewrite });
 });
 
+app.post('/api/sources', requireAdmin, (req, res) => {
+  try {
+    const source = fetcher.createCustomSource(req.body);
+    const refresh = startBackgroundJob({
+      kind: 'refresh',
+      sourceId: source.id,
+      sourceIds: [source.id],
+      reason: 'custom-source-created',
+    });
+    res.status(201).json({
+      source,
+      refresh,
+      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
+    });
+  } catch (e) {
+    sendError(res, e, 'custom source creation failed');
+  }
+});
+
 app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
   const src = fetcher.getSourceById(req.params.id);
   if (!src) return res.status(404).json({ error: 'source not found' });
@@ -3277,7 +3312,7 @@ app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
     id: src.id,
     enabled,
     source,
-    sources: fetcher.getSourcesMeta({ includeDisabled: true }),
+    sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
   });
 });
 
@@ -3288,26 +3323,47 @@ app.patch('/api/sources/:id', requireAdmin, (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const hasEnabled = Object.prototype.hasOwnProperty.call(body, 'enabled');
     const hasPriority = Object.prototype.hasOwnProperty.call(body, 'editorialPriority');
-    if (!hasEnabled && !hasPriority) {
-      return res.status(400).json({ error: 'enabled or editorialPriority is required' });
+    const customFields = ['name', 'feedUrl', 'siteUrl', 'category', 'description', 'labels'];
+    const hasCustomConfig = customFields.some(field => Object.prototype.hasOwnProperty.call(body, field));
+    if (!hasEnabled && !hasPriority && !hasCustomConfig) {
+      return res.status(400).json({ error: 'source update requires preferences or custom source configuration' });
+    }
+    if (hasCustomConfig && !fetcher.isCustomSource(current.id)) {
+      return res.status(400).json({ error: 'built-in sources can only change enable state, priority, and order' });
     }
     if (hasEnabled && body.enabled === true && !current.manual && (!Array.isArray(current.feeds) || !current.feeds.length)) {
       return res.status(400).json({ error: '这个信息源没有可用的订阅地址' });
     }
-    const source = fetcher.updateSourcePreference(current.id, {
-      ...(hasEnabled ? { enabled: body.enabled } : {}),
-      ...(hasPriority ? { editorialPriority: body.editorialPriority } : {}),
-    });
-    if (!current.enabled && source.enabled) {
+    let source = hasCustomConfig ? fetcher.updateCustomSource(current.id, body) : current;
+    if (hasEnabled || hasPriority) {
+      source = fetcher.updateSourcePreference(source.id, {
+        ...(hasEnabled ? { enabled: body.enabled } : {}),
+        ...(hasPriority ? { editorialPriority: body.editorialPriority } : {}),
+      });
+    }
+    if (source.enabled && (!current.enabled || hasCustomConfig)) {
       startBackgroundJob({
         kind: 'refresh',
         sourceId: source.id,
         sourceIds: [source.id],
       });
     }
-    res.json({ source, sources: fetcher.getSourcesMeta({ includeDisabled: true }) });
+    res.json({ source, sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }) });
   } catch (e) {
     sendError(res, e, 'source preference update failed');
+  }
+});
+
+app.delete('/api/sources/:id', requireAdmin, (req, res) => {
+  try {
+    const archived = fetcher.archiveCustomSource(req.params.id);
+    res.json({
+      ok: true,
+      archived,
+      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
+    });
+  } catch (e) {
+    sendError(res, e, 'custom source archive failed');
   }
 });
 
@@ -3318,7 +3374,7 @@ app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
       moved: result.moved,
       neighborId: result.neighborId || '',
       source: result.source,
-      sources: fetcher.getSourcesMeta({ includeDisabled: true }),
+      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
     });
   } catch (e) {
     sendError(res, e, 'source move failed');

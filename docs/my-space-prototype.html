@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>原型：Namoo Reader 我的空间</title>
+  <style>
+    :root {
+      --bg: #f7f7f6;
+      --surface: #ffffff;
+      --surface-muted: #f2f2f1;
+      --line: #e2e2df;
+      --text: #171717;
+      --text-1: #4f4f4a;
+      --text-2: #8a8a84;
+      --green: #2f6f4e;
+      --green-soft: #eaf4ed;
+      --blue: #3e6383;
+      --blue-soft: #edf4f8;
+      --amber: #7b642f;
+      --amber-soft: #faf4e6;
+      --red: #d14b4b;
+      --radius: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); }
+    button { font: inherit; cursor: pointer; }
+
+    .prototype-banner {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      max-width: 1280px; margin: 22px auto 0; padding: 0 18px; color: var(--text-2); font-size: 12px;
+    }
+    .prototype-banner strong { color: var(--text-1); }
+
+    .shell {
+      display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 760px;
+      max-width: 1280px; margin: 12px auto 32px; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 16px; background: var(--surface);
+      box-shadow: 0 18px 48px rgba(17, 17, 17, .08);
+    }
+
+    .sidebar { display: flex; flex-direction: column; padding: 18px 12px 12px; border-right: 1px solid var(--line); background: var(--surface); }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 18px; font-size: 15px; font-weight: 760; }
+    .brand img { width: 29px; height: 29px; border-radius: 8px; }
+    .group { margin: 14px 0 0; }
+    .group-label { display: block; padding: 0 10px 7px; color: var(--text-2); font-size: 11px; font-weight: 750; letter-spacing: .06em; }
+    .nav-item {
+      width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 10px;
+      border: 0; border-radius: 8px; background: transparent; color: var(--text-1); text-align: left; font-size: 13px; font-weight: 590;
+    }
+    .nav-item::before { width: 7px; height: 7px; border-radius: 50%; background: #c4c4bf; content: ""; }
+    .nav-item:hover { background: var(--surface-muted); color: var(--text); }
+    .nav-item.active { background: #e8e8e6; color: var(--text); font-weight: 720; }
+    .nav-item.active::before { background: var(--green); }
+    .divider { height: 1px; margin: 18px 8px 4px; background: var(--line); }
+    .identity {
+      width: 100%; margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--line);
+      border-radius: var(--radius); background: var(--surface-muted); color: var(--text); text-align: left;
+    }
+    .identity:hover { border-color: #bdbdb8; }
+    .avatar { width: 34px; height: 34px; display: grid; place-items: center; flex: none; border-radius: 50%; background: var(--green); color: #fff; font-size: 14px; font-weight: 760; }
+    .identity strong, .identity span { display: block; }
+    .identity strong { font-size: 13px; }
+    .identity span { margin-top: 2px; color: var(--text-2); font-size: 11px; }
+    .notification { margin-left: auto; min-width: 18px; height: 18px; display: grid; place-items: center; border-radius: 999px; background: var(--red); color: #fff; font-size: 10px; font-weight: 760; }
+
+    .main { min-width: 0; padding: 42px 48px 48px; background: var(--bg); }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 28px; }
+    .eyebrow { margin: 0 0 7px; color: var(--text-2); font-size: 12px; font-weight: 680; }
+    h1 { margin: 0; letter-spacing: -.04em; font-size: 31px; line-height: 1.1; }
+    .subtitle { max-width: 590px; margin: 10px 0 0; color: var(--text-1); font-size: 14px; line-height: 1.65; }
+    .back { min-width: 94px; height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text-1); font-size: 12px; }
+    .back:hover { border-color: #bdbdb8; color: var(--text); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(260px, .75fr); gap: 16px; }
+    .card { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 0; }
+    .card h2 { margin: 0; font-size: 15px; letter-spacing: -.015em; }
+    .card p { color: var(--text-1); font-size: 12.5px; line-height: 1.6; }
+    .profile { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 16px; padding: 20px; }
+    .profile .avatar { width: 58px; height: 58px; font-size: 21px; }
+    .field { padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .field + .field { margin-top: 8px; }
+    .field label { display: block; margin-bottom: 5px; color: var(--text-2); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+    .field strong, .field span { font-size: 13px; }
+    .save { height: 34px; margin-top: 12px; padding: 0 13px; border: 0; border-radius: 8px; background: var(--text); color: #fff; font-size: 12px; font-weight: 700; }
+    .save:hover { background: #333; }
+    .summary { padding: 18px 20px 20px; }
+    .summary-row { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row strong { font-size: 22px; letter-spacing: -.04em; }
+    .summary-row span { color: var(--text-1); font-size: 12px; }
+    .stack { display: grid; gap: 16px; }
+    .setting-card { padding: 18px 20px; }
+    .setting-card p { margin: 7px 0 14px; }
+    .setting-link { border: 0; padding: 0; background: transparent; color: var(--blue); font-size: 12px; font-weight: 700; }
+    .notice { margin-top: 16px; padding: 14px 16px; border: 1px solid #d6e6db; border-radius: 10px; background: var(--green-soft); color: #315840; font-size: 12px; line-height: 1.6; }
+    .notice strong { color: #20402c; }
+
+    .source-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text-1); font-size: 11px; }
+    .chip.active { border-color: #b5cabd; background: var(--green-soft); color: #28543a; font-weight: 700; }
+    .add-source { height: 36px; padding: 0 13px; border: 0; border-radius: 8px; background: var(--text); color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .source-block { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .source-block + .source-block { margin-top: 16px; }
+    .source-block-head { display: flex; align-items: baseline; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+    .source-block-head h2 { margin: 0; font-size: 14px; }
+    .source-block-head span { color: var(--text-2); font-size: 11px; }
+    .source-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) 90px 96px 76px; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+    .source-row:last-child { border-bottom: 0; }
+    .source-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .source-mark { width: 27px; height: 27px; display: grid; place-items: center; flex: none; border-radius: 7px; background: var(--surface-muted); color: var(--text-1); font-size: 11px; font-weight: 800; }
+    .source-name strong, .source-name span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .source-name strong { font-size: 12.5px; }
+    .source-name span { margin-top: 2px; color: var(--text-2); font-size: 11px; }
+    .status { font-size: 11px; color: var(--green); font-weight: 700; }
+    .status.warn { color: var(--amber); }
+    .priority { font-size: 11px; color: var(--text-1); }
+    .switch { justify-self: end; width: 34px; height: 20px; position: relative; border: 0; border-radius: 999px; background: #c5c5c0; }
+    .switch::after { width: 14px; height: 14px; position: absolute; top: 3px; left: 3px; border-radius: 50%; background: #fff; content: ""; transition: transform .16s ease; }
+    .switch.on { background: var(--green); }
+    .switch.on::after { transform: translateX(14px); }
+    .source-note { margin-top: 14px; padding: 13px 15px; border-radius: 10px; background: var(--amber-soft); color: #675326; font-size: 12px; line-height: 1.6; }
+    .empty-state { padding: 54px 24px; text-align: center; color: var(--text-2); }
+    .empty-state strong { display: block; margin-bottom: 6px; color: var(--text-1); font-size: 14px; }
+
+    .prototype-footer { max-width: 1280px; margin: 0 auto 26px; padding: 0 18px; color: var(--text-2); font-size: 12px; line-height: 1.6; }
+    .prototype-footer strong { color: var(--text-1); }
+
+    @media (max-width: 820px) {
+      .prototype-banner { margin-top: 12px; }
+      .shell { grid-template-columns: 1fr; margin: 10px 12px 22px; min-height: 0; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+      .sidebar .group { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0; }
+      .group-label { width: 100%; }
+      .nav-item { width: auto; min-height: 34px; }
+      .divider { display: none; }
+      .identity { display: none; }
+      .main { padding: 28px 20px; }
+      .grid { grid-template-columns: 1fr; }
+      .source-row { grid-template-columns: minmax(0, 1fr) 70px 34px; }
+      .source-row .priority { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-banner"><strong>原型 · 不会写入生产页面</strong><span>点击左侧导航检查信息层级</span></div>
+  <main class="shell">
+    <aside class="sidebar">
+      <div class="brand"><img src="../public/icon-512.png" alt="Namoo Reader" />Namoo Reader</div>
+      <div class="group">
+        <span class="group-label">我的空间</span>
+        <button class="nav-item" data-view="profile">个人资料</button>
+        <button class="nav-item" data-view="reading-ai">阅读与 AI</button>
+        <button class="nav-item" data-view="contributions">我的贡献</button>
+        <button class="nav-item" data-view="security">账户安全</button>
+      </div>
+      <div class="divider"></div>
+      <div class="group">
+        <span class="group-label">站点管理 · 管理员</span>
+        <button class="nav-item" data-view="sources">订阅源</button>
+        <button class="nav-item" data-view="operations">刷新与任务</button>
+      </div>
+      <button class="identity" data-view="profile" title="唯一账户入口">
+        <span class="avatar">大</span><span><strong>大月 Namoo</strong><span>管理员</span></span><b class="notification">3</b>
+      </button>
+    </aside>
+    <section class="main" id="main"></section>
+  </main>
+  <p class="prototype-footer"><strong>本稿要验证的决策：</strong>移除齿轮；账户卡是唯一入口；个人能力与管理员站点管理分区；自定义订阅源独立于内置源。</p>
+  <script>
+    const main = document.querySelector('#main');
+    const views = {
+      profile: {
+        title: '我的空间', eyebrow: '唯一账户入口', subtitle: '在同一个地方管理个人资料、阅读方式、AI 配置与内容沉淀；管理员能力被清晰地收进“站点管理”。',
+        body: `
+          <div class="grid">
+            <section class="card">
+              <div class="card-head"><h2>个人资料</h2><button class="back">查看公开页</button></div>
+              <div class="profile">
+                <span class="avatar">大</span>
+                <div>
+                  <div class="field"><label>显示名</label><strong>大月 Namoo</strong></div>
+                  <div class="field"><label>简介</label><span>关注 AI、创作工具与长期主义。</span></div>
+                  <button class="save">保存资料</button>
+                </div>
+              </div>
+            </section>
+            <aside class="card summary">
+              <div class="summary-row"><span>未读通知</span><strong>3</strong></div>
+              <div class="summary-row"><span>已公开贡献</span><strong>28</strong></div>
+              <div class="summary-row"><span>默认阅读</span><span>创作草稿</span></div>
+            </aside>
+          </div>
+          <div class="grid" style="margin-top:16px">
+            <section class="card setting-card"><h2>阅读与 AI</h2><p>设置文章默认打开方式，并管理用于翻译、草稿和对话的 AI 配置。</p><button class="setting-link" data-view="reading-ai">打开阅读与 AI →</button></section>
+            <section class="card setting-card"><h2>站点管理</h2><p>管理员可管理订阅源、刷新任务与抓取状态；普通用户不会看到这一分区。</p><button class="setting-link" data-view="sources">打开订阅源 →</button></section>
+          </div>
+          <div class="notice"><strong>通知摘要</strong>　3 条新动态已汇总在这里，不再把未读角标绑在“设置”图标上。</div>`
+      },
+      'reading-ai': {
+        title: '阅读与 AI', eyebrow: '我的空间', subtitle: '把阅读偏好和 AI 服务集中在一个可预期的位置，而不是分散在文章页和账户菜单中。',
+        body: `<div class="stack"><section class="card setting-card"><h2>打开文章</h2><p>默认进入“创作草稿”，也可切换为“原文”。</p><button class="save">创作草稿</button>　<button class="back">原文</button></section><section class="card setting-card"><h2>AI 配置</h2><p>当前默认：DeepSeek · deepseek-v4-flash。翻译、草稿与对话可在这里选择各自的模型。</p><button class="setting-link">管理 AI 配置 →</button></section></div>`
+      },
+      contributions: {
+        title: '我的贡献', eyebrow: '我的空间', subtitle: '这不是设置项，而是你的内容沉淀；因此作为“我的空间”的独立页面保留。',
+        body: `<section class="card setting-card"><h2>内容沉淀</h2><p>中译 8　·　创作草稿 12　·　划线 5　·　点评 3　·　对话 0</p><button class="save">查看最新贡献</button></section>`
+      },
+      security: {
+        title: '账户安全', eyebrow: '我的空间', subtitle: '把密码与退出等敏感动作放在明确的安全上下文中，不再藏在齿轮菜单。',
+        body: `<div class="grid"><section class="card setting-card"><h2>修改密码</h2><p>修改前需要验证当前密码；保存后当前会话保持有效。</p><button class="save">修改密码</button></section><section class="card setting-card"><h2>退出登录</h2><p>退出当前浏览器中的账户，不影响已经保存的公开贡献。</p><button class="back" style="color:var(--red)">退出登录</button></section></div>`
+      },
+      sources: {
+        title: '订阅源', eyebrow: '站点管理 · 管理员', subtitle: '内置源与自定义源分开管理：前者可启停、排序和设定优先级；后者可新增、编辑与归档。',
+        body: `
+          <div class="source-toolbar"><div class="filters"><button class="chip active">全部 61</button><button class="chip">已启用</button><button class="chip">抓取异常</button></div><button class="add-source">添加自定义订阅源</button></div>
+          <section class="source-block"><div class="source-block-head"><h2>内置订阅源</h2><span>可停用，不可删除</span></div>
+            <div class="source-row"><div class="source-name"><span class="source-mark">OA</span><span><strong>OpenAI News</strong><span>文章 · 高优先级</span></span></div><span class="status">15 篇 · 正常</span><span class="priority">优先级：高</span><button class="switch on" aria-label="启用 OpenAI News"></button></div>
+            <div class="source-row"><div class="source-name"><span class="source-mark">AI</span><span><strong>Anthropic News</strong><span>文章 · 普通优先级</span></span></div><span class="status">15 篇 · 正常</span><span class="priority">优先级：普通</span><button class="switch on" aria-label="启用 Anthropic News"></button></div>
+          </section>
+          <section class="source-block"><div class="source-block-head"><h2>自定义订阅源</h2><span>可编辑、归档或删除</span></div>
+            <div class="source-row"><div class="source-name"><span class="source-mark">N</span><span><strong>Namoo Weekly</strong><span>RSS · https://example.com/feed.xml</span></span></div><span class="status warn">待首次抓取</span><span class="priority">归档 · 编辑</span><button class="switch on" aria-label="启用 Namoo Weekly"></button></div>
+          </section>
+          <div class="source-note"><strong>删除策略：</strong>删除自定义源只移除订阅，不清空历史文章；历史清理必须是单独的危险操作。自定义源应存入持久化订阅目录，而不是运行时缓存。</div>`
+      },
+      operations: {
+        title: '刷新与任务', eyebrow: '站点管理 · 管理员', subtitle: '将抓取刷新、自动草稿和异常状态放到一个运维页，避免在个人资料中混入管理员操作。',
+        body: `<div class="grid"><section class="card setting-card"><h2>抓取刷新</h2><p>61 个订阅源中 58 个正常。上次全量刷新：今天 09:42。</p><button class="save">刷新全部</button></section><section class="card setting-card"><h2>自动草稿</h2><p>最近一次运行完成：新增 8 篇草稿，0 条失败。</p><button class="back">查看任务记录</button></section></div>`
+      }
+    };
+
+    function render(view) {
+      const page = views[view] || views.profile;
+      document.querySelectorAll('[data-view]').forEach(button => button.classList.toggle('active', button.dataset.view === view));
+      main.innerHTML = `<header class="page-header"><div><p class="eyebrow">${page.eyebrow}</p><h1>${page.title}</h1><p class="subtitle">${page.subtitle}</p></div><button class="back">返回阅读器</button></header>${page.body}`;
+      main.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.view)));
+      window.history.replaceState({}, '', `?view=${view}`);
+    }
+    function navigate(view) { render(view); }
+    document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', () => navigate(button.dataset.view)));
+    render(new URLSearchParams(location.search).get('view') || 'profile');
+  </script>
+</body>
+</html>

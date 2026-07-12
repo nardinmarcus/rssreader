@@ -1,5 +1,28 @@
 # QMReader production deployment
 
+## Umami production tracking configuration
+
+### Plan
+
+- [x] Confirm the production container and current masked Umami environment state.
+- [x] Back up the production environment file and configure the supplied Umami script URL and website ID.
+- [x] Recreate the existing application container without changing runtime data.
+- [x] Verify live script injection, tracker loading, and a real analytics event write.
+
+### Verification contract
+
+1. Configuration -> verify: the running container exposes the expected Umami script URL and website ID without printing unrelated secrets.
+2. Public HTML -> verify: `https://rss.namooca.com` contains the injected tracker and restricts it to `rss.namooca.com`.
+3. Event ingestion -> verify: a real browser pageview reaches the Umami collection endpoint and appears in website statistics.
+
+### Review
+
+- Configured `UMAMI_SRC=https://umami.namooca.com/script.js` and website ID `b97bb0f8-cef7-40f3-bf2d-899ff9bde8d2` in `/opt/rssreader/.env`; pre-change backup: `/opt/rssreader-backups/umami-config-20260712T041312Z`.
+- Force-recreated the existing `namoo-reader` container while preserving `/opt/rssreader/data:/app/data` and the `unless-stopped` restart policy.
+- Public HTML contains the exact tracker tag plus `data-domains="rss.namooca.com"`; the tracker script and browser CORS request return HTTP 200.
+- Verified a real browser pageview end to end. Umami returned a session and visit ID, and PostgreSQL stored a `website_event` row for `rss.namooca.com` at `/` on `2026-07-12T04:18:30.034Z`.
+- Public homepage, entries API, and sources API remain healthy, and recent container logs contain zero startup-level error lines.
+
 ## Goal
 
 Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`, expose it at `https://rss.namooca.com`, preserve runtime data across restarts, and verify the live application and public APIs.
@@ -121,3 +144,72 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Local browser verification moved OpenAI from first to third, preserved the order after reload, exposed all three categories, displayed zero totals, and passed the collapsed-sidebar check.
 - Production verification repeated the multi-position drag and reload, then restored the original order. The source-preference hash returned to `2c9934273da0fb527ef7424f3c543afbc370d44496b9386d84c38f3b5413deaa`, recent error logs remained empty, and the public homepage returned HTTP 200.
 - Production backup: `/opt/rssreader-backups/sidebar-drag-20260711-172608`.
+
+---
+
+# Administrator email migration
+
+## Plan
+
+- [x] Confirm the live administrator record and deployment configuration without exposing secrets.
+- [x] Back up the production SQLite database and environment configuration.
+- [x] Migrate the existing administrator email to `nardinmarcus@gmail.com` without changing its user ID or password hash.
+- [x] Recreate the container and verify the new account, removed old account, public health, and clean startup logs.
+
+## Verification contract
+
+1. Identity preservation -> verify: the administrator user ID and password hash remain unchanged while only the email and update timestamp change.
+2. Configuration consistency -> verify: `ADMIN_EMAIL` and the single live administrator row both resolve to `nardinmarcus@gmail.com` after restart.
+3. Production health -> verify: `https://rss.namooca.com` remains HTTP 200 and recent container logs contain no startup-level errors.
+
+## Review
+
+- Migrated the sole production administrator from `admin@namooca.com` to `nardinmarcus@gmail.com` in place, preserving user ID `c005c17b-8e00-47ee-b76e-46ce88ec37de`, role, and password hash.
+- Updated `/opt/rssreader/.env` to the same email and force-recreated the existing `namoo-reader` container so future restarts keep one consistent administrator identity.
+- Created a consistent pre-migration SQLite and environment backup at `/opt/rssreader-backups/admin-email-20260711T140053Z`.
+- Production verification reported SQLite `quick_check=ok`, one administrator, zero rows for the old email, one row for the new email, HTTP 200 for the internal and public app paths, and zero recent startup error lines.
+
+---
+
+# My Space responsive cleanup
+
+## Plan
+
+- [x] Remove the duplicate “刷新与任务” workspace tab and preserve its status card in “订阅源”.
+- [x] Keep personal and site-management tabs on one desktop row.
+- [x] Restore a compact mobile account entry and make the opened workspace full width.
+- [x] Add regression coverage, verify authenticated desktop/mobile paths, and deploy the static assets.
+
+## Review
+
+- Removed the duplicate operations panel and its unreachable refresh-all handler; source status and auto-draft controls remain in the subscription management tab.
+- At 390px, the signed-in avatar opens “我的空间”, the sidebar is hidden while it is open, the workspace is 358px wide, and the page has no horizontal overflow.
+- At 1440px, personal and site-management groups render on the same row; the legacy `?tab=operations` route falls back to personal profile.
+- Passed 27 automated tests, syntax and diff checks, local authenticated browser checks, and public deployment verification. Production backup: `/opt/rssreader/backups/mobile-workspace-20260712T033255Z`.
+
+---
+
+# Unified site AI deployment
+
+## Plan
+
+- [x] Make translation, creation drafts, article chat, and automatic drafts share the server-side site AI by default.
+- [x] Keep browser-scoped AI profiles as explicit per-purpose overrides without exposing the site API Key.
+- [x] Add regression coverage for safe site-AI metadata across bootstrap and login responses.
+- [x] Back up production, rebuild the container with the configured DeepSeek environment, and verify the live AI path.
+- [ ] Commit the complete approved worktree, push the release branch, and record the production evidence.
+
+## Verification contract
+
+1. Secret boundary -> verify: `.env` is ignored, the site Key is absent from Git diffs and API responses, and browser localStorage never receives it.
+2. Shared configuration -> verify: translation, rewrite, chat, and background drafts resolve to the same site provider and model unless a personal override is explicitly selected.
+3. Production behavior -> verify: the rebuilt container reports a configured site AI, a real DeepSeek connection succeeds, and the automatic-draft status no longer reports `AI not configured`.
+
+## Review
+
+- Passed all 28 automated tests, JavaScript syntax checks, `git diff --check`, Docker Compose validation on the deployment host, and `npm audit --omit=dev` with zero vulnerabilities; the staged secret scan found no API key.
+- Created a consistent pre-deployment SQLite backup with `VACUUM INTO`, plus `.env`, Compose, and source snapshots at `/opt/rssreader-backups/site-ai-20260712T073948Z`.
+- Rebuilt and force-recreated the single `namoo-reader` container while preserving `/opt/rssreader/data:/app/data` and the `unless-stopped` restart policy.
+- Verified the container and public `/api/me` report `DeepSeek · deepseek-v4-flash · configured`, expose no API Key, and complete a real model connection in 1092 ms.
+- Ran the production Hacker News automatic-draft path through the authenticated API: 10 new drafts, 0 cached, 0 skipped, and 0 failed. The persisted database now contains 12 total rewrites, including 10 Hacker News rewrites.
+- Verified SQLite `quick_check=ok`, 694 entries, 2 users, public HTTP 200, the rendered “站点默认 AI” option, and no recent fatal, worker, SQLite, or missing-AI configuration errors.

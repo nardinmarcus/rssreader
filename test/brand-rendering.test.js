@@ -127,3 +127,23 @@ test('sidebar exposes category tabs, total counts, and drag ordering without arr
   assert.match(styles, /\.feed-row\.drag-before/);
   assert.match(styles, /\.feed-row\.drag-after/);
 });
+
+test('My Space is the sole account workspace and subscription management is not a modal', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+
+  assert.match(html, /<h1>我的空间<\/h1>/);
+  assert.match(html, /data-dashboard-tab="security"/);
+  assert.match(html, /data-dashboard-tab="sources"/);
+  assert.doesNotMatch(html, /data-dashboard-tab="operations"|dashboard-operations-panel|workspace-refresh-btn/);
+  assert.match(html, /id="custom-source-form"/);
+  assert.doesNotMatch(html, /account-settings-open|account-menu|sidebar-footer|manage-modal|admin-page|change-password-modal/);
+  assert.doesNotMatch(app, /account-settings-open|account-menu|sidebar-footer|manage-modal|dashboard-ai-panel/);
+  assert.match(app, /data-managed-order/);
+  assert.doesNotMatch(app, /DASHBOARD_TABS = \[[^\]]*'operations'/);
+  assert.doesNotMatch(app, /lucideIcon\('chevron-/);
+  assert.doesNotMatch(styles, /\.account-settings|\.account-menu|\.admin-page/);
+  assert.match(styles, /\.dashboard-tabs\s*\{\s*display:\s*flex;/);
+  assert.match(styles, /#app\.workspace-page-open #sidebar\s*\{\s*display:\s*none;/);
+});
