@@ -197,7 +197,7 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - [x] Keep browser-scoped AI profiles as explicit per-purpose overrides without exposing the site API Key.
 - [x] Add regression coverage for safe site-AI metadata across bootstrap and login responses.
 - [x] Back up production, rebuild the container with the configured DeepSeek environment, and verify the live AI path.
-- [ ] Commit the complete approved worktree, push the release branch, and record the production evidence.
+- [x] Commit the complete approved worktree, push the release branch, and record the production evidence.
 
 ## Verification contract
 
@@ -213,3 +213,4 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Verified the container and public `/api/me` report `DeepSeek · deepseek-v4-flash · configured`, expose no API Key, and complete a real model connection in 1092 ms.
 - Ran the production Hacker News automatic-draft path through the authenticated API: 10 new drafts, 0 cached, 0 skipped, and 0 failed. The persisted database now contains 12 total rewrites, including 10 Hacker News rewrites.
 - Verified SQLite `quick_check=ok`, 694 entries, 2 users, public HTTP 200, the rendered “站点默认 AI” option, and no recent fatal, worker, SQLite, or missing-AI configuration errors.
+- Published release commit `5ac56b3` to remote branch `codex/unify-site-ai`; production is running the same runtime code represented by that commit.
