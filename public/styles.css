@@ -155,7 +155,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 
 #app {
-  --sidebar-width: 232px;
+  --sidebar-width: 264px;
   --entry-width: minmax(292px, 340px);
   --agent-width: 304px;
   --context-resizer-width: 6px;
@@ -6434,7 +6434,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 @media (max-width: 1380px) and (min-width: 1101px) {
   #app {
-    --sidebar-width: 232px;
+    --sidebar-width: 264px;
     --entry-width: minmax(288px, 340px);
     --agent-width: 280px;
     grid-template-columns: var(--sidebar-width) var(--entry-width) 6px minmax(360px, 1fr) var(--context-resizer-width) var(--agent-width);
@@ -8672,7 +8672,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
 
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) {
-    --sidebar-width: 232px;
+    --sidebar-width: 264px;
   }
 
   #app.reading:not(.left-collapsed):not(.reader-immersive) #sidebar {

@@ -112,6 +112,15 @@ test('brand icons contain the expected formats and dimensions', () => {
   }
 });
 
+test('expanded desktop sidebar has enough room for the full brand title and controls', () => {
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+
+  assert.match(styles, /#app\s*{[^}]*--sidebar-width:\s*264px/s);
+  assert.match(styles, /@media \(max-width: 1380px\) and \(min-width: 1101px\)[\s\S]*?#app\s*{[^}]*--sidebar-width:\s*264px/);
+  assert.match(styles, /#app\.reading:not\(\.sidebar-collapsed\):not\(\.left-collapsed\):not\(\.reader-immersive\)\s*{[^}]*--sidebar-width:\s*264px/s);
+  assert.match(styles, /#app\.sidebar-collapsed\s*{[^}]*--sidebar-width:\s*64px/s);
+});
+
 test('sidebar exposes category tabs, total counts, and drag ordering without arrow controls', () => {
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
   const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
