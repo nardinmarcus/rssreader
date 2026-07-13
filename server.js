@@ -45,6 +45,10 @@ const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'
 const UMAMI_WEBSITE_ID = String(process.env.UMAMI_WEBSITE_ID || '').trim();
 const UMAMI_SRC = String(process.env.UMAMI_SRC || '').trim();
 const ARTICLE_SHORT_ID_LENGTH = 12;
+const ENTRY_CONTENT_RESPONSE_MAX_CHARS = 500000;
+const INDEX_TEMPLATE = fs.readFileSync(INDEX_PATH, 'utf8');
+const PUBLIC_PROJECTION_TTL_MS = 5 * MINUTE_MS;
+const publicProjectionCache = new Map();
 const ASSET_DIRECTORY_META = {
   translation: {
     label: '中文翻译',
@@ -514,10 +518,19 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   };
 }
 
-function assetDirectoryStats(type = '', q = '') {
+function publicAssetEntries({ assetItemLimit = 3 } = {}) {
+  const key = String(assetItemLimit);
+  const cached = publicProjectionCache.get(key);
+  if (cached && Date.now() - cached.createdAt < PUBLIC_PROJECTION_TTL_MS) return cached.entries;
+  const entries = fetcher.getEntries({ limit: 1000, includeContent: false, assetItemLimit });
+  publicProjectionCache.set(key, { createdAt: Date.now(), entries });
+  return entries;
+}
+
+function assetDirectoryStats(type = '', q = '', providedEntries = null) {
   const assetType = normalizeAssetDirectoryType(type);
   const query = normalizeSearchText(q);
-  const entries = fetcher.getEntries({ limit: 1000 })
+  const entries = (providedEntries || publicAssetEntries())
     .filter(entry => entry && entry.id && hasPublicAssets(entry))
     .filter(entry => !assetType || hasPublicAssetType(entry, assetType))
     .filter(entry => !query || normalizeSearchText(entryDirectorySearchText(entry)).includes(query));
@@ -933,49 +946,10 @@ function assetFeedTitle(entry, type, preview = null) {
 }
 
 function assetFeedPreviews(entry, type, previews = {}) {
-  if (type === 'translation' || type === 'rewrite') {
-    const items = store.getEntryAiAssetPreviews(entry.id, type, { limit: 500 });
-    if (items.length) return items;
-    const preview = previews[type] || {};
-    return preview && preview.text ? [preview] : [];
-  }
-  if (type === 'comments') {
-    return store.getComments(entry.id).map(comment => ({
-      type: 'comments',
-      id: comment.id,
-      author: comment.author,
-      model: comment.model || '',
-      text: comment.body,
-      at: comment.updatedAt || comment.createdAt,
-      helpfulCount: Number(comment.helpfulCount) || 0,
-    }));
-  }
-  if (type === 'annotations') {
-    return store.getAnnotations(entry.id).map(annotation => ({
-      type: 'annotations',
-      id: annotation.id,
-      role: annotation.surface,
-      author: annotation.author,
-      model: '',
-      text: `${annotation.quote}\n${annotation.body}`,
-      at: annotation.updatedAt || annotation.createdAt,
-      helpfulCount: Number(annotation.helpfulCount) || 0,
-      replyCount: Number(annotation.replyCount) || 0,
-    }));
-  }
-  if (type === 'chat') {
-    return store.getChatMessages(entry.id).map(message => ({
-      type: 'chat',
-      id: message.id,
-      role: message.role,
-      author: message.author,
-      model: message.model || '',
-      text: message.content,
-      at: message.createdAt,
-      helpfulCount: Number(message.helpfulCount) || 0,
-    }));
-  }
-  return [previews[type] || {}].filter(preview => preview && preview.text);
+  const items = entry && entry.assets && entry.assets.items && entry.assets.items[type];
+  if (Array.isArray(items) && items.length) return items;
+  const preview = previews[type] || {};
+  return preview && preview.text ? [preview] : [];
 }
 
 function entryShareDescription(entry, focus = '', req = null) {
@@ -1205,42 +1179,14 @@ function entryAssetItemUrl(req, entry, type, preview = {}, { includeHash = true 
 
 function publicExactAssetSitemapUrls(req, entry, lastmod = '') {
   const urls = [];
-  for (const type of ['translation', 'rewrite']) {
+  const assets = entry && entry.assets ? entry.assets : {};
+  const previews = assets.previews || {};
+  for (const type of Object.keys(ASSET_DIRECTORY_META)) {
     if (!hasPublicAssetType(entry, type)) continue;
     const typeLastmod = entryAssetTypeLastModified(entry, type, lastmod);
-    for (const preview of store.getEntryAiAssetPreviews(entry.id, type, { limit: 500 })) {
+    for (const preview of assetFeedPreviews(entry, type, previews)) {
       urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, type, preview, { includeHash: false }), {
         lastmod: assetItemLastModified(preview, typeLastmod),
-        changefreq: 'monthly',
-        priority: '0.72',
-      }));
-    }
-  }
-  if (hasPublicAssetType(entry, 'comments')) {
-    const commentsLastmod = entryAssetTypeLastModified(entry, 'comments', lastmod);
-    for (const comment of store.getComments(entry.id)) {
-      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'comments', comment, { includeHash: false }), {
-        lastmod: assetItemLastModified(comment, commentsLastmod),
-        changefreq: 'monthly',
-        priority: '0.72',
-      }));
-    }
-  }
-  if (hasPublicAssetType(entry, 'annotations')) {
-    const annotationsLastmod = entryAssetTypeLastModified(entry, 'annotations', lastmod);
-    for (const annotation of store.getAnnotations(entry.id)) {
-      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'annotations', annotation, { includeHash: false }), {
-        lastmod: assetItemLastModified(annotation, annotationsLastmod),
-        changefreq: 'monthly',
-        priority: '0.72',
-      }));
-    }
-  }
-  if (hasPublicAssetType(entry, 'chat')) {
-    const chatLastmod = entryAssetTypeLastModified(entry, 'chat', lastmod);
-    for (const message of store.getChatMessages(entry.id)) {
-      urls.push(sitemapUrlXml(entryAssetItemUrl(req, entry, 'chat', message, { includeHash: false }), {
-        lastmod: assetItemLastModified(message, chatLastmod),
         changefreq: 'monthly',
         priority: '0.72',
       }));
@@ -1262,7 +1208,7 @@ function rssDate(timestamp) {
 function publicAssetFeedItems(req, type = '') {
   const assetType = normalizeAssetDirectoryType(type);
   const sort = requestAssetSort(req);
-  return fetcher.getEntries({ limit: 1000 })
+  return publicAssetEntries({ assetItemLimit: 500 })
     .filter(entry => entry && entry.id && hasPublicAssets(entry))
     .flatMap(entry => {
       const assets = entry.assets || {};
@@ -1478,7 +1424,7 @@ function renderContributorFeed(req, contributorPage) {
 }
 
 function renderSitemap(req) {
-  const entries = fetcher.getEntries({ limit: 1000 })
+  const entries = publicAssetEntries({ assetItemLimit: 500 })
     .filter(entry => entry && entry.id)
     .sort((a, b) => {
       const assetDelta = Number(hasPublicAssets(b)) - Number(hasPublicAssets(a));
@@ -1582,20 +1528,19 @@ function renderSitemap(req) {
 }
 
 function renderIndex(req, entry = null) {
-  const html = fs.readFileSync(INDEX_PATH, 'utf8');
   const { title, tags } = socialMetaTags(req, entry);
   const umami = umamiScriptTag();
-  return html
+  return INDEX_TEMPLATE
     .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
     .replace('</head>', `  ${tags}${umami ? `\n  ${umami}` : ''}\n</head>`);
 }
 
 function renderLlmsTxt(req) {
-  const assetEntries = fetcher.getEntries({ limit: 1000 })
+  const assetEntries = publicAssetEntries({ assetItemLimit: 500 })
     .filter(entry => entry && entry.id && hasPublicAssets(entry))
     .sort((a, b) => entryAssetTypeTimestamp(b) - entryAssetTypeTimestamp(a));
-  const stats = assetDirectoryStats();
+  const stats = assetDirectoryStats('', '', assetEntries);
   const recent = assetEntries.slice(0, 12).map(entry => {
     const types = publicAssetTypes(entry).map(type => ASSET_DIRECTORY_META[type].label).join('、');
     const title = entry.titleZh || entry.title || entry.id;
@@ -1786,7 +1731,13 @@ app.get(['/me', '/dashboard', '/admin'], (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
-    if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+    if (file.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (res.req && res.req.query && res.req.query.v) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
   },
 }));
 
@@ -2000,7 +1951,7 @@ function rewriteResponse(entry, viewer = null, assetId = '') {
 
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
-  const entries = fetcher.getEntries({ limit: 1000 })
+  const entries = fetcher.getEntries({ limit: 1000, includeContent: false })
     .filter(entry => deepseek.isLikelyEnglish(entry.title) && !entry.titleZh)
     .slice(0, limit);
   let translated = 0;
@@ -2795,14 +2746,25 @@ app.get('/api/entries', (req, res) => {
     q: q || undefined,
     limit: limit ? parseInt(limit, 10) : undefined,
     viewer: req.user,
-  }).map(({ content, ...rest }) => rest);
+    includeContent: false,
+  }).map(({ content, ...entry }) => entry);
   res.json({ entries });
 });
 
 app.get('/api/entry/:id', (req, res) => {
   const entry = entryByIdOrPrefix(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ entry });
+  const content = String(entry.content || '');
+  res.json({
+    entry: content.length <= ENTRY_CONTENT_RESPONSE_MAX_CHARS
+      ? entry
+      : {
+          ...entry,
+          content: content.slice(0, ENTRY_CONTENT_RESPONSE_MAX_CHARS),
+          contentTruncated: true,
+          contentOriginalLength: content.length,
+        },
+  });
 });
 
 app.delete('/api/entry/:id', requireAdmin, (req, res) => {

@@ -39,6 +39,8 @@ const ENTRY_PANE_MAX_WIDTH = 620;
 const CONTEXT_PANE_MIN_WIDTH = 260;
 const CONTEXT_PANE_MAX_WIDTH = 620;
 const READER_PANE_MIN_WIDTH = 700;
+const ENTRY_PAGE_SIZE = 100;
+const ENTRY_MAX_LIMIT = 400;
 const SOURCE_REFRESH_HINT_COOLDOWN_MS = 5 * 60 * 1000;
 const COMMENT_TEMPLATES = {
   insight: '观点：',
@@ -611,6 +613,7 @@ const state = {
   sources: [],
   entries: [],
   contributors: [],
+  entryLimit: ENTRY_PAGE_SIZE,
   view: 'all',            // all | hot | unread | starred | history | assets | contributors
   filterSource: null,
   filterCategory: null,
@@ -1377,7 +1380,7 @@ function faviconHtml(siteUrl, name, size = 17) {
   const safeSize = Math.max(12, Math.min(Number(size) || 17, 48));
   if (!d) return `<span class="letter-icon" style="--icon-size:${safeSize}px">${escapeHtml(letter)}</span>`;
   const src = `/favicons?domain_url=${encodeURIComponent(faviconTargetUrl(siteUrl, d))}&sz=${Math.max(32, safeSize * 4)}`;
-  return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="lazy" referrerpolicy="no-referrer"
+  return `<img class="favicon" style="--icon-size:${safeSize}px" src="${escapeHtml(src)}" loading="lazy" fetchpriority="low" referrerpolicy="no-referrer"
     onerror="fallbackFavicon(this, '${escapeJsString(letter)}')" />`;
 }
 
@@ -1750,11 +1753,30 @@ function pollHintedSourceRefresh(sourceId) {
 
 async function loadEntries() {
   const p = new URLSearchParams();
+  p.set('limit', String(state.entryLimit));
   if (state.filterSource) p.set('source', state.filterSource);
   if (state.filterCategory) p.set('category', state.filterCategory);
   if (state.q && state.view !== 'assets' && state.view !== 'contributors') p.set('q', state.q);
   const data = await api('/api/entries?' + p.toString());
   state.entries = data.entries;
+}
+
+async function loadMoreEntries(button) {
+  if (state.entryLimit >= ENTRY_MAX_LIMIT) return;
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = '加载中…';
+  state.entryLimit = Math.min(ENTRY_MAX_LIMIT, state.entryLimit + ENTRY_PAGE_SIZE);
+  try {
+    await loadEntries();
+    renderList();
+    renderSidebar();
+  } catch (error) {
+    state.entryLimit -= ENTRY_PAGE_SIZE;
+    button.disabled = false;
+    button.textContent = previousLabel;
+    toast('加载更多失败: ' + error.message, 4000);
+  }
 }
 async function loadContributors() {
   const p = new URLSearchParams({ limit: '200' });
@@ -3692,7 +3714,7 @@ function renderList() {
         ${assetItems || (assetPreview ? assetPreviewHtml(assetPreview) : '')}
         ${entryActivity ? `<div class="entry-asset-activity">${escapeHtml(entryActivity)}</div>` : ''}
       </div>
-      ${e.image ? `<div class="entry-media"><img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" onerror="this.closest('.entry-media')?.remove()" /></div>` : ''}`;
+      ${e.image ? `<div class="entry-media"><img class="entry-thumb" src="${escapeHtml(e.image)}" loading="lazy" fetchpriority="low" onerror="this.closest('.entry-media')?.remove()" /></div>` : ''}`;
     card.onclick = (event) => {
       const previewCopyContent = event.target.closest('[data-asset-preview-copy-content]');
       if (previewCopyContent) {
@@ -3746,6 +3768,17 @@ function renderList() {
     frag.appendChild(card);
   }
   el.appendChild(frag);
+  if (state.entries.length >= state.entryLimit && state.entryLimit < ENTRY_MAX_LIMIT) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'entry-load-more';
+    more.textContent = `再加载 ${ENTRY_PAGE_SIZE} 篇`;
+    more.onclick = event => {
+      event.stopPropagation();
+      loadMoreEntries(more);
+    };
+    el.appendChild(more);
+  }
 }
 
 function updateListTitle() {
@@ -7781,6 +7814,8 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
     state.activeAnnotationId = '';
   }
   state.activeEntry = e;
+  let content = e.content || contentCache.get(e.id);
+  const detailPromise = content ? null : api(`/api/entry/${encodeURIComponent(e.id)}`);
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
   const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite')
     ? String(aiAssetId || '').trim()
@@ -7864,11 +7899,10 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   renderEntryStateUi();
 
   // content is loaded lazily — the list API omits it to stay lightweight
-  let content = e.content || contentCache.get(e.id);
   if (!content) {
     $('#reader-content').innerHTML = '<p style="color:var(--text-2)">加载内容中…</p>';
     try {
-      const data = await api(`/api/entry/${e.id}`);
+      const data = await detailPromise;
       if (data.entry && state.activeEntry?.id === e.id) {
         state.activeEntry = { ...state.activeEntry, ...data.entry };
       }
@@ -7931,7 +7965,7 @@ async function openEntryById(entryId, { tab = null, focus = null, aiAssetId = ''
   return true;
 }
 
-async function openEntryFromUrl() {
+async function openEntryFromUrl({ entriesLoaded = false } = {}) {
   const route = routeStateFromUrl();
   if (route.admin) {
     state.view = 'all';
@@ -8005,9 +8039,8 @@ async function openEntryFromUrl() {
       state.contributorSort = 'latest';
       state.q = '';
     }
-    await Promise.all([loadEntries(), loadContributors()]);
+    if (!entriesLoaded) await Promise.all([loadEntries(), loadContributors()]);
     updateListTitle();
-    renderList();
     renderSidebar();
     closeReaderFromRoute();
     if (route.view === 'assets' || route.view === 'contributors') document.title = listRouteTitle();
@@ -8025,7 +8058,9 @@ async function openEntryFromUrl() {
 
 /* ---------- Navigation ---------- */
 async function reload({ keepReader = false, clearUrl = true } = {}) {
-  await Promise.all([loadEntries(), loadContributors()]);
+  const requests = [loadEntries()];
+  if (!state.contributors.length || state.view === 'contributors') requests.push(loadContributors());
+  await Promise.all(requests);
   updateListTitle();
   renderList();
   renderSidebar();
@@ -8061,7 +8096,8 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
   }
 }
 
-function selectSource(id) {
+async function selectSource(id) {
+  state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = 'all';
   const nextSource = state.filterSource === id ? null : id;
   state.filterSource = nextSource;
@@ -8071,10 +8107,11 @@ function selectSource(id) {
   state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
+  await reload();
   if (nextSource) hintSourceRefresh(nextSource, 'source-select');
-  reload();
 }
 function selectCategory(cat) {
+  state.entryLimit = ENTRY_PAGE_SIZE;
   setSidebarCategory(cat);
   state.view = 'all';
   state.filterCategory = normalizeSidebarCategory(cat);
@@ -8087,6 +8124,7 @@ function selectCategory(cat) {
   reload();
 }
 function selectView(v) {
+  state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = v;
   state.filterSource = null;
   state.filterCategory = null;
@@ -8104,6 +8142,7 @@ function selectView(v) {
 }
 
 function goHomeAll() {
+  state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = 'all';
   state.filterSource = null;
   state.filterCategory = null;
@@ -8120,6 +8159,7 @@ function goHomeAll() {
 }
 
 function selectAssetFilter(type = null) {
+  state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = 'assets';
   state.filterSource = null;
   state.filterCategory = null;
@@ -9962,6 +10002,7 @@ $('#search').oninput = (e) => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     state.q = e.target.value.trim();
+    state.entryLimit = ENTRY_PAGE_SIZE;
     if (state.view === 'assets' || state.view === 'contributors') {
       syncListUrl({ replace: true });
       reload({ clearUrl: false });
@@ -10159,21 +10200,24 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
   setContextPanel(state.contextPanel, { persist: false, expand: false });
   $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
   try {
-    await loadMe();
-    const data = await loadSources();
-    await reload({ clearUrl: false });
+    const [, data] = await Promise.all([
+      loadMe(),
+      loadSources(),
+      loadEntries(),
+      loadContributors(),
+    ]);
     renderAgent();
     // first boot: server may still be fetching — poll a few times
     if (data.refreshing || state.entries.length === 0) {
       for (let i = 0; i < 40; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const d = await loadSources();
-        await Promise.all([loadEntries(), loadContributors()]);
+        await loadEntries();
         renderList(); renderSidebar(); updateListTitle();
         if (!d.refreshing && state.entries.length) break;
       }
     }
-    await openEntryFromUrl();
+    await openEntryFromUrl({ entriesLoaded: true });
   } catch (e) {
     toast('加载失败: ' + e.message, 5000);
     $('#entry-list').innerHTML = `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;
