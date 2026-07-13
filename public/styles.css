@@ -2095,10 +2095,25 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   grid-column: 1 / -1;
 }
 .annotation-surface-panel > .reader-content,
+.annotation-surface-panel > .reader-original-empty,
 .annotation-surface-panel > .rewrite-content,
 .annotation-surface-panel > .translation-list {
   grid-column: 1;
 }
+.reader-original-empty {
+  display: grid;
+  gap: 10px;
+  max-width: min(var(--reader-measure), 100%);
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-1);
+}
+.reader-original-empty strong { color: var(--text-0); }
+.reader-original-empty p { margin: 0; line-height: 1.65; }
+.reader-original-empty-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.reader-original-empty-actions .ghost-btn { flex: 0 0 auto; }
 .annotation-margin {
   grid-column: 2;
   grid-row: 1 / span 8;

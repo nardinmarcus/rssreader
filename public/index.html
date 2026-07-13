@@ -9,7 +9,7 @@
   <link rel="shortcut icon" href="/favicon.svg" />
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/vendor/persona/widget.css?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=155" />
+  <link rel="stylesheet" href="/styles.css?v=156" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
   <meta property="og:site_name" content="Namoo Reader" />
@@ -228,6 +228,14 @@
         </details>
         <section id="reader-original-panel" class="reader-tab-panel annotation-surface-panel" data-annotation-surface="original">
           <div id="reader-content" class="reader-content"></div>
+          <div id="reader-original-empty" class="reader-original-empty hidden" role="status" aria-live="polite">
+            <strong id="reader-original-empty-title">RSS 未提供正文</strong>
+            <p id="reader-original-empty-detail">可以尝试从原网页获取正文，或直接打开原文阅读。</p>
+            <div class="reader-original-empty-actions">
+              <button id="reader-fetch-original" class="ghost-btn primary" type="button">获取正文</button>
+              <a id="reader-open-original" class="ghost-btn" target="_blank" rel="noopener">打开原文</a>
+            </div>
+          </div>
           <aside id="annotation-margin-original" class="annotation-margin" aria-label="原文划线讨论"></aside>
         </section>
         <section id="reader-rewrite-panel" class="reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="rewrite">
@@ -740,6 +748,6 @@
   <script src="/purify.min.js"></script>
   <script src="/vendor/persona/index.global.js?v=1"></script>
   <script src="/lucide-icons.js?v=2"></script>
-  <script src="/app.js?v=158"></script>
+  <script src="/app.js?v=159"></script>
 </body>
 </html>

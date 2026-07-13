@@ -686,7 +686,7 @@ const state = {
   suppressAnnotationUntil: 0,
   pendingCommentId: '',
   pendingChatMessageId: '',
-  fetchingOriginal: false,
+  fetchingOriginalIds: new Set(),
   agentBusy: false,
   agentPrompts: loadAgentPrompts(),
   agentPromptEditingId: '',
@@ -4916,11 +4916,13 @@ function updateFetchOriginalButton(entry = state.activeEntry) {
   const btn = $('#reader-fetch-original');
   if (!btn) return;
   const canFetch = Boolean(entry && /^https?:\/\//i.test(entry.link || ''));
-  const alreadyHandled = Boolean(entry && (entry.originalFetchedAt || entry.originalFetchAttemptedAt || hasUsableOriginalContent(entry)));
+  const fetching = Boolean(entry && state.fetchingOriginalIds.has(entry.id));
+  const alreadyHandled = Boolean(entry && (entry.originalFetchedAt || hasUsableOriginalContent(entry)));
   btn.classList.toggle('hidden', !canFetch || alreadyHandled);
-  btn.disabled = !canFetch || alreadyHandled || state.fetchingOriginal;
-  setButtonIconLabel(btn, state.fetchingOriginal ? 'loader-circle' : 'book-open-text', state.fetchingOriginal ? '获取中…' : '获取原文', {
-    className: state.fetchingOriginal ? 'app-icon app-icon-spin' : 'app-icon',
+  btn.disabled = !canFetch || alreadyHandled || fetching;
+  const label = fetching ? '获取中…' : entry && entry.originalFetchError ? '重新获取正文' : '获取正文';
+  setButtonIconLabel(btn, fetching ? 'loader-circle' : 'book-open-text', label, {
+    className: fetching ? 'app-icon app-icon-spin' : 'app-icon',
   });
   btn.title = entry && entry.originalFetchError ? `上次获取失败：${entry.originalFetchError}` : '从原始网页提取正文';
 }
@@ -4958,11 +4960,43 @@ function renderReaderToc(root = $('#reader-content')) {
   updateReaderTocVisibility();
 }
 
+function renderOriginalEmptyState(entry, options = {}) {
+  const empty = $('#reader-original-empty');
+  if (!empty) return;
+  const hasContent = options.hasContent === undefined
+    ? entryOriginalTextLength(entry) > 0
+    : options.hasContent;
+  const hasSummary = options.hasSummary === undefined
+    ? Boolean(String(entry?.summary || '').trim())
+    : options.hasSummary;
+  const show = Boolean(entry && !hasContent);
+  empty.classList.toggle('hidden', !show);
+  if (!show) return;
+  const error = String(entry.originalFetchError || '').trim();
+  $('#reader-original-empty-title').textContent = error
+    ? '正文获取失败'
+    : hasSummary ? 'RSS 仅提供摘要' : 'RSS 未提供正文';
+  $('#reader-original-empty-detail').textContent = error
+    ? `上次获取失败：${error.slice(0, 240)}`
+    : '可以尝试从原网页获取正文，或直接打开原文阅读。';
+  const open = $('#reader-open-original');
+  const canOpen = /^https?:\/\//i.test(entry.link || '');
+  open.classList.toggle('hidden', !canOpen);
+  if (canOpen) open.href = entry.link;
+  empty.setAttribute('aria-busy', state.fetchingOriginalIds.has(entry.id) ? 'true' : 'false');
+  updateFetchOriginalButton(entry);
+}
+
 function renderOriginalContent(entry, content) {
-  const fallback = entry && entry.summary ? `<p>${escapeHtml(entry.summary)}</p>` : '<p>（无内容，请打开原文）</p>';
-  $('#reader-content').innerHTML = sanitize(content || fallback);
+  const cleaned = sanitize(content || '');
+  const hasContent = Boolean(plainTextFromHtml(cleaned) || /<(?:img|video|audio|table|hr)\b/i.test(cleaned));
+  const summary = entry && entry.summary ? sanitize(`<p>${escapeHtml(entry.summary)}</p>`) : '';
+  const readerContent = $('#reader-content');
+  readerContent.innerHTML = hasContent ? cleaned : summary;
+  readerContent.classList.toggle('hidden', !hasContent && !summary);
   $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
-  renderReaderToc($('#reader-content'));
+  renderOriginalEmptyState(entry, { hasContent, hasSummary: Boolean(summary) });
+  renderReaderToc(readerContent);
   updateReaderLanguageProfile();
   applyTextAnnotations();
   if (state.pendingAssetJump) settlePendingAssetJump(state.pendingAssetJump, { clear: false });
@@ -5519,8 +5553,10 @@ async function fetchOriginalContent() {
     toast('这篇文章没有可抓取的原文链接');
     return;
   }
-  state.fetchingOriginal = true;
+  if (state.fetchingOriginalIds.has(entry.id)) return;
+  state.fetchingOriginalIds.add(entry.id);
   updateFetchOriginalButton(entry);
+  renderOriginalEmptyState(entry);
   setReaderTab('original');
   $('#reader-content').innerHTML = '<p style="color:var(--text-2)">正在获取原文内容…</p>';
   try {
@@ -5529,12 +5565,12 @@ async function fetchOriginalContent() {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
-    if (state.activeEntry?.id !== entry.id) return;
     const updated = { ...entry, ...(data.entry || {}) };
-    state.activeEntry = updated;
     const idx = state.entries.findIndex(item => item.id === updated.id);
     if (idx >= 0) state.entries[idx] = { ...state.entries[idx], ...updated, content: undefined };
     contentCache.set(updated.id, updated.content || '');
+    if (state.activeEntry?.id !== entry.id) return;
+    state.activeEntry = updated;
     renderTitle(updated);
     renderOriginalContent(updated, updated.content);
     renderList();
@@ -5549,14 +5585,18 @@ async function fetchOriginalContent() {
       originalFetchAttemptedAt: Date.now(),
       originalFetchError: err.message,
     };
-    state.activeEntry = failedEntry;
     const idx = state.entries.findIndex(item => item.id === failedEntry.id);
     if (idx >= 0) state.entries[idx] = { ...state.entries[idx], originalFetchAttemptedAt: failedEntry.originalFetchAttemptedAt, originalFetchError: failedEntry.originalFetchError };
+    if (state.activeEntry?.id !== entry.id) return;
+    state.activeEntry = failedEntry;
     renderOriginalContent(failedEntry, contentCache.get(entry.id) || entry.content || '');
     toast('获取原文失败: ' + err.message, 5000);
   } finally {
-    state.fetchingOriginal = false;
-    updateFetchOriginalButton(state.activeEntry);
+    state.fetchingOriginalIds.delete(entry.id);
+    if (state.activeEntry?.id === entry.id) {
+      updateFetchOriginalButton(state.activeEntry);
+      renderOriginalEmptyState(state.activeEntry);
+    }
   }
 }
 
@@ -7875,7 +7915,6 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   } else if (isCompactViewport()) {
     setAgentCollapsed(true);
   }
-  state.fetchingOriginal = false;
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
   updateFetchOriginalButton(e);
@@ -7940,7 +7979,6 @@ function closeReaderFromRoute() {
   state.pendingCommentId = '';
   state.pendingAnnotationId = '';
   state.pendingChatMessageId = '';
-  state.fetchingOriginal = false;
   state.readerTab = 'original';
   $('#reader').classList.add('hidden');
   $('#reader-empty').classList.remove('hidden');
@@ -8086,7 +8124,6 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.readerTocAvailable = false;
     state.pendingAssetJump = null;
     state.pendingAnnotationId = '';
-    state.fetchingOriginal = false;
     state.readerTab = 'original';
     $('#reader').classList.add('hidden');
     $('#reader-empty').classList.remove('hidden');
