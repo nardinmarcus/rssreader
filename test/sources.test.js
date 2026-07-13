@@ -20,6 +20,7 @@ test('Namoo core source catalog is present without duplicating existing sources'
   [
     'openai',
     'anthropic',
+    'anthropic-research',
     'google-deepmind',
     'google-ai',
     'huggingface-blog',
@@ -29,6 +30,11 @@ test('Namoo core source catalog is present without duplicating existing sources'
     'simonwillison',
     'latentspace',
   ].forEach(id => assert.ok(ids.has(id), `missing ${id}`));
+  const anthropicResearch = SOURCES.find(source => source.id === 'anthropic-research');
+  assert.equal(anthropicResearch.enabled, true);
+  assert.equal(anthropicResearch.editorialPriority, 'high');
+  assert.equal(anthropicResearch.sitemapPathPrefix, '/research/');
+  assert.deepEqual(anthropicResearch.labels, ['官方', '研究']);
   assert.equal(SOURCES.find(source => source.id === 'qiaomu-blog').enabled, false);
   assert.deepEqual(SOURCES.find(source => source.id === 'qiaomu-blog').labels, ['上游来源']);
   assert.equal(SOURCES.find(source => source.id === 'meta-ai').enabled, false);

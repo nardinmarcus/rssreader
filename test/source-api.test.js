@@ -204,7 +204,7 @@ test('source management API enforces visibility, validation, ordering, and persi
     });
     assert.equal(moved.response.status, 200, JSON.stringify(moved.body));
     assert.equal(moved.body.moved, true);
-    assert.equal(moved.body.neighborId, 'google-deepmind');
+    assert.equal(moved.body.neighborId, 'anthropic-research');
 
     const noFeed = await jsonRequest(server.baseUrl, '/api/sources/meta-ai', {
       method: 'PATCH',
@@ -219,11 +219,11 @@ test('source management API enforces visibility, validation, ordering, and persi
     const persisted = await jsonRequest(server.baseUrl, '/api/sources', { headers: { Cookie: secondCookie } });
     const openai = persisted.body.sources.find(source => source.id === 'openai');
     const anthropic = persisted.body.sources.find(source => source.id === 'anthropic');
-    const deepmind = persisted.body.sources.find(source => source.id === 'google-deepmind');
+    const anthropicResearch = persisted.body.sources.find(source => source.id === 'anthropic-research');
     const custom = persisted.body.sources.find(source => source.id === customSourceId);
     assert.equal(openai.enabled, false);
     assert.equal(openai.editorialPriority, 'low');
-    assert.ok(anthropic.displayOrder > deepmind.displayOrder);
+    assert.ok(anthropic.displayOrder > anthropicResearch.displayOrder);
     assert.equal(custom.name, 'Custom AI Brief Updated');
     assert.equal(custom.feedUrl, 'http://127.0.0.1:1/updated.xml');
 
