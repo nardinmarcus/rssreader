@@ -7,7 +7,7 @@ const dataDir = createTempDataDir();
 process.env.NAMOO_READER_DATA_DIR = dataDir;
 const store = require('../lib/store');
 const fetcher = require('../lib/fetcher');
-const { normalizeFeedAuthor } = fetcher;
+const { normalizeFeedAuthor, structuredDatePublished } = fetcher;
 
 test.after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
@@ -20,6 +20,12 @@ test('feed author objects and arrays become SQLite-safe text', () => {
   }), 'Philipp Schmid');
   assert.equal(normalizeFeedAuthor(['Alice', { name: ['Bob'] }]), 'Alice、Bob');
   assert.equal(normalizeFeedAuthor(null), '');
+});
+
+test('embedded article publication date wins over CMS update metadata', () => {
+  const html = String.raw`self.__next_f.push([1,"{\"_createdAt\":\"2025-02-24T14:37:19Z\",\"_updatedAt\":\"2026-07-03T10:15:42Z\",\"publishedOn\":\"2025-02-24T14:38:00.000Z\"}"])`;
+
+  assert.equal(structuredDatePublished(html), '2025-02-24T14:38:00.000Z');
 });
 
 test('SQLite remains the article and source-count truth when cache.json is empty', () => {
