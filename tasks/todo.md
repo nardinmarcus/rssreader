@@ -2,13 +2,45 @@
 
 ---
 
+# Task 11 - immutable translation versions and ownership
+
+## Plan
+
+- [x] RED/GREEN: publish immutable translation versions with explicit ownership and promotion policies.
+- [x] RED/GREEN: keep the current pointer, legacy projection, user contribution, and optional durable-job fence in one transaction.
+- [x] Backfill current translations and user contributions with stable identities, original attribution/timestamps, resumable cursors, dry-run, and verify-only modes.
+- [x] Prove idempotency, no-overwrite behavior, ownership isolation, failure resume, and cache independence.
+
+## Review
+
+- The fixed seam is `publishTranslationVersion(version, { promotion, jobFence? })`; `auto`, `never`, `admin`, and `legacy` make pointer policy independent from immutable ownership.
+- System publications cannot impersonate users, and user-owned history remains addressable even when policy does not promote it. A failed stale-document promotion or lost job lease rolls back the version, compatibility projection, contribution, pointer, and job transition together.
+- The migration preserves legacy contribution IDs, entry/document identity, owner/author, provider/model, translated title/summary/content, and original creation time. Unverifiable legacy hashes use `legacy_unknown`; deterministic identities include entry and document so identical text on different articles cannot collide.
+- Focused Task 11 tests pass 18/18. The existing versioned-document store regression passes 8/8; syntax checks and `git diff --check` pass. Dry-run and verify-only make no writes, cursor pagination resumes after the last safe record, and a decoy `cache.json` is ignored.
+
+## Task 15A - versioned pipeline maintenance verification
+
+- [x] RED/GREEN: add a read-only CLI with safe JSON output and fail-closed argument/database handling.
+- [x] Verify SQLite integrity, current document/translation ownership, snapshot gzip/hash/size/canonical paths, and orphan raw blobs.
+- [x] Report migration counts without returning stored HTML, prompts, paths, or credentials.
+- [x] Document rollout modes, the synchronous BYOK boundary, backups, ordered backfills, verification, and rollback.
+
+### Task 15A review
+
+- The first RED proved the CLI did not exist; later REDs covered missing documentation and a valid blob referenced through a non-canonical path.
+- `--read-only` never creates a missing database. Initialized empty and healthy databases pass, while integrity, pointer, snapshot, and orphan faults return nonzero with fixed codes and counts only.
+- `body_path` must exactly match `raw/sha256/<2>/<2>/<hash>.html.gz`; gzip output is capped at 5 MiB before its SHA-256 and declared size are checked.
+- Focused observability tests pass 9/9. Script/test syntax checks and `git diff --check` pass.
+
+---
+
 # Versioned structured translation pipeline
 
 ## Plan
 
-- [ ] Phase A: establish immutable raw snapshots and versioned article documents behind `shadow` mode.
-- [ ] Phase B: migrate legacy documents and translations without triggering a global regeneration storm.
-- [ ] Phase C: add TranslationInputV2, complete long-form chunking, deterministic resource rendering, and durable jobs.
+- [x] Phase A: establish immutable raw snapshots and versioned article documents behind `shadow` mode.
+- [x] Phase B: migrate legacy documents and translations without triggering a global regeneration storm.
+- [x] Phase C: add TranslationInputV2, complete long-form chunking, deterministic resource rendering, and durable jobs.
 - [ ] Phase D: switch API and reader through canary, then complete production rollout with rollback proof.
 
 Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline.md`
@@ -19,6 +51,109 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 2. Translation completeness -> verify: every translatable segment appears exactly once and no partial long-form result can become current.
 3. Version safety -> verify: source changes mark old translations stale; successful versions switch atomically; history and attribution remain addressable.
 4. Operational recovery -> verify: jobs survive restart, BYOK secrets never persist, and every rollout mode can return to the old read path without data deletion.
+
+## Task 10 - long-form translation orchestration
+
+- [x] RED/GREEN: partition every segment exactly once in stable order, prefer heading boundaries, and fail explicit document/segment hard limits without truncation.
+- [x] RED/GREEN: retry only the invalid chunk once; any second schema failure prevents publication.
+- [x] RED/GREEN: render translated text from the immutable document AST and resource manifest with fail-closed completeness and fixed safe attributes.
+- [x] Add the smallest DeepSeek V2 adapter while preserving the complete legacy `translateEntry()` path.
+- [x] Run focused chunker/pipeline/renderer tests plus the legacy translation regression suite and document the evidence below.
+
+### Task 10 review
+
+- RED first exposed the three missing modules, both absent hard-limit failures, the second-chunk retry gap, and V2 acceptance of a missing provider finish reason.
+- GREEN partitions stable segment inputs without slicing, retries only the invalid chunk once, and returns no renderable result after a second schema failure.
+- Rendering uses the same ArticleDocument AST and resource manifest, reuses Task 9 title/summary segment identities, escapes every model string, ignores event attributes, fixes external-link/image safety attributes, and rejects missing translations or unsafe resources.
+- V2 provider strictness is explicitly gated by `strictStructuredOutput`; tool/refusal payloads and missing finish reasons fail closed only for `translateChunkV2`, while the legacy `translateEntry()` completion behavior remains unchanged.
+- Focused Task 10 and legacy translation verification passes 34/34; ArticleDocument plus TranslationInputV2 dependency regressions pass 24/24; the full repository suite passes 188/188; syntax checks and `git diff --check` pass.
+
+## Task 13 - asynchronous API and compatible reads
+
+- [x] RED/GREEN: site-AI canary/all requests enqueue durable user-owned jobs and return `202`, `Location`, the compatible current translation, and stable deduplication.
+- [x] RED/GREEN: job status is owner/admin-only and exposes progress plus generic errors without tuning, prompts, secrets, chunks, or provider response bodies.
+- [x] RED/GREEN: current and historical immutable versions retain the top-level `translation` shape and render HTML only from their bound document/resources.
+- [x] Preserve synchronous BYOK without any durable job or secret persistence; make missing/corrupt V2 state canary-fallback and all-mode fail-closed.
+- [x] Associate current reads with an owner's active user job first, otherwise the public article-level system job; expose aggregate pipeline status only to administrators.
+- [x] Extract reusable user/system request construction without worker-process side effects.
+
+### Task 13 review
+
+- The API computes one generation identity from document, source, pipeline, owner, provider, model, and the exact V2 tuning; repeated requests by one user reuse a job while different users and system work remain isolated.
+- Historical `assetId` reads select `translation_versions` before legacy contributions, bind rendering to that version's document, and report `fresh`, `stale_source`, `stale_pipeline`, or `legacy_unknown` without hiding the last good translation.
+- Migrated schema-1 versions remain compatible projections with `renderedHtml: null`; only schema 2 enters the deterministic renderer. A raw-only document change with the same `sourceHash` remains fresh.
+- Browser keys stay on the legacy synchronous path; the regression proves zero job rows and no secret bytes in SQLite.
+- Canary read/write anomalies emit structured warnings and retain the legacy response; all mode fails closed instead of silently bypassing the versioned contract.
+- Focused API, queue, version, status, source, and security verification passes 44/44; the expanded API/source/security matrix passes 25/25. Syntax, diff, and final full-suite evidence follow in the final task review.
+
+## Task 14 - reader progress and fail-closed rendering
+
+- [x] Accept legacy `200` and V2 `202`, poll safe progress, and reload the server-selected current pointer after success.
+- [x] Keep the last good translation visible through queued, running, stale, retry, failed, and superseded states.
+- [x] Render schema-2 output only from server `renderedHtml`; DOMPurify absence fails closed.
+- [x] Fence delayed entry, asset, job, and request responses and cancel polling on reader navigation.
+- [x] Version `app.js` by its shipped SHA-256 prefix.
+
+### Task 14 review
+
+- The reader shows completed/total chunk progress, preserves the old translation during work, clears terminal job state after publication, and fetches the new immutable pointer rather than combining model output with the browser's current source DOM.
+- V2 content never enters the legacy structure-enrichment path. Resource URLs come from the bound server document, and a missing DOMPurify instance leaves V2 HTML unrendered.
+- The shipped script URL uses `ae2152d4f28b`; brand, performance, navigation-race, and original-recovery regressions are covered by the final full suite.
+
+## Task 16 - release-candidate verification
+
+- [x] Run all Node syntax checks, full tests, production dependency audit, whitespace check, and tracked-diff secret scan.
+- [x] Re-run both migrations and the verifier against a consistent SQLite backup, never the working database.
+- [x] Validate Compose, rebuild the production image, and smoke-test `/api/me`, schema initialization, SQLite, and Worker presence.
+- [x] Exercise the full local protocol path with a rich four-chunk fixture and a mock provider at the Worker seam.
+- [ ] Complete the real-browser acceptance matrix on the public HTTPS canary after deployment.
+
+### Task 16 review
+
+- Full suite: 285/285; audit: 0 production vulnerabilities; syntax, diff whitespace, local `.env` absence, and tracked-diff secret scan all pass.
+- A consistent copy of 303 local entries migrated 293 documents, skipped 10 empty entries, verified idempotently, and ended with `quick_check=ok`, zero foreign-key/pointer faults, zero raw orphans, and verifier `ok=true`. The source database was never modified.
+- Image `namoo-reader:versioned-translation-rc` (`sha256:646558760153...`) builds successfully. Isolated smoke confirms `/api/me` exposes only `{user, siteAi}`, all five versioned tables exist, SQLite is healthy, the verifier passes, and the Worker script is present.
+- Protocol acceptance returned `202`, `Location`, the old translation, and progress `0/4`; after four mock-provider chunks it returned schema 2 `fresh`, cleared the active job, and preserved the exact link, image URL, code, list/quote structure, and table. Localhost browser reload was policy-blocked, so the public HTTPS browser pass remains an explicit release gate.
+
+## Audit fixes - authoritative current document identity
+
+- [x] RED/GREEN: refresh shadow documents from the post-upsert SQLite entry so a short feed payload cannot replace recovered full content.
+- [x] RED/GREEN: include every normalized fetched translation input, including title and summary, in immutable document/source identity.
+- [x] Run focused and full verification and record the evidence below.
+
+## Final audit fixes - monotonic publication and durable recovery
+
+- [x] RED/GREEN: prevent a late same-source old-document result from replacing a current-document translation.
+- [x] RED/GREEN: let a current-pipeline user version replace a stale-pipeline system pointer.
+- [x] RED/GREEN: reopen terminal jobs only when their document/source is current and no version already exists.
+- [x] RED/GREEN: reschedule a crashed Worker from persisted active jobs and keep the default lease longer than the provider retry window.
+- [x] RED/GREEN: preserve the legacy `content_hash` domain in the V2 compatibility projection.
+- [x] Reject persisted jobs from an obsolete pipeline before any provider call.
+- [x] Treat `superseded` as a terminal browser state, stop polling it, and reload the authoritative current translation.
+- [x] RED/GREEN: separate stable contribution asset IDs from immutable version IDs and resolve each asset head to its latest user version.
+- [x] RED/GREEN: dual-write post-backfill legacy/BYOK saves into immutable schema-1 versions without changing the legacy response path.
+- [x] Make migration verification compare normalized content, owner, document/source identity, and the contribution asset head before canary cutover.
+- [x] Rerun focused, full-suite, syntax, diff, audit, migration, Docker, and isolated-container acceptance checks.
+- [ ] Complete the public HTTPS browser and production data-path acceptance checks after canary deployment.
+
+### Final audit review
+
+- Same-source automatic promotion is monotonic: an older document can fill a missing or `stale_source` pointer, but cannot replace a pointer already bound to the current semantic source, including after repeated raw-only evidence advances.
+- User promotion checks only the current system pointer's source and pipeline. A matching historical system version no longer blocks a current-pipeline user result from replacing a `stale_pipeline` pointer.
+- Re-enqueue reopens `failed` or `superseded` generations only for the exact current document/source and only when no immutable version exists; successful chunks survive while unfinished chunks are reset.
+- The parent process now recovers abnormal Worker exit from persisted active jobs with bounded backoff. The default 240-second lease covers two 90-second provider attempts plus margin, and obsolete-pipeline jobs stop before a provider call.
+- V2 current and user compatibility projections retain the legacy `hash(title + "\\n" + content)` domain so `off` rollback does not invent a source change.
+- Stable contribution IDs now resolve through a validated monotonic `translation_version_id` head, while complete immutable IDs remain usable across reads, reactions, annotations, and notifications without truncation.
+- Shadow/canary legacy and BYOK saves atomically dual-write schema-1 history; off-mode writes atomically clear stale version pointers without deleting history. Migration reruns compare normalized projections and ownership through a transactional source fence.
+- Raw snapshots are bound only to the body from the same fetch observation, Hacker News components remain explicit evidence, unsafe image placeholders cannot hide valid lazy candidates, and stale current documents are detected regardless of provenance.
+- Site-AI `force` creates a distinct durable generation while ordinary requests remain deterministic and deduplicated. Legacy replay keeps the current pointer and stable user asset head on the same publication.
+- The final full suite passes 285/285. Syntax, diff, secret, dependency, consistent-copy migration, verifier, Compose, image build, and isolated-container checks pass; only public browser and production evidence remain.
+
+### Audit fix review
+
+- Added three regressions covering recovered-full-content preservation plus fetched title and summary identity changes; each failed before its minimal implementation and now passes.
+- Related content hash, compiler, pipeline, and fetcher tests pass 37/37; `git diff --check` passes.
+- The pre-final-audit full run passes 257/257. Independent counterexample review then found terminal retry, monotonic promotion, Worker crash recovery, lease-window, and legacy-hash gaps; the checklist above gates release until each has a regression and the full suite is green again.
 
 ---
 

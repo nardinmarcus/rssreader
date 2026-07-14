@@ -156,3 +156,34 @@ test('My Space is the sole account workspace and subscription management is not 
   assert.match(styles, /\.dashboard-tabs\s*\{\s*display:\s*flex;/);
   assert.match(styles, /#app\.workspace-page-open #sidebar\s*\{\s*display:\s*none;/);
 });
+
+test('versioned translations expose a safe progress surface and render only server HTML', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+  const versionedRenderer = app.slice(
+    app.indexOf('function renderVersionedTranslation'),
+    app.indexOf('function scheduleTranslationJobPoll'),
+  );
+
+  assert.match(html, /id="translation-job-status"[^>]*role="status"/);
+  assert.match(app, /function isVersionedTranslationEnvelope\(/);
+  assert.match(app, /function sanitizeVersionedTranslationHtml\([\s\S]*?if \(!window\.DOMPurify\) return '';/);
+  assert.match(app, /renderVersionedTranslation\([\s\S]*?data\.renderedHtml/);
+  assert.match(app, /renderVersionedTranslation\([\s\S]*?sanitizeVersionedTranslationHtml\(data\.renderedHtml\)/);
+  assert.match(app, /function renderTranslationEnvelopeState\(data, \{ rendered = true \} = \{\}\)[\s\S]{0,300}if \(rendered\) setTranslationJobStatus\(''\)/);
+  assert.match(app, /const rendered = renderVersionedTranslation\(data\);\s*const job = renderTranslationEnvelopeState\(data, \{ rendered \}\);/);
+  assert.doesNotMatch(app, /renderVersionedTranslation\([\s\S]{0,1600}enrichedTranslationBlocks\(/);
+  assert.match(versionedRenderer, /renderAssetHelpfulButton\('translation', state\.translation\)/);
+  assert.match(versionedRenderer, /copy\.classList\.toggle\('hidden', !hasContent\);\s*copy\.disabled = !hasContent/);
+  assert.match(versionedRenderer, /mode\.classList\.add\('hidden'\);\s*mode\.disabled = true/);
+  assert.match(app, /function renderTranslation\(translation[^)]*\) \{\s*if \(translation\?\.schemaVersion === 2 && translation\.renderedHtml\) return renderVersionedTranslation/);
+  assert.match(styles, /\.translation-job-status\s*\{/);
+});
+
+test('superseded translation jobs are terminal and trigger a fresh translation read', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+
+  assert.match(app, /function isTerminalTranslationJob\(job\)[\s\S]{0,160}\['failed', 'succeeded', 'superseded'\]/);
+  assert.match(app, /if \(job\.status === 'superseded'\)[\s\S]{0,320}loadTranslation\(state\.activeEntry/);
+});

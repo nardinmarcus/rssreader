@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const dns = require('node:dns').promises;
+const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 
 const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'namoo-reader-fetcher-test-'));
@@ -152,6 +154,95 @@ test('public fetch re-resolves and pins every manual redirect hop', async () => 
   assert.deepEqual(dispatched, ['93.184.216.34', '93.184.216.35']);
   assert.equal(redirectedBodyCancelled, 1);
   assert.equal(result.buffer.toString('utf8'), 'safe body');
+});
+
+test('HTML fetch exposes decoded HTTP bytes and allowlisted response evidence', async () => {
+  const { fetchHtmlWithManualRedirects } = fetcher.__test;
+  const originalLookup = dns.lookup;
+  const originalFetch = global.fetch;
+  const raw = Buffer.from('<html><body>Caf\u00e9</body></html>', 'utf8');
+  dns.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  global.fetch = async input => String(input) === 'https://evidence.example/start'
+    ? new Response(null, { status: 302, headers: { location: '/final' } })
+    : new Response(raw, { status: 200, headers: {
+      'content-type': 'text/html; charset=utf-8',
+      etag: '"public-etag"',
+      'last-modified': 'Tue, 14 Jul 2026 00:00:00 GMT',
+      'content-language': 'en',
+      'content-encoding': 'gzip',
+      'set-cookie': 'session=secret',
+      authorization: 'Bearer secret',
+      cookie: 'private=value',
+      'x-internal-secret': 'never-copy-me',
+    } });
+  try {
+    const result = await fetchHtmlWithManualRedirects('https://evidence.example/start');
+    assert.equal(result.url, 'https://evidence.example/final');
+    assert.equal(result.finalUrl, 'https://evidence.example/final');
+    assert.equal(result.status, 200);
+    assert.equal(result.charset, 'utf-8');
+    assert.equal(result.contentType, 'text/html; charset=utf-8');
+    assert.deepEqual(result.buffer, raw);
+    assert.equal(result.html, raw.toString('utf8'));
+    assert.deepEqual(result.responseMeta, {
+      etag: '"public-etag"',
+      'last-modified': 'Tue, 14 Jul 2026 00:00:00 GMT',
+      'content-language': 'en',
+      'content-encoding': 'gzip',
+    });
+  } finally {
+    dns.lookup = originalLookup;
+    global.fetch = originalFetch;
+  }
+});
+
+test('HTML evidence preserves distinct UTF-8, ISO-8859-1, and UTF-16 bytes before charset decoding', async () => {
+  const { fetchHtmlWithManualRedirects } = fetcher.__test;
+  const originalLookup = dns.lookup;
+  const originalFetch = global.fetch;
+  const html = '<html><body>Caf\u00e9</body></html>';
+  const cases = [
+    {
+      buffer: Buffer.from(html, 'utf8'),
+      contentType: 'text/html; charset=utf-8',
+      charset: 'utf-8',
+    },
+    {
+      buffer: Buffer.from(html, 'latin1'),
+      contentType: 'text/html; charset=ISO-8859-1',
+      charset: 'windows-1252',
+    },
+    {
+      buffer: Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(html, 'utf16le')]),
+      contentType: 'text/html',
+      charset: 'utf-16le',
+    },
+  ];
+  let responseIndex = 0;
+  dns.lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+  global.fetch = async () => {
+    const item = cases[responseIndex++];
+    return new Response(item.buffer, {
+      status: 200,
+      headers: { 'content-type': item.contentType },
+    });
+  };
+  try {
+    const results = [];
+    for (let index = 0; index < cases.length; index += 1) {
+      results.push(await fetchHtmlWithManualRedirects(`https://encoding-${index}.example/article`));
+    }
+    for (let index = 0; index < results.length; index += 1) {
+      assert.equal(results[index].html, html);
+      assert.equal(results[index].charset, cases[index].charset);
+      assert.deepEqual(results[index].buffer, cases[index].buffer);
+    }
+    const hashes = results.map(result => crypto.createHash('sha256').update(result.buffer).digest('hex'));
+    assert.equal(new Set(hashes).size, 3);
+  } finally {
+    dns.lookup = originalLookup;
+    global.fetch = originalFetch;
+  }
 });
 
 test('public fetch cancels an oversized response body before rejecting it', async () => {

@@ -7,6 +7,12 @@ const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
+const translationJobs = require('./lib/translation-jobs');
+const translationRollout = require('./lib/translation-rollout');
+const { buildTranslationInputV2, translationPipelineHash } = require('./lib/translation-contract');
+const { enqueueDocumentTranslation } = require('./lib/translation-job-request');
+const { renderTranslation } = require('./lib/translation-renderer');
+const { getVersionedPipelineStatus } = require('./lib/versioned-pipeline-status');
 
 const app = express();
 app.disable('x-powered-by');
@@ -46,6 +52,13 @@ const DOMPURIFY_VERSION = JSON.parse(fs.readFileSync(
   'utf8',
 )).version;
 const REFRESH_WORKER_PATH = path.join(__dirname, 'scripts', 'refresh-worker.js');
+const TEST_TRANSLATION_WORKER_PATH = process.env.NODE_ENV === 'test'
+  ? String(process.env.TRANSLATION_WORKER_PATH || '').trim()
+  : '';
+const TRANSLATION_WORKER_PATH = TEST_TRANSLATION_WORKER_PATH
+  || path.join(__dirname, 'scripts', 'translation-worker.js');
+const TRANSLATION_WORKER_RESTART_BASE_MS = 250;
+const TRANSLATION_WORKER_RESTART_MAX_MS = 5000;
 const DEFAULT_TITLE = 'Namoo Reader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -118,6 +131,9 @@ let refreshLast = null;
 let aiWorker = null;
 let aiJob = null;
 let aiLast = null;
+let translationWorker = null;
+let translationWorkerRestartTimer = null;
+let translationWorkerRestartAttempts = 0;
 const aiQueuedSourceIds = new Set();
 let autoRewriteRunning = false;
 let autoRewriteLast = null;
@@ -147,6 +163,71 @@ function createRateLimiter({ windowMs, max, message, key: keyForRequest = null }
     res.setHeader('Retry-After', String(retryAfter));
     return res.status(429).json({ error: message || '请求过于频繁，请稍后再试' });
   };
+}
+
+function scheduleTranslationWorkerRestart() {
+  if (translationWorker || translationWorkerRestartTimer) return false;
+  const delay = Math.min(
+    TRANSLATION_WORKER_RESTART_MAX_MS,
+    TRANSLATION_WORKER_RESTART_BASE_MS * (2 ** Math.min(translationWorkerRestartAttempts, 8)),
+  );
+  translationWorkerRestartAttempts += 1;
+  translationWorkerRestartTimer = setTimeout(() => {
+    translationWorkerRestartTimer = null;
+    wakeTranslationWorker();
+  }, delay);
+  return true;
+}
+
+function durableTranslationWorkRemains() {
+  try {
+    return store.hasActiveTranslationJobs();
+  } catch (error) {
+    console.warn('Translation worker active-job check failed:', error.message || error);
+    return true;
+  }
+}
+
+function wakeTranslationWorker() {
+  if (process.env.NODE_ENV === 'test' && process.env.TRANSLATION_WORKER_DISABLED === '1') return false;
+  if (translationWorker) return false;
+  if (translationWorkerRestartTimer) {
+    clearTimeout(translationWorkerRestartTimer);
+    translationWorkerRestartTimer = null;
+  }
+  const worker = fork(TRANSLATION_WORKER_PATH, [], {
+    cwd: __dirname,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  translationWorker = worker;
+  worker.stdout.on('data', chunk => {
+    translationWorkerRestartAttempts = 0;
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) console.log(`[translation-worker] ${line}`);
+  });
+  worker.stderr.on('data', chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) console.warn(`[translation-worker] ${line}`);
+  });
+  let finished = false;
+  const finishWorker = (code, error = null) => {
+    if (finished) return;
+    finished = true;
+    if (error) console.warn('Translation worker failed:', error.message || error);
+    if (code) console.warn(`Translation worker exited with code ${code}`);
+    if (translationWorker === worker) translationWorker = null;
+    if (durableTranslationWorkRemains()) {
+      scheduleTranslationWorkerRestart();
+    } else {
+      translationWorkerRestartAttempts = 0;
+    }
+  };
+  worker.on('error', error => finishWorker(1, error));
+  worker.on('exit', code => finishWorker(code));
+  return true;
+}
+
+function wakeTranslationWorkerIfNeeded() {
+  return store.hasActiveTranslationJobs() ? wakeTranslationWorker() : false;
 }
 
 const registerRateLimit = createRateLimiter({
@@ -1953,6 +2034,7 @@ async function prepareEntryForAiAsset(entry, reason = 'AI asset', { productHuntO
       const officialSiteContext = await fetcher.fetchProductHuntOfficialContext(entry);
       if (officialSiteContext && entryPlainText({ content: officialSiteContext.content, summary: officialSiteContext.summary }).length >= 80) {
         console.log(`${reason}: fetched Product Hunt official-site context for ${entry.id}`);
+        wakeTranslationWorkerIfNeeded();
         return {
           entry: {
             ...entry,
@@ -1977,6 +2059,7 @@ async function prepareEntryForAiAsset(entry, reason = 'AI asset', { productHuntO
     const updated = await fetcher.fetchEntryOriginal(entry);
     if (updated && entryPlainText(updated).length > entryPlainText(entry).length) {
       console.log(`${reason}: fetched original content for ${entry.id}`);
+      wakeTranslationWorkerIfNeeded();
       return { entry: updated, fetched: true };
     }
   } catch (error) {
@@ -2003,6 +2086,181 @@ function translationResponse(entry, viewer = null, assetId = '') {
     ...translation,
     ...reaction,
     stale: Boolean(translation.contentHash && translation.contentHash !== contentHash),
+  };
+}
+
+function articleDocumentSegments(nodes, out = []) {
+  for (const node of nodes || []) {
+    if (node.type === 'text') out.push(node);
+    if (node.alt && node.alt.type === 'text') out.push(node.alt);
+    if (Array.isArray(node.children)) articleDocumentSegments(node.children, out);
+  }
+  return out;
+}
+
+function publicTranslationJob(job) {
+  if (!job) return null;
+  const completed = (job.chunks || []).filter(chunk => chunk.status === 'succeeded').length;
+  return {
+    id: job.id,
+    status: job.status,
+    progress: { completed, total: (job.chunks || []).length },
+    error: job.status === 'failed'
+      ? { code: job.errorCode || 'ERR_TRANSLATION_JOB_FAILED', message: '翻译任务失败，请稍后重试' }
+      : null,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    completedAt: job.completedAt,
+  };
+}
+
+function currentTranslationJob(entry, viewer) {
+  const jobId = store.getLatestTranslationJobForEntry(entry.id, {
+    userId: viewer && viewer.id,
+    includeSystem: true,
+  });
+  return jobId ? translationJobs.getStatus(jobId) : null;
+}
+
+function legacyTranslationState(entry, viewer = null, job = null, assetId = '') {
+  const translation = translationResponse(entry, viewer, assetId);
+  const document = store.getCurrentArticleDocument(entry.id);
+  const stale = Boolean(translation && translation.stale);
+  return {
+    translation,
+    schemaVersion: null,
+    documentId: document ? document.id : null,
+    versionId: null,
+    status: stale ? 'stale_source' : (translation ? 'legacy_unknown' : 'missing'),
+    staleReasons: translation
+      ? [...(stale ? ['source_hash_changed'] : []), 'legacy_hash_unknown']
+      : [],
+    job: publicTranslationJob(job),
+    renderedHtml: null,
+  };
+}
+
+function translationVersionFreshness(version, currentDocument) {
+  const staleReasons = [];
+  const sourceChanged = version.sourceHash !== currentDocument.sourceHash;
+  if (sourceChanged && version.documentId !== currentDocument.id) staleReasons.push('source_document_changed');
+  if (sourceChanged) staleReasons.push('source_hash_changed');
+  const legacyUnknown = version.pipelineHash === 'legacy_unknown';
+  if (!legacyUnknown && version.pipelineHash !== translationPipelineHash()) {
+    staleReasons.push('pipeline_hash_changed');
+  }
+  return {
+    status: staleReasons.some(reason => reason.startsWith('source_'))
+      ? 'stale_source'
+      : legacyUnknown ? 'legacy_unknown'
+        : staleReasons.includes('pipeline_hash_changed') ? 'stale_pipeline' : 'fresh',
+    staleReasons: legacyUnknown ? [...staleReasons, 'legacy_hash_unknown'] : staleReasons,
+  };
+}
+
+function versionedTranslationState(entry, viewer = null, { assetId = '', job = null } = {}) {
+  const exactAssetId = String(assetId || '').trim();
+  const resolvedAsset = exactAssetId
+    ? store.resolveTranslationVersionAsset(entry.id, exactAssetId)
+    : null;
+  const version = resolvedAsset && resolvedAsset.version
+    || (!exactAssetId ? store.getCurrentTranslationVersion(entry.id) : null);
+  if (!version) return legacyTranslationState(entry, viewer, job, exactAssetId);
+  const document = store.getArticleDocument(version.documentId);
+  const currentDocument = store.getCurrentArticleDocument(entry.id);
+  if (!document || !currentDocument) {
+    const error = new Error('versioned translation document is unavailable');
+    error.code = 'ERR_TRANSLATION_DOCUMENT_UNAVAILABLE';
+    error.statusCode = 409;
+    throw error;
+  }
+  const freshness = translationVersionFreshness(version, currentDocument);
+  const publicAssetId = resolvedAsset && resolvedAsset.stable
+    ? resolvedAsset.assetId
+    : (!exactAssetId && version.ownerType === 'user'
+      ? store.getTranslationAssetIdForVersion(version.id)
+      : '') || version.id;
+  const reaction = store.getEntryAssetReaction(entry.id, 'translation', viewer, publicAssetId);
+  if (version.schemaVersion === 1) {
+    if (!Array.isArray(version.content)) {
+      const error = new Error('legacy translation version content is invalid');
+      error.code = 'ERR_TRANSLATION_VERSION_INVALID';
+      error.statusCode = 409;
+      throw error;
+    }
+    return {
+      translation: {
+        id: publicAssetId,
+        entryId: version.entryId,
+        contributorId: version.userId || '',
+        contributorName: version.userId ? version.author : '',
+        titleZh: version.titleZh,
+        summaryZh: version.summaryZh,
+        content: version.content,
+        model: version.model,
+        provider: version.provider,
+        createdBy: version.author,
+        contentHash: version.sourceHash,
+        createdAt: version.createdAt,
+        updatedAt: version.createdAt,
+        ...reaction,
+        stale: freshness.status === 'stale_source',
+      },
+      schemaVersion: version.schemaVersion,
+      documentId: version.documentId,
+      versionId: version.id,
+      ...freshness,
+      job: publicTranslationJob(job),
+      renderedHtml: null,
+    };
+  }
+  if (version.schemaVersion !== 2) {
+    const error = new Error(`unsupported translation schema version ${version.schemaVersion}`);
+    error.code = 'ERR_TRANSLATION_VERSION_UNSUPPORTED';
+    error.statusCode = 409;
+    throw error;
+  }
+  const translations = version.content && Array.isArray(version.content.translations)
+    ? version.content.translations
+    : [];
+  const segmentMap = Object.fromEntries(translations.map(item => [item.id, item.target]));
+  const rendered = renderTranslation(document, segmentMap);
+  const input = buildTranslationInputV2({
+    documentId: document.id,
+    sourceHash: document.sourceHash,
+    title: document.title,
+    summary: document.summary,
+    segments: articleDocumentSegments(document.ast),
+  });
+  const sources = new Map(input.segments.map(segment => [segment.id, segment.text]));
+  return {
+    translation: {
+      id: publicAssetId,
+      entryId: version.entryId,
+      contributorId: version.userId || '',
+      contributorName: version.userId ? version.author : '',
+      titleZh: version.titleZh,
+      summaryZh: version.summaryZh,
+      content: translations.map(item => ({
+        segmentId: item.id,
+        source: sources.get(item.id) || '',
+        target: item.target,
+      })),
+      model: version.model,
+      provider: version.provider,
+      createdBy: version.author,
+      contentHash: version.sourceHash,
+      createdAt: version.createdAt,
+      updatedAt: version.createdAt,
+      ...reaction,
+      stale: freshness.status === 'stale_source',
+    },
+    schemaVersion: version.schemaVersion,
+    documentId: version.documentId,
+    versionId: version.id,
+    ...freshness,
+    job: publicTranslationJob(job),
+    renderedHtml: rendered.renderedHtml,
   };
 }
 
@@ -2205,6 +2463,7 @@ function finishFetchJob({ result = null, error = null, code = 0, signal = '' } =
   refreshWorker = null;
   refreshJob = null;
   reloadFetcherAfterWorker();
+  wakeTranslationWorkerIfNeeded();
 }
 
 function finishAiJob({ result = null, error = null, code = 0, signal = '' } = {}) {
@@ -2735,6 +2994,14 @@ app.get('/api/admin/submission-requests', requireAdmin, (req, res) => {
   }
 });
 
+app.get('/api/admin/versioned-pipeline-status', requireAdmin, (req, res) => {
+  try {
+    res.json(getVersionedPipelineStatus());
+  } catch (error) {
+    sendError(res, error, 'versioned pipeline status failed');
+  }
+});
+
 app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req, res) => {
   try {
     const result = await fetcher.approveSubmissionRequest(req.params.id, {
@@ -3010,6 +3277,7 @@ app.post('/api/entry/:id/content', originalContentRateLimit, async (req, res) =>
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const updated = await fetcher.fetchEntryOriginal(entry);
+    wakeTranslationWorkerIfNeeded();
     res.json({ entry: updated });
   } catch (e) {
     sendError(res, e, 'fetch original content failed');
@@ -3019,7 +3287,42 @@ app.post('/api/entry/:id/content', originalContentRateLimit, async (req, res) =>
 app.get('/api/entry/:id/translation', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.json({ translation: translationResponse(entry, req.user, req.query.assetId) });
+  if (!translationRollout.usesV2Translation(req, entry)) {
+    return res.json({ translation: translationResponse(entry, req.user, req.query.assetId) });
+  }
+  try {
+    return res.json(versionedTranslationState(entry, req.user, {
+      assetId: req.query.assetId,
+      job: req.query.assetId ? null : currentTranslationJob(entry, req.user),
+    }));
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: 'versioned_translation_read_failed',
+      mode: translationRollout.mode(),
+      entryId: entry.id,
+      code: error.code || 'ERR_VERSIONED_TRANSLATION_READ',
+      message: String(error.message || error).slice(0, 200),
+    }));
+    if (translationRollout.mode() === 'canary') {
+      return res.json({
+        translation: translationResponse(entry, req.user, req.query.assetId),
+        warning: { code: error.code || 'ERR_VERSIONED_TRANSLATION_READ' },
+      });
+    }
+    return sendError(res, error, 'versioned translation read failed');
+  }
+});
+
+app.get('/api/translation-jobs/:jobId', (req, res) => {
+  const job = translationJobs.getStatus(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'translation job not found' });
+  if (job.ownerType === 'system') return res.json({ job: publicTranslationJob(job) });
+  if (!req.user) return res.status(401).json({ error: '请先登录或注册账号' });
+  const ownsJob = job.ownerType === 'user' && job.userId === req.user.id;
+  if (!ownsJob && req.user.role !== 'admin') {
+    return res.status(403).json({ error: '无权查看该翻译任务' });
+  }
+  return res.json({ job: publicTranslationJob(job) });
 });
 
 app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
@@ -3027,6 +3330,55 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const prepared = await prepareEntryForAiAsset(entry, 'Translation', { productHuntOfficialSite: false });
+    if (translationRollout.usesV2Translation(req, prepared.entry)) {
+      const document = store.getCurrentArticleDocument(prepared.entry.id);
+      if (document) {
+        const job = enqueueDocumentTranslation({
+          entryId: prepared.entry.id,
+          document,
+          ownerType: 'user',
+          userId: req.user.id,
+          author: requestAuthor(req),
+          priority: 100,
+          force: Boolean(req.body && req.body.force),
+        });
+        wakeTranslationWorker();
+        let state;
+        try {
+          state = versionedTranslationState(prepared.entry, req.user, { job });
+        } catch (error) {
+          if (translationRollout.mode() !== 'canary') throw error;
+          console.warn(JSON.stringify({
+            event: 'versioned_translation_post_state_fallback',
+            mode: translationRollout.mode(),
+            entryId: prepared.entry.id,
+            code: error.code || 'ERR_VERSIONED_TRANSLATION_READ',
+          }));
+          state = {
+            ...legacyTranslationState(prepared.entry, req.user, job),
+            warning: { code: error.code || 'ERR_VERSIONED_TRANSLATION_READ' },
+          };
+        }
+        res.setHeader('Location', `/api/translation-jobs/${job.id}`);
+        return res.status(202).json({
+          jobId: job.id,
+          ...state,
+          originalFetched: prepared.fetched,
+          originalFetchError: prepared.error || null,
+          entry: prepared.fetched ? prepared.entry : undefined,
+        });
+      }
+      const missingDocument = new Error('versioned translation document is unavailable');
+      missingDocument.code = 'ERR_TRANSLATION_DOCUMENT_UNAVAILABLE';
+      missingDocument.statusCode = 409;
+      if (translationRollout.mode() === 'all') throw missingDocument;
+      console.warn(JSON.stringify({
+        event: 'versioned_translation_post_fallback',
+        mode: translationRollout.mode(),
+        entryId: prepared.entry.id,
+        code: missingDocument.code,
+      }));
+    }
     const result = await deepseek.translateEntry(prepared.entry, {
       ...requestAiConfig(req),
       author: requestAuthor(req),
@@ -3527,4 +3879,7 @@ app.listen(PORT, HOST, () => {
   scheduleStartupRefresh();
   scheduleDailyRefresh();
   scheduleFreshnessRefresh();
+  if (process.env.NODE_ENV !== 'test' || process.env.TRANSLATION_WORKER_STARTUP === '1') {
+    wakeTranslationWorker();
+  }
 });

@@ -2870,6 +2870,20 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   gap: 10px;
   margin-top: 12px;
 }
+.translation-job-status {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.translation-job-status.error {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+}
 .translation-list.translation-zh {
   display: block;
   margin-top: 14px;

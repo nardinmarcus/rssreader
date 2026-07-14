@@ -138,6 +138,37 @@ test('browser startup and entry opening keep critical requests off the old slow 
   assert.match(storeSource, /safeItemLimit = Math\.max\(1, Math\.min\(500,/);
 });
 
+test('versioned translation jobs poll with progress and reject late entry, asset, job, or request responses', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+
+  assert.match(app, /translationRequestSequence:\s*0/);
+  assert.match(app, /function isTranslationRequestCurrent\(\{ entryId, assetId, jobId, sequence \}\)/);
+  assert.match(app, /state\.activeEntry\?\.id !== entryId/);
+  assert.match(app, /currentTranslationAssetId\(\) !== assetId/);
+  assert.match(app, /state\.translationJob\?\.id !== jobId/);
+  assert.match(app, /state\.translationRequestSequence !== sequence/);
+  assert.match(app, /api\(`\/api\/translation-jobs\/\$\{encodeURIComponent\(context\.jobId\)\}`\)/);
+  assert.match(app, /completedChunks[\s\S]{0,240}totalChunks/);
+  assert.match(app, /renderTranslationJob\(job, \{ staleSource: context\.staleSource \}\)/);
+  assert.match(app, /scheduleTranslationJobPoll\(\{ \.\.\.context, jobId: job\.id, staleSource: data\.status === 'stale_source' \}\)/);
+  assert.match(app, /job\.status === 'succeeded'[\s\S]{0,400}loadTranslation\(/);
+  assert.match(app, /function renderTranslationEnvelopeState\(data[^)]*\)[\s\S]{0,500}job\.status === 'succeeded'[\s\S]{0,220}state\.translationJob = null/);
+  assert.match(app, /原文已更新，正在生成新版/);
+  assert.match(app, /status === 'stale_source'[\s\S]{0,300}原文已更新/);
+  assert.match(app, /job\.status === 'failed'[\s\S]{0,300}翻译失败，请重试/);
+  assert.doesNotMatch(app, /job\.error[^\n]*textContent|textContent[^\n]*job\.error/);
+  assert.match(app, /async function generateTranslation\([\s\S]*?finally \{[\s\S]{0,360}if \(activeJob\) renderTranslationJob\(state\.translationJob/);
+});
+
+test('reader navigation cancels translation polling before changing article identity', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+
+  assert.match(app, /function resetTranslationRequestState\(\)[\s\S]*?clearTimeout\(state\.translationPollTimer\)[\s\S]*?state\.translationRequestSequence \+= 1/);
+  assert.match(app, /async function openEntry\([\s\S]{0,520}resetTranslationRequestState\(\);[\s\S]{0,220}state\.activeEntry = e/);
+  assert.match(app, /function closeReaderFromRoute\(\)[\s\S]{0,180}resetTranslationRequestState\(\)/);
+  assert.match(app, /async function reload\([\s\S]*?if \(!keepReader\) \{\s*resetTranslationRequestState\(\)/);
+});
+
 test.after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });

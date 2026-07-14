@@ -51,3 +51,44 @@
 - Deployment smoke tests and README API tables must reuse the exact route exercised by automated tests; this project keeps the compatibility endpoint `/api/submit-link`, not a guessed `/api/submit-article` alias.
 - Every remote post-deploy command must establish `/opt/rssreader` explicitly before checking relative files such as `.env`; prefer `cmp -s` for exact secret-file equality so hashes and shell quoting never expose or misread the configuration.
 - In research and recommendation tasks, treat “可以纳入” as a selection decision, not implementation authorization. Wait for an explicit “开始 / 实施 / 部署” before changing the repository or production, and keep implementation and deployment approvals separate.
+- A shared finalization hook does not prove source provenance survived a parser. Add one fixture per special source path and assert the raw bytes or source components at the document boundary.
+- A migration scan must include every field needed to reconstruct identity, especially the canonical link used to resolve relative HTML resources.
+- Immutable document equality must exclude observation metadata such as snapshot IDs and timestamps while retaining every semantic field that changes rendered output.
+- Provider-level strict completion checks must be explicitly gated to the structured protocol so a V2 safety invariant cannot regress the legacy translation path.
+- When a model response is restricted to segment mappings, every independently publishable text field, including the title, must have a stable segment identity.
+- After a preserving SQLite upsert, downstream document compilation must reload the authoritative row; compiling the stale incoming feed object can silently move the version pointer back to poorer content.
+- An immutable document hash must cover every value that changes its stored semantic row or model input, not just the raw response bytes and extractor versions.
+- A globally unique generation key must include document identity; semantic content alone is not enough when identical articles live under different entry foreign keys.
+- A content-addressed writer must validate an existing blob before deduplicating it, and atomically repair corruption from the current trusted bytes.
+- Do not unconditionally fork empty background workers in every server test. Give test startup an explicit opt-in so orphan children cannot race temporary-directory cleanup.
+- Setting `TRANSLATION_WORKER_STARTUP=0` only suppresses the startup wake; an API enqueue can still fork the worker. API tests that assert a durable queued state must use an explicit test-only wake disable seam, while worker execution remains covered by the dedicated queue tests.
+- Generation identity must persist the exact tuning the provider call uses; a configured default and a hard-coded request temperature cannot describe the same reproducible generation.
+- Public task status must project an allowlisted shape and replace persisted provider error messages with generic text; internal response bodies are not safe merely because they are stored in an error column.
+- Translation staleness follows semantic `sourceHash`, not `documentId`; a new raw snapshot or extraction record with the same source hash must keep the existing translation fresh.
+- Migrated schema-1 translation versions are immutable legacy projections, not malformed V2 responses. Preserve their version metadata and compatible content, but never send them through the schema-2 renderer.
+- Durable retry needs a database-derived time wakeup; relying on a later request or process restart can strand `retry_wait` jobs indefinitely.
+- A translation worker must renew and validate its lease at chunk boundaries and before publication, with a lease window longer than one provider timeout.
+- System auto-refresh may supersede only stale system work and must never enqueue or publish under a user owner identity.
+- Migration CLIs must reject contradictory read-only modes such as `--dry-run --verify-only` before opening or mutating the database.
+- Promotion policy must inspect the current pointer, not any matching historical version; history can prove availability but cannot prove what the reader currently sees.
+- After raw-only document advances, an older same-source result may fill a missing or stale-source pointer but must not replace a pointer already on that semantic source.
+- A unique generation identity prevents duplicate jobs, but failed or superseded execution state needs a separately guarded reopen path.
+- Persisted jobs from an older prompt or validation pipeline must stop before provider execution; otherwise new code can publish output under an old pipeline hash.
+- A parent Worker supervisor must derive crash recovery from persisted active jobs, not only an in-memory pending-wake flag.
+- Compatibility projections must preserve the legacy hash domain used by the rollback reader; semantic V2 hashes belong in versioned tables, not overloaded legacy columns.
+- Acceptance predicates must distinguish an expected cleared value such as `job: null` after success from a failed or missing result; assert each field against its contract instead of rejecting every null generically.
+- Client polling must classify every server terminal state, including `superseded`; otherwise a correctly fenced stale job can leave the button disabled and poll forever.
+- Stable contribution asset IDs and immutable translation version IDs are different identities; keep an explicit monotonic head pointer and validate entry, owner, and user semantics at every resolve/write boundary.
+- After legacy translation backfill, every synchronous legacy or BYOK save in a versioned mode must atomically dual-write the immutable version and compatibility projections; a successful legacy-only write would immediately create two competing truths.
+- A migration rerun must compare normalized ownership and content, then fail on divergence; never silently heal an unknown conflict or publish from a stale scan without a transactional projection fence.
+- Legacy `content_hash` and V2 `sourceHash` are different hash domains. String equality is not provenance evidence, so migrated translations remain `legacy_unknown` unless a same-domain proof exists.
+- A rollback mode may keep legacy reads active, but any new legacy write must atomically invalidate versioned current and asset-head pointers; otherwise disabled-path writes leave stale metadata that blocks a safe return to versioned mode.
+- IDs that cross API, reaction, and annotation surfaces need one shared length contract. A valid immutable version ID must never be truncated or rejected merely because legacy asset IDs were shorter.
+- A raw snapshot and its normalized document body must come from the same fetch observation. Preserving an older SQLite body is valid for legacy reading, but that body cannot be rebound to newer raw bytes.
+- Every non-primary text merged into a fetched document must appear in `sourceComponents`; otherwise the immutable document cannot be reproduced from its recorded evidence.
+- Validate image source candidates before choosing one. An unsafe placeholder in `src` must not hide a valid `data-src` or `srcset` resource.
+- Backfill verification must compare the current entry projection with the pointed document, not treat a non-null foreign key as proof that migration is current.
+- A repeated synchronous publication of the same text is still a new publication event; reusing an older version timestamp can split the current pointer from a monotonic stable asset head.
+- A user-visible force/regenerate action must change durable generation identity while ordinary requests remain deduplicated; reading `force` only in the legacy branch makes the V2 control deceptive.
+- Every value sent to the model, including non-output summary context, must participate in semantic and immutable document identity; otherwise generation replay is not reproducible.
+- Migration reuse must compare the current semantic projection and compiler versions regardless of provenance; `feed` or `fetched` is evidence type, not proof that the pointer still matches the entry.

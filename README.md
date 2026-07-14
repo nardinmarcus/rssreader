@@ -103,6 +103,8 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 | `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | 播客默认刷新间隔 |
 | `FETCH_SOURCE_CONCURRENCY` | `6` | 后台批量抓取并发数，范围为 1–8 |
 | `AUTO_REWRITE_SOURCE_IDS` | 空 | 限定自动生成草稿的信息源 |
+| `VERSIONED_TRANSLATION_MODE` | `off` | 版本化文档与翻译的发布阶段：`off`、`shadow`、`canary` 或 `all` |
+| `VERSIONED_TRANSLATION_CANARY_ENTRY_IDS` | 空 | `canary` 模式下额外启用 V2 翻译的文章 ID，逗号分隔 |
 | `UMAMI_SRC` | 空 | 可选 Umami 脚本地址 |
 | `UMAMI_WEBSITE_ID` | 空 | 可选 Umami 站点 ID |
 | `NAMOO_READER_DATA_DIR` | `./data` | 测试或自定义运行数据目录 |
@@ -135,6 +137,52 @@ Compose 只运行一个 `namoo-reader` 容器：
 迁移完成后，SQLite 是个人设置的事实来源。`state.json` 只作为旧数据证据保留，不再被写入。
 
 运行时的 JSON 缓存同样只是可重建的磁盘投影。并发刷新会在锁内合并各自变更，文章、来源状态和审核记录仍以 SQLite 为准。
+
+## 版本化翻译上线与维护
+
+`VERSIONED_TRANSLATION_MODE` 控制版本化管线的读取和写入边界：
+
+- `off`：保持旧文档和旧翻译路径，不写版本化文档。这是默认值和最快的软件回滚开关。
+- `shadow`：抓取时写不可变文档和 raw evidence；翻译仍返回同步旧响应，同时在一个 SQLite 事务中写入不可变 schema-1 版本，用于先验证数据完整性且不增加模型调用。
+- `canary`：继续写不可变文档；管理员和 `VERSIONED_TRANSLATION_CANARY_ENTRY_IDS` 中的文章使用站点 AI V2 翻译，其他请求仍走旧路径。
+- `all`：所有站点 AI 翻译使用 V2 持久化任务和不可变版本。
+
+BYOK 始终保留同步旧路径：浏览器自带 key 的请求不会进入持久化 V2 任务，key、endpoint 和 tuning 也不会写入 SQLite。`canary` 与 `all` 只切换服务器持有凭据的站点 AI。
+
+上线前先停容器，完整备份 `.env`、SQLite、WAL 和 `raw/`；不要把运行时 cache 当作事实来源：
+
+```bash
+umask 077
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup="backups/versioned-$stamp"
+mkdir -p "$backup"
+docker compose stop namoo-reader
+cp .env "$backup/.env"
+tar -C data -czf "$backup/data.tgz" .
+docker compose start namoo-reader
+```
+
+新代码首次启动时先保持 `off`，让增量 Schema 初始化完成；随后以 dry-run 查看数量，再按“文档、翻译”的顺序执行两个 backfill。旧 `content_hash` 与 V2 `sourceHash` 属于不同哈希域，因此所有迁移译文都保守标记为 `legacy_unknown`，不会仅因字符串碰巧相等而判定新鲜。命令失败时可把上一条 JSON 的 `cursor` 传给 `--after-id` 继续；重复执行不会覆盖不可变版本：
+
+```bash
+node scripts/backfill-article-documents.js --dry-run --batch-size=100
+node scripts/backfill-article-documents.js --batch-size=100
+node scripts/backfill-article-documents.js --verify-only --batch-size=100
+
+node scripts/backfill-translation-versions.js --dry-run --batch-size=100
+node scripts/backfill-translation-versions.js --batch-size=100
+node scripts/backfill-translation-versions.js --verify-only --batch-size=100
+```
+
+切换阶段前后运行只读维护验证。它检查 SQLite 完整性、当前指针归属、raw gzip/hash/大小和孤立 blob，只输出安全的 JSON 计数；`ok=false` 时退出码非零：
+
+```bash
+node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
+```
+
+只有两个 backfill、`--verify-only` 和维护验证全部通过后，才把模式从 `off` 切到 `shadow`；从 `off` 回到任一版本化模式前也要重新执行翻译回填与验证，避免停用期间产生的旧写入缺少不可变版本。用户贡献的公开 asset ID 保持稳定，单独的 `translation_version_id` 只指向该贡献最新的不可变版本；直接使用 version ID 仍可读取历史版本。
+
+应用行为需要回滚时，把 `VERSIONED_TRANSLATION_MODE=off` 后重新创建容器；版本化表是增量数据，不必删除。只有验证报告数据库或 raw evidence 损坏时，才应停容器并从上述一致性备份恢复整个 `data/` 和对应 `.env`，随后再次运行只读验证。
 
 ## API
 

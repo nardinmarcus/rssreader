@@ -50,6 +50,153 @@ function openAiResponse(content, finishReason = 'stop', headers = {}) {
   }), { status: 200, headers: { 'content-type': 'application/json', ...headers } });
 }
 
+function translationChunkInput() {
+  return {
+    schemaVersion: 2,
+    documentId: 'document-provider-boundary',
+    sourceHash: 'source-provider-boundary',
+    title: 'Provider boundary',
+    context: 'Context only.',
+    segments: [
+      { id: 's_title', role: 'title', text: 'Provider boundary' },
+      { id: 's_body', role: 'paragraph', text: 'Complete body.' },
+    ],
+  };
+}
+
+test('V2 chunk adapter sends the fixed text wire schema and returns parsed JSON', async () => {
+  const originalFetch = global.fetch;
+  const input = translationChunkInput();
+  let requestBody;
+  const response = {
+    schemaVersion: 2,
+    translations: input.segments.map(segment => ({ id: segment.id, target: `译文:${segment.text}` })),
+  };
+  global.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return openAiResponse(JSON.stringify(response));
+  };
+  try {
+    assert.deepEqual(await deepseek.translateChunkV2(input, providerOptions()), response);
+    const userMessage = requestBody.messages.find(message => message.role === 'user');
+    assert.deepEqual(JSON.parse(userMessage.content), input);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('V2 chunk adapter classifies malformed JSON and normal-stop refusal as invalid provider output', async t => {
+  const originalFetch = global.fetch;
+  try {
+    for (const [content, expectedCode] of [
+      ['not json', 'ERR_TRANSLATION_RESPONSE_INVALID'],
+      ['抱歉，无法翻译这篇文章。', 'ERR_TRANSLATION_PROVIDER_REFUSAL'],
+    ]) {
+      await t.test(expectedCode, async () => {
+        global.fetch = async () => openAiResponse(content);
+        await assert.rejects(
+          deepseek.translateChunkV2(translationChunkInput(), providerOptions()),
+          error => error.code === expectedCode,
+        );
+      });
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('provider tool payload is rejected even when finish_reason says stop and text is present', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    choices: [{
+      finish_reason: 'stop',
+      message: {
+        content: JSON.stringify({ schemaVersion: 2, translations: [] }),
+        tool_calls: [{ id: 'tool-1', type: 'function' }],
+      },
+    }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    await assert.rejects(
+      deepseek.translateChunkV2(translationChunkInput(), providerOptions()),
+      /工具调用/,
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('V2 chunk adapter fails closed when the provider omits finish_reason', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    choices: [{
+      message: {
+        content: JSON.stringify({ schemaVersion: 2, translations: [] }),
+      },
+    }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    await assert.rejects(
+      deepseek.translateChunkV2(translationChunkInput(), providerOptions()),
+      error => error.code === 'ERR_TRANSLATION_PROVIDER_INCOMPLETE',
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('Anthropic refusal blocks fail closed even when stop_reason says end_turn', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    stop_reason: 'end_turn',
+    content: [{
+      type: 'refusal',
+      text: JSON.stringify({ schemaVersion: 2, translations: [] }),
+    }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    await assert.rejects(
+      deepseek.translateChunkV2(translationChunkInput(), providerOptions({ providerType: 'anthropic_compatible' })),
+      /拒绝/,
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('legacy translateEntry keeps its pre-V2 completion-metadata behavior', async () => {
+  const originalFetch = global.fetch;
+  const entry = {
+    id: 'legacy-translation-provider-metadata',
+    sourceId: 'test',
+    title: 'Legacy translation',
+    summary: 'A source summary.',
+    content: '<p>Complete source paragraph.</p>',
+  };
+  store.upsertEntries([entry]);
+  global.fetch = async () => new Response(JSON.stringify({
+    choices: [{
+      finish_reason: 'stop',
+      message: {
+        refusal: 'ignored legacy metadata',
+        tool_calls: [{ id: 'ignored-legacy-tool', type: 'function' }],
+        content: JSON.stringify({
+          titleZh: '旧版翻译',
+          summaryZh: '完整摘要',
+          blocks: [{ i: 0, target: '完整正文', targetHtml: '<p>完整正文</p>' }],
+        }),
+      },
+    }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  try {
+    const result = await deepseek.translateEntry(entry, { ...providerOptions(), force: true });
+    assert.equal(result.translation.titleZh, '旧版翻译');
+    assert.equal(result.translation.content[0].target, '完整正文');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('server-owned DeepSeek ignores caller routing and uses the official V4 Flash route', () => {
   withEnv({
     DEEPSEEK_API_KEY: 'server-owned-test-key',
@@ -196,6 +343,27 @@ test('5xx HTML responses are retried once', async () => {
   try {
     const result = await deepseek.testConnection(providerOptions());
     assert.equal(result.sample, 'complete result');
+    assert.equal(calls, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('429 responses preserve retry classification after the provider retry is exhausted', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+  global.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ error: { message: 'rate limited' } }), {
+      status: 429,
+      headers: { 'content-type': 'application/json', 'retry-after': '0' },
+    });
+  };
+  try {
+    await assert.rejects(
+      deepseek.translateChunkV2(translationChunkInput(), providerOptions()),
+      error => error.statusCode === 429 && error.retryable === true,
+    );
     assert.equal(calls, 2);
   } finally {
     global.fetch = originalFetch;

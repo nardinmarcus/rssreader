@@ -364,3 +364,93 @@ test('Namoo creation draft runs through the authenticated API and persists the m
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('off mode preserves legacy translation status, content, asset URLs, and BYOK routing', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir();
+  const capturePath = path.join(dataDir, 'mock-translation-request.json');
+  const preloadPath = path.join(dataDir, 'mock-translation-preload.js');
+  const entryId = 'legacy-translation-e2e-entry';
+  const sourceText = 'A complete English paragraph with enough detail for translation coverage. '.repeat(30);
+  fs.writeFileSync(path.join(dataDir, 'cache.json'), JSON.stringify({
+    openai: {
+      fetchedAt: Date.now(),
+      feedUrl: 'https://openai.com/news/rss.xml',
+      feedTitle: 'OpenAI News',
+      status: 'ok',
+      error: null,
+      entries: [{
+        id: entryId,
+        sourceId: 'openai',
+        title: 'Legacy BYOK translation contract',
+        link: 'https://example.com/legacy-translation',
+        author: 'Example Author',
+        published: new Date().toISOString(),
+        publishedTs: Date.now(),
+        summary: sourceText.slice(0, 300),
+        content: `<p>${sourceText}</p>`,
+      }],
+    },
+  }));
+  fs.writeFileSync(preloadPath, [
+    "const fs = require('fs');",
+    'const realFetch = globalThis.fetch;',
+    'globalThis.fetch = async (input, init) => {',
+    "  const url = String(input && input.url ? input.url : input);",
+    "  if (!url.startsWith('https://mock-translation.example/')) return realFetch(input, init);",
+    "  const payload = JSON.parse(String(init && init.body || '{}'));",
+    "  fs.writeFileSync(process.env.MOCK_TRANSLATION_CAPTURE_PATH, JSON.stringify({ url, payload }));",
+    "  const userText = String(payload.messages && payload.messages.at(-1) && payload.messages.at(-1).content || '');",
+    "  const indexes = Array.from(userText.matchAll(/^i=(\\d+)$/gm), match => Number(match[1]));",
+    "  const content = JSON.stringify({ titleZh: '旧链路翻译契约', summaryZh: '旧摘要', blocks: indexes.map(i => ({ i, target: `译文段落 ${i}`, targetHtml: `<p>译文段落 ${i}</p>` })) });",
+    "  return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] }), { status: 200, headers: { 'content-type': 'application/json' } });",
+    '};',
+  ].join('\n'));
+
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      VERSIONED_TRANSLATION_MODE: 'off',
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_TRANSLATION_CAPTURE_PATH: capturePath,
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const generated = await jsonRequest(server.baseUrl, `/api/entry/${entryId}/translation`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+        'X-AI-Key': 'browser-owned-test-key',
+        'X-AI-Provider': 'openai-compatible',
+        'X-AI-Provider-Name': 'Mock translation provider',
+        'X-AI-Provider-Type': 'openai_compatible',
+        'X-AI-Base-URL': 'https://mock-translation.example/v1',
+        'X-AI-Model': 'mock-translation-model',
+      },
+      body: JSON.stringify({ force: true }),
+    });
+    assert.equal(generated.response.status, 200, JSON.stringify(generated.body));
+    assert.ok(Array.isArray(generated.body.translation.content));
+    assert.equal(generated.body.translation.content[0].target, '译文段落 0');
+    assert.equal(generated.body.translation.model, 'mock-translation-model');
+    assert.match(generated.body.translation.id, /^[0-9a-f-]{36}$/i);
+
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf8'));
+    assert.equal(captured.url, 'https://mock-translation.example/v1/chat/completions');
+    assert.equal(captured.payload.model, 'mock-translation-model');
+
+    const current = await jsonRequest(server.baseUrl, `/api/entry/${entryId}/translation`);
+    assert.equal(current.response.status, 200);
+    assert.deepEqual(current.body.translation.content, generated.body.translation.content);
+
+    const historical = await jsonRequest(
+      server.baseUrl,
+      `/api/entry/${entryId}/translation?assetId=${encodeURIComponent(generated.body.translation.id)}`
+    );
+    assert.equal(historical.response.status, 200);
+    assert.equal(historical.body.translation.id, generated.body.translation.id);
+    assert.deepEqual(historical.body.translation.content, generated.body.translation.content);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

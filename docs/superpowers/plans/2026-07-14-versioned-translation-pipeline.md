@@ -79,7 +79,8 @@ git diff --check
 1. 固定 Canonical JSON 的 Unicode NFC、对象键顺序、数组顺序、空值和换行规则。
 2. 用 golden fixture 锁定 `rawHash`、`documentHash`、`sourceHash`、`pipelineHash` 和 `generationHash`。
 3. 证明 `finalUrl`、Hacker News 来源组件和文档流水线版本会改变 `documentHash`。
-4. 证明仅模型变化会改变 `generationHash`，不会改变 `sourceHash`。
+4. 证明仅观察元数据或快照 ID 变化不会改变 `sourceHash`，而组件内容变化会改变它。
+5. 证明仅模型变化会改变 `generationHash`，不会改变 `sourceHash`；内容相同但 `documentId` 不同的文章不会复用任务。
 
 **GREEN：**
 
@@ -242,7 +243,7 @@ node --test test/versioned-document-pipeline.test.js test/fetcher-normalization.
 
 1. CLI 支持 `--dry-run`、`--batch-size`、`--after-id` 和 `--verify-only`。
 2. 只读取 SQLite；禁止读取 `cache.json` 作为迁移输入。
-3. 使用 `compileLegacyDocument()` 生成 `legacy-v1/raw_status=unavailable` 文档。
+3. 使用 `compileLegacyDocument()` 生成 `provenance=legacy/raw_status=unavailable` 文档；身份覆盖摘要上下文、最终 URL 和当前文档流水线版本。
 4. 依靠唯一约束与当前指针实现幂等、分页和失败续跑。
 5. 删除文章、空正文和只有摘要的文章要有明确统计，不静默丢失。
 
@@ -326,14 +327,15 @@ node --test test/translation-chunker.test.js test/translation-pipeline.test.js t
 
 1. 现有 `entry_translations` 与 `entry_ai_asset_contributions` 保留作者、用户、模型、正文和时间。
 2. 重复迁移不创建重复版本，不覆盖已发布版本。
-3. 当前旧译文成为 `current_translation_id`；缺可靠哈希时标记 `legacy_unknown`。
+3. 当前旧译文成为 `current_translation_id`；旧 `content_hash` 与 V2 `sourceHash` 不跨域比较，迁移版本统一标记 `legacy_unknown`。
 4. 系统版本可切当前指针；用户版本仅在没有新鲜站点译文时自动切换；管理员可显式提升。
 5. 用户版本永远不被系统以用户身份重写。
 
 **GREEN：**
 
 1. 回填 CLI 同样支持 dry-run、batch、resume 和 verify-only。
-2. 兼容投影仍写旧表一个发布周期，且与版本插入/当前指针在同一事务完成。
+2. 兼容投影仍写旧表一个发布周期，且与版本插入、当前指针和稳定贡献 asset head 在同一事务完成。
+3. 稳定 asset ID 与 immutable version ID 分离；前者显式指向最新用户版本，后者永久保留历史。
 
 **验证：**
 
@@ -358,12 +360,14 @@ node --test test/translation-version-store.test.js test/translation-version-migr
 4. 重启后跳过成功 chunk，只运行未完成或允许重试的 chunk。
 5. 瞬时错误退避，永久错误直接失败，Schema 错误只补译一次。
 6. 全部 chunk 成功前不存在已发布版本。
-7. 发布事务重新检查 `current_document_id`；旧文档任务最多成为历史版本，不得切当前指针。
+7. 发布事务重新检查 `current_document_id` 与当前译文来源；旧 document 同源结果只可填补缺失或 `stale_source` 指针，不能覆盖已同源指针。
+8. `retry_wait` 与未过期租约具备数据库时间唤醒，不依赖新请求；长任务在每个 chunk 和发布前续租。
+9. `failed/superseded` generation 仅在精确当前 document/source 且无已发布版本时重开；旧 pipeline job 在 provider 调用前终止。
 
 **GREEN：**
 
 1. `translation-jobs.js` 只暴露 `enqueue()`、`getStatus()`、`runNext()` 和 `promote()`。
-2. Worker 默认并发 1，队列空时退出；服务端启动和入队时唤醒子进程。
+2. Worker 默认并发 1；真正无活动任务时退出，存在 `retry_wait` 或未过期租约时等待数据库中的下一唤醒时间；服务端启动、入队和异常退出后按持久化活动任务唤醒子进程。
 3. 手动请求优先于系统 stale 队列，系统 stale 优先于历史迁移批次。
 
 **验证：**
@@ -487,10 +491,10 @@ docker build -t namoo-reader:versioned-translation-test .
 
 1. 停止后台刷新进入维护窗口；
 2. 一致性备份 SQLite、WAL/SHM、`.env`、Compose、镜像和整个数据卷；
-3. 部署 `VERSIONED_TRANSLATION_MODE=shadow`；
-4. 先执行两个 backfill CLI 的 dry-run，再小批量执行与 verify-only；
+3. 先以 `VERSIONED_TRANSLATION_MODE=off` 部署并初始化增量 Schema；
+4. 执行两个 backfill CLI 的 dry-run、小批量执行与 verify-only；
 5. 运行 `PRAGMA quick_check`、`PRAGMA foreign_key_check`、指针/数量/hash/raw 文件核对；
-6. shadow 至少观察一个正常刷新周期，模型调用量不得增加。
+6. 验证全部通过后切换 `shadow`；shadow 至少观察一个正常刷新周期，模型调用量不得增加。
 
 ### Release B：5 篇 canary
 
@@ -526,4 +530,3 @@ docker build -t namoo-reader:versioned-translation-test .
 - canary 无法通过开关即时回退旧读取。
 
 出现任一条件立即停止当前阶段，保留证据并重新设计该切片，不继续扩大灰度。
-

@@ -672,6 +672,9 @@ const state = {
   translationLoading: false,
   translationGenerating: false,
   translationCompare: false,
+  translationJob: null,
+  translationPollTimer: null,
+  translationRequestSequence: 0,
   pendingTranslationGenerate: false,
   translationAiProfileId: '',
   rewrite: null,
@@ -5249,7 +5252,205 @@ function renderAssetHelpfulButton(type, asset) {
   btn.title = active ? '取消有用标记' : '觉得这个资产有用';
 }
 
+function isVersionedTranslationEnvelope(data) {
+  return Boolean(data && typeof data === 'object' && (
+    Object.prototype.hasOwnProperty.call(data, 'schemaVersion')
+    || Object.prototype.hasOwnProperty.call(data, 'documentId')
+    || Object.prototype.hasOwnProperty.call(data, 'staleReasons')
+    || Object.prototype.hasOwnProperty.call(data, 'job')
+    || Object.prototype.hasOwnProperty.call(data, 'renderedHtml')
+  ));
+}
+
+function sanitizeVersionedTranslationHtml(html) {
+  if (!window.DOMPurify) return '';
+  return DOMPurify.sanitize(String(html || ''), {
+    FORBID_TAGS: ['script', 'style', 'form', 'input', 'button', 'svg', 'canvas', 'iframe', 'object', 'embed'],
+    FORBID_ATTR: ['style'],
+  });
+}
+
+function setTranslationJobStatus(message = '', { error = false } = {}) {
+  const status = $('#translation-job-status');
+  if (!status) return;
+  status.textContent = String(message || '');
+  status.classList.toggle('hidden', !message);
+  status.classList.toggle('error', Boolean(error));
+}
+
+function currentTranslationAssetId() {
+  return state.readerFocus === 'translation' ? String(state.readerAssetId || '').trim() : '';
+}
+
+function isTranslationRequestCurrent({ entryId, assetId, jobId, sequence }) {
+  if (state.activeEntry?.id !== entryId) return false;
+  if (currentTranslationAssetId() !== assetId) return false;
+  if (jobId && state.translationJob?.id !== jobId) return false;
+  if (state.translationRequestSequence !== sequence) return false;
+  return true;
+}
+
+function normalizedTranslationJob(data) {
+  const raw = data && data.job && typeof data.job === 'object' ? data.job : data;
+  const id = String(raw && (raw.id || data && data.jobId) || '').trim();
+  if (!id) return null;
+  const completedChunks = Number(raw.completedChunks ?? raw.progress?.completed) || 0;
+  const totalChunks = Number(raw.totalChunks ?? raw.progress?.total) || 0;
+  return {
+    id,
+    status: String(raw.status || 'queued'),
+    completedChunks,
+    totalChunks,
+    error: raw.error || null,
+  };
+}
+
+function isTerminalTranslationJob(job) {
+  return ['failed', 'succeeded', 'superseded'].includes(String(job && job.status || ''));
+}
+
+function renderTranslationJob(job, { staleSource = false } = {}) {
+  const btn = $('#reader-bilingual');
+  if (!job) return;
+  if (job.status === 'failed') {
+    setTranslationJobStatus('翻译失败，请重试。', { error: true });
+    btn.disabled = false;
+    btn.textContent = '重试中文翻译';
+    return;
+  }
+  if (job.status === 'superseded') {
+    setTranslationJobStatus('原文或翻译规则已更新，请重新生成。');
+    btn.disabled = false;
+    btn.textContent = staleSource ? '更新中文翻译' : '重新生成中文翻译';
+    return;
+  }
+  const progress = job.totalChunks ? ` ${job.completedChunks}/${job.totalChunks}` : '';
+  setTranslationJobStatus(staleSource
+    ? `原文已更新，正在生成新版…${progress}`
+    : `正在生成中文翻译…${progress}`);
+  btn.disabled = true;
+  btn.textContent = progress ? `翻译中${progress}` : '翻译中…';
+}
+
+function renderTranslationEnvelopeState(data, { rendered = true } = {}) {
+  const job = normalizedTranslationJob(data);
+  if (job) {
+    if (job.status === 'succeeded') {
+      state.translationJob = null;
+      if (rendered) setTranslationJobStatus('');
+      return null;
+    }
+    state.translationJob = job;
+    renderTranslationJob(job, { staleSource: data && data.status === 'stale_source' });
+    return job;
+  }
+  if (data && data.status === 'stale_source') {
+    setTranslationJobStatus('原文已更新，当前保留旧译文；可重新生成。');
+    $('#reader-bilingual').textContent = '更新中文翻译';
+  }
+  return null;
+}
+
+function renderVersionedTranslation(data) {
+  if (!isVersionedTranslationEnvelope(data)) {
+    setTranslationJobStatus('');
+    renderTranslation(data && data.translation);
+    return true;
+  }
+  const compatibleTranslation = data.translation ? {
+    ...data.translation,
+    stale: data.status === 'stale_source' || Boolean(data.translation.stale),
+  } : state.translation;
+  if (Number(data.schemaVersion) !== 2) {
+    renderTranslation(compatibleTranslation);
+    return true;
+  }
+  const renderedHtml = sanitizeVersionedTranslationHtml(data.renderedHtml);
+  if (!renderedHtml) {
+    if (state.translation) renderTranslation(state.translation);
+    setTranslationJobStatus('新版译文无法安全显示，请刷新页面后重试。', { error: true });
+    return false;
+  }
+  const translation = compatibleTranslation || {};
+  const hasContent = Boolean(Array.isArray(translation.content) && translation.content.length);
+  state.translation = { ...translation, renderedHtml, schemaVersion: 2 };
+  state.translationCompare = false;
+  renderReaderStatsUi();
+  const list = $('#translation-list');
+  const empty = $('#translation-empty');
+  const mode = $('#translation-view-toggle');
+  const copy = $('#translation-copy');
+  list.classList.remove('translation-compare');
+  list.classList.add('translation-zh');
+  list.innerHTML = renderedHtml;
+  empty.classList.add('hidden');
+  mode.classList.add('hidden');
+  mode.disabled = true;
+  mode.classList.remove('active');
+  mode.setAttribute('aria-pressed', 'false');
+  copy.classList.toggle('hidden', !hasContent);
+  copy.disabled = !hasContent;
+  renderAssetHelpfulButton('translation', state.translation);
+  $('#reader-bilingual').disabled = false;
+  $('#reader-bilingual').textContent = '重新生成中文翻译';
+  $('#translation-meta').textContent = [translation.createdBy, translation.model, formatAssetTime(translation.updatedAt)].filter(Boolean).join(' · ');
+  setTranslationJobStatus('');
+  $$('#translation-list a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
+  updateReaderLanguageProfile();
+  applyTextAnnotations();
+  renderReaderAssetSummary();
+  settlePendingAssetJump('translation');
+  return true;
+}
+
+function scheduleTranslationJobPoll(context, waitMs = 900) {
+  clearTimeout(state.translationPollTimer);
+  state.translationPollTimer = setTimeout(() => pollTranslationJob(context), waitMs);
+}
+
+function resetTranslationRequestState() {
+  clearTimeout(state.translationPollTimer);
+  state.translationPollTimer = null;
+  state.translationJob = null;
+  state.translationRequestSequence += 1;
+  setTranslationJobStatus('');
+}
+
+async function pollTranslationJob(context) {
+  if (!isTranslationRequestCurrent(context)) return;
+  try {
+    const data = await api(`/api/translation-jobs/${encodeURIComponent(context.jobId)}`);
+    if (!isTranslationRequestCurrent(context)) return;
+    const job = normalizedTranslationJob(data);
+    if (!job || job.id !== context.jobId) return;
+    state.translationJob = job;
+    if (job.status === 'superseded') {
+      state.translationJob = null;
+      await loadTranslation(state.activeEntry, { expectedAssetId: context.assetId });
+      return;
+    }
+    if (job.status === 'succeeded') {
+      state.translationJob = null;
+      setTranslationJobStatus('翻译完成，正在刷新…');
+      await loadTranslation(state.activeEntry, { expectedAssetId: context.assetId });
+      return;
+    }
+    renderTranslationJob(job, { staleSource: context.staleSource });
+    if (isTerminalTranslationJob(job)) return;
+    scheduleTranslationJobPoll(context);
+  } catch {
+    if (!isTranslationRequestCurrent(context)) return;
+    setTranslationJobStatus('暂时无法检查翻译进度，正在重试。');
+    scheduleTranslationJobPoll(context, 2000);
+  }
+}
+
 function renderTranslation(translation, { loading = false } = {}) {
+  if (translation?.schemaVersion === 2 && translation.renderedHtml) return renderVersionedTranslation({
+    schemaVersion: 2,
+    translation,
+    renderedHtml: translation.renderedHtml,
+  });
   const hasContent = Boolean(translation && Array.isArray(translation.content) && translation.content.length);
   state.translation = hasContent ? translation : null;
   renderReaderStatsUi();
@@ -5318,22 +5519,36 @@ function copyTranslationText() {
   copyText(lines.join('\n\n'), '译文已复制');
 }
 
-async function loadTranslation(entry) {
+async function loadTranslation(entry, { expectedAssetId = currentTranslationAssetId() } = {}) {
+  const sequence = ++state.translationRequestSequence;
+  const context = { entryId: entry.id, assetId: expectedAssetId, jobId: '', sequence };
   state.translationLoading = true;
-  renderTranslation(null, { loading: true });
+  if (state.translation) setTranslationJobStatus('正在检查翻译更新…');
+  else renderTranslation(null, { loading: true });
   try {
-    const assetId = state.readerFocus === 'translation' ? state.readerAssetId : '';
-    const query = assetId ? `?assetId=${encodeURIComponent(assetId)}` : '';
-    const data = await api(`/api/entry/${entry.id}/translation${query}`);
-    if (state.activeEntry?.id !== entry.id) return;
-    renderTranslation(data.translation);
+    const query = expectedAssetId ? `?assetId=${encodeURIComponent(expectedAssetId)}` : '';
+    const data = await api(`/api/entry/${encodeURIComponent(entry.id)}/translation${query}`);
+    if (!isTranslationRequestCurrent(context)) return;
+    if (isVersionedTranslationEnvelope(data)) {
+      const rendered = renderVersionedTranslation(data);
+      const job = renderTranslationEnvelopeState(data, { rendered });
+      if (job && !isTerminalTranslationJob(job)) {
+        scheduleTranslationJobPoll({ ...context, jobId: job.id, staleSource: data.status === 'stale_source' });
+      }
+    } else {
+      setTranslationJobStatus('');
+      renderTranslation(data.translation);
+    }
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
       updateEntryAssets(entry.id, entryAssetHelpfulPatch('translation', data.translation), { rerenderList: false });
       renderList();
     }
   } catch {
-    renderTranslation(null);
+    if (!isTranslationRequestCurrent(context)) return;
+    if (!state.translation) renderTranslation(null);
+    setTranslationJobStatus('翻译加载失败，请重试。', { error: true });
   } finally {
+    if (!isTranslationRequestCurrent(context)) return;
     state.translationLoading = false;
     if (state.pendingTranslationGenerate && state.activeEntry?.id === entry.id && state.readerTab === 'translation' && !state.translation) {
       state.pendingTranslationGenerate = false;
@@ -5467,37 +5682,54 @@ async function generateTranslation({ force = false } = {}) {
     return;
   }
   if (state.translationGenerating) return;
+  if (state.translationJob && !isTerminalTranslationJob(state.translationJob)) return;
   if (!requireAuth('login')) return;
   state.readerAssetId = '';
+  const sequence = ++state.translationRequestSequence;
+  const context = { entryId: entry.id, assetId: '', jobId: '', sequence };
   setReaderTab('translation');
   state.translationGenerating = true;
   btn.disabled = true;
   btn.textContent = '翻译中…';
   try {
-    const data = await api(`/api/entry/${entry.id}/translation`, {
+    const data = await api(`/api/entry/${encodeURIComponent(entry.id)}/translation`, {
       method: 'POST',
       aiConfig: translationAiConfig(),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ force }),
     });
-    if (state.activeEntry?.id !== entry.id) return;
+    if (!isTranslationRequestCurrent(context)) return;
     if (data.entry) applyServerEntryUpdate(data.entry);
-    renderTranslation(data.translation);
+    if (isVersionedTranslationEnvelope(data)) {
+      const rendered = renderVersionedTranslation(data);
+      const job = renderTranslationEnvelopeState(data, { rendered });
+      if (job && !isTerminalTranslationJob(job)) {
+        scheduleTranslationJobPoll({ ...context, jobId: job.id, staleSource: data.status === 'stale_source' });
+      }
+    } else {
+      setTranslationJobStatus('');
+      renderTranslation(data.translation);
+    }
     if (data.translation && Array.isArray(data.translation.content) && data.translation.content.length) {
       updateEntryAssets(entry.id, entryAssetHelpfulPatch('translation', data.translation), { rerenderList: false });
       renderList();
     }
     setReaderTab('translation');
-    toast(data.originalFetched ? '已获取原文并保存双语翻译' : data.cached ? '已显示缓存翻译' : '双语翻译已保存');
+    if (!state.translationJob) toast(data.originalFetched ? '已获取原文并保存双语翻译' : data.cached ? '已显示缓存翻译' : '双语翻译已保存');
   } catch (err) {
+    if (!isTranslationRequestCurrent(context)) return;
     if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(err.message)) {
       openAiConfigModal('translation', 'translation');
     }
-    toast('翻译失败: ' + err.message, 5000);
+    setTranslationJobStatus('翻译失败，请重试。', { error: true });
+    toast('翻译失败，请重试', 5000);
   } finally {
+    if (!isTranslationRequestCurrent(context)) return;
     state.translationGenerating = false;
-    btn.disabled = false;
-    if (!state.translation) btn.textContent = '生成中文翻译';
+    const activeJob = state.translationJob && !isTerminalTranslationJob(state.translationJob);
+    btn.disabled = Boolean(activeJob);
+    if (activeJob) renderTranslationJob(state.translationJob, { staleSource: state.translation?.stale });
+    else if (!state.translation) btn.textContent = '生成中文翻译';
     else btn.textContent = state.translation.stale ? '更新中文翻译' : '重新生成中文翻译';
   }
 }
@@ -8019,6 +8251,7 @@ async function sendAgentMessage(text) {
 
 async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentId = '', annotationId = '', chatMessageId = '', updateUrl = true, replaceUrl = false } = {}) {
   setWorkspacePage('');
+  resetTranslationRequestState();
   const previousEntryId = state.activeEntry?.id || '';
   if (previousEntryId && previousEntryId !== e.id) {
     state.agentContext = null;
@@ -8128,6 +8361,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
 
 function closeReaderFromRoute() {
   setWorkspacePage('');
+  resetTranslationRequestState();
   state.activeEntry = null;
   state.agentMessages = [];
   state.comments = [];
@@ -8274,6 +8508,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
   renderList();
   renderSidebar();
   if (!keepReader) {
+    resetTranslationRequestState();
     setWorkspacePage('');
     state.activeEntry = null;
     state.agentMessages = [];
