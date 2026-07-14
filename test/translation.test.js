@@ -85,6 +85,42 @@ test('V2 chunk adapter sends the fixed text wire schema and returns parsed JSON'
   }
 });
 
+test('V2 chunk adapter preserves code locally and never asks the provider to echo it', async () => {
+  const originalFetch = global.fetch;
+  const input = {
+    ...translationChunkInput(),
+    segments: [
+      { id: 's_title', role: 'title', text: 'Provider boundary' },
+      { id: 's_code', role: 'code', text: 'const answer = 42;\n' },
+      { id: 's_body', role: 'paragraph', text: 'Complete body.' },
+    ],
+  };
+  let providerInput;
+  global.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    providerInput = JSON.parse(request.messages.find(message => message.role === 'user').content);
+    return openAiResponse(JSON.stringify({
+      schemaVersion: 2,
+      translations: providerInput.segments.map(segment => ({
+        id: segment.id,
+        target: `译文:${segment.text}`,
+      })),
+    }));
+  };
+  try {
+    const response = await deepseek.translateChunkV2(input, providerOptions());
+
+    assert.deepEqual(providerInput.segments.map(segment => segment.id), ['s_title', 's_body']);
+    assert.deepEqual(response.translations, [
+      { id: 's_title', target: '译文:Provider boundary' },
+      { id: 's_code', target: 'const answer = 42;\n' },
+      { id: 's_body', target: '译文:Complete body.' },
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('V2 chunk adapter classifies malformed JSON and normal-stop refusal as invalid provider output', async t => {
   const originalFetch = global.fetch;
   try {

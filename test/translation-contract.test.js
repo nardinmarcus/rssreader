@@ -61,7 +61,7 @@ test('TranslationInputV2 exposes only the fixed text wire schema and golden pipe
   });
   assert.equal(
     contract.translationPipelineHash(),
-    'e9f8e34335db1708d76c8be32bd42c95111979c41001c2c7affd5da5be65824d',
+    '0043ce0a57d2eb785b9f549ca2fd5f48ede575663ad5cfb8d99f3ab57a2428e3',
   );
 });
 

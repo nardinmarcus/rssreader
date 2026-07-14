@@ -301,12 +301,14 @@ node --test test/translation-contract.test.js
 3. 第二个 chunk 缺块时只定向补译第二块一次；再次失败不得返回可发布结果。
 4. 渲染器必须使用同一个 ArticleDocument 与 segment map，恢复标题、列表、代码、表格、链接和图片顺序。
 5. 模型文本统一转义，危险 URL、事件属性和新增 HTML 无法进入输出。
+6. 分块必须从任务持久化的 `maxTokens` 推导输出预算；代码段由服务端本地原样注回，不要求模型复述。
 
 **GREEN：**
 
 1. `deepseek.js` 只负责 provider HTTP 与 finish reason；V2 编排放入 `translation-pipeline.js`。
 2. 分块结果保持纯结构数据；`renderedHtml` 是从文档与译文重建的投影，不作为模型事实存储。
 3. 旧 `translateEntry()` 暂时保留供 `off` 和 BYOK 兼容路径使用。
+4. 分块/提示/验证策略变化必须形成新的 `pipelineHash`，不能把旧 generation 的 chunk 形状当作可复用结果。
 
 **验证：**
 

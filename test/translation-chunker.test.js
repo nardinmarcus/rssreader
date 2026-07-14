@@ -71,3 +71,38 @@ test('fails explicitly when the complete document exceeds its hard limit', () =>
       && error.totalChars === 16,
   );
 });
+
+test('splits by the provider output-token budget while code stays local to the chunk', () => {
+  const input = inputWith([
+    { id: 's_one', role: 'paragraph', text: 'a'.repeat(1200) },
+    { id: 's_code', role: 'code', text: 'const value = 42;\n'.repeat(200) },
+    { id: 's_two', role: 'paragraph', text: 'b'.repeat(1200) },
+  ]);
+
+  const chunks = chunkTranslationInput(input, {
+    maxChunkChars: 12000,
+    maxSegmentChars: 12000,
+    maxTotalChars: 20000,
+    maxOutputTokens: 2000,
+  });
+
+  assert.deepEqual(chunks.map(chunk => chunk.segments.map(segment => segment.id)), [
+    ['s_one', 's_code'],
+    ['s_two'],
+  ]);
+});
+
+test('fails before provider execution when one translatable segment cannot fit the output budget', () => {
+  const oversized = { id: 's_output_oversized', role: 'paragraph', text: 'x'.repeat(3000) };
+
+  assert.throws(
+    () => chunkTranslationInput(inputWith([oversized]), {
+      maxChunkChars: 12000,
+      maxSegmentChars: 12000,
+      maxTotalChars: 20000,
+      maxOutputTokens: 1000,
+    }),
+    error => error.code === 'ERR_TRANSLATION_SEGMENT_OUTPUT_TOO_LARGE'
+      && error.segmentId === oversized.id,
+  );
+});

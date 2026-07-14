@@ -130,3 +130,56 @@ test('reusable requests isolate ownership while force creates a new generation a
   assert.equal(systemJob.priority, 20);
   assert.doesNotMatch(JSON.stringify([userJob, otherUserJob, systemJob]), /site-request-key-must-not-persist|api.?key|authorization/i);
 });
+
+test('durable chunk identities are derived from the configured provider output budget', () => {
+  const { enqueueDocumentTranslation } = require('../lib/translation-job-request');
+  const entryId = 'translation-job-budget-entry';
+  const paragraphs = ['a', 'b', 'c'].map(value => value.repeat(3000));
+  store.upsertEntries([{
+    id: entryId,
+    sourceId: 'translation-job-request-test',
+    title: 'Budget-aware translation request',
+    link: 'https://example.com/budget-request',
+    summary: '',
+    content: paragraphs.map(value => `<p>${value}</p>`).join(''),
+  }]);
+  const document = store.insertArticleDocument({
+    id: 'translation-job-budget-document',
+    entryId,
+    snapshotId: null,
+    sourceComponents: [],
+    provenance: 'legacy',
+    rawStatus: 'unavailable',
+    documentHash: 'translation-job-budget-document-hash',
+    sourceHash: 'translation-job-budget-source-hash',
+    extractorVersion: 'extractor-v1',
+    sanitizerVersion: 'sanitizer-v1',
+    segmenterVersion: 'segmenter-v1',
+    title: 'Budget-aware translation request',
+    summary: '',
+    normalizedHtml: paragraphs.map(value => `<p>${value}</p>`).join(''),
+    plainText: paragraphs.join('\n'),
+    ast: paragraphs.map((text, index) => ({
+      type: 'element',
+      tag: 'p',
+      children: [{ type: 'text', id: `s_budget_${index}`, role: 'paragraph', text }],
+    })),
+    resources: [],
+    createdAt: 2000,
+  });
+  store.setCurrentArticleDocument(entryId, document.id);
+
+  const job = enqueueDocumentTranslation({
+    entryId,
+    document,
+    ownerType: 'system',
+    userId: null,
+    author: 'Namoo Reader',
+  });
+
+  assert.equal(job.tuning.maxTokens, 6100);
+  assert.deepEqual(job.chunks.map(chunk => chunk.segmentIds.filter(id => id.startsWith('s_budget_'))), [
+    ['s_budget_0', 's_budget_1'],
+    ['s_budget_2'],
+  ]);
+});

@@ -110,7 +110,7 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 
 ### Task 16 review
 
-- Full suite: 285/285; audit: 0 production vulnerabilities; syntax, diff whitespace, local `.env` absence, and tracked-diff secret scan all pass.
+- Full suite: 289/289; audit: 0 production vulnerabilities; syntax, diff whitespace, local `.env` absence, and tracked-diff secret scan all pass.
 - A consistent copy of 303 local entries migrated 293 documents, skipped 10 empty entries, verified idempotently, and ended with `quick_check=ok`, zero foreign-key/pointer faults, zero raw orphans, and verifier `ok=true`. The source database was never modified.
 - Image `namoo-reader:versioned-translation-rc` (`sha256:646558760153...`) builds successfully. Isolated smoke confirms `/api/me` exposes only `{user, siteAi}`, all five versioned tables exist, SQLite is healthy, the verifier passes, and the Worker script is present.
 - Protocol acceptance returned `202`, `Location`, the old translation, and progress `0/4`; after four mock-provider chunks it returned schema 2 `fresh`, cleared the active job, and preserved the exact link, image URL, code, list/quote structure, and table. Localhost browser reload was policy-blocked, so the public HTTPS browser pass remains an explicit release gate.
@@ -147,13 +147,31 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 - Shadow/canary legacy and BYOK saves atomically dual-write schema-1 history; off-mode writes atomically clear stale version pointers without deleting history. Migration reruns compare normalized projections and ownership through a transactional source fence.
 - Raw snapshots are bound only to the body from the same fetch observation, Hacker News components remain explicit evidence, unsafe image placeholders cannot hide valid lazy candidates, and stale current documents are detected regardless of provenance.
 - Site-AI `force` creates a distinct durable generation while ordinary requests remain deterministic and deduplicated. Legacy replay keeps the current pointer and stable user asset head on the same publication.
-- The final full suite passes 285/285. Syntax, diff, secret, dependency, consistent-copy migration, verifier, Compose, image build, and isolated-container checks pass; only public browser and production evidence remain.
+- The final pre-canary full suite passes 285/285. Syntax, diff, secret, dependency, consistent-copy migration, verifier, Compose, image build, and isolated-container checks pass; production canary evidence is tracked below.
 
 ### Audit fix review
 
 - Added three regressions covering recovered-full-content preservation plus fetched title and summary identity changes; each failed before its minimal implementation and now passes.
 - Related content hash, compiler, pipeline, and fetcher tests pass 37/37; `git diff --check` passes.
 - The pre-final-audit full run passes 257/257. Independent counterexample review then found terminal retry, monotonic promotion, Worker crash recovery, lease-window, and legacy-hash gaps; the checklist above gates release until each has a regression and the full suite is green again.
+
+## Production canary correction - output-token budget
+
+- [x] Stop expansion and return production from `canary` to `shadow` without deleting failed-job evidence.
+- [x] RED/GREEN: derive durable chunk boundaries from the configured provider output-token budget.
+- [x] RED/GREEN: preserve code locally instead of asking the provider to echo immutable bytes.
+- [x] Bump the pipeline identity so old chunk shapes and failed generations cannot be reused under the new policy.
+- [x] Pass focused, full-suite, syntax, diff, secret, and production dependency checks.
+- [ ] Rebuild, push, redeploy, and repeat the five-entry real-provider canary before enabling `all`.
+
+### Production canary correction review
+
+- The first real-provider canary produced one complete version, three `finish_reason=length` failures, and one repeated schema-invalid code-heavy chunk. The queue, lease, retry, and atomic-publication paths behaved correctly and published no partial result.
+- Root cause: production intentionally had `maxTokens=2000`, while the initial chunker used a fixed 12,000-character ceiling. Two failed chunks contained over 5,000 source characters; the schema-invalid chunk also required the model to echo 477 code characters exactly.
+- Production was immediately returned to `shadow`; public reads stayed on the legacy path while failed jobs remained available for diagnosis.
+- The corrected policy reserves output headroom, accounts for JSON overhead, fails an individually oversized translatable segment before provider execution, and injects code locally. The new prompt/validation identity produces a new `pipelineHash`.
+- Focused translation verification passes 71/71; the expanded full suite passes 289/289. Syntax, diff, secret, and production dependency checks pass.
+- Corrected image `namoo-reader:versioned-translation-budget-rc` (`sha256:b19d52384162...`) builds successfully; isolated smoke confirms `/api/me` and the new pipeline hash `0043ce0a57d2...`.
 
 ---
 
