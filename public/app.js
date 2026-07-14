@@ -30,7 +30,7 @@ const DEFAULT_READER_OPEN_TAB = 'rewrite';
 const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
-const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'sources'];
+const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'moderation', 'sources'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '创作草稿', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
@@ -155,7 +155,7 @@ const AI_PROVIDER_PRESETS = [
     category: '国内大模型',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModel: DEFAULT_REWRITE_MODEL,
-    quickModels: [DEFAULT_REWRITE_MODEL, 'deepseek-chat', 'deepseek-reasoner'],
+    quickModels: [DEFAULT_REWRITE_MODEL],
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
     description: 'DeepSeek 官方接口',
     recommended: true,
@@ -655,6 +655,12 @@ const state = {
   profileLinksDraft: [],
   profileAvatarDraft: '',
   dashboardTab: normalizeDashboardTab(storage.getItem('qm_dashboard_tab')),
+  moderationRequests: [],
+  moderationUsers: [],
+  moderationSelectedUser: null,
+  moderationSubmissions: [],
+  moderationLoaded: false,
+  moderationLoading: false,
   editingCustomSourceId: '',
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
@@ -1623,12 +1629,7 @@ function aiHeaderValue(value, fallback = '') {
 }
 
 function aiHeadersFromConfig(config) {
-  if (config.useSiteAi) {
-    return {
-      'X-AI-Temperature': String(config.temperature ?? ''),
-      'X-AI-Max-Tokens': String(config.maxTokens ?? ''),
-    };
-  }
+  if (config.useSiteAi) return {};
   return {
     'X-AI-Provider': aiHeaderValue(config.provider, 'custom'),
     'X-AI-Provider-Name': aiHeaderValue(config.providerName || config.profileName, config.provider || 'AI'),
@@ -3479,19 +3480,16 @@ async function submitReaderLink() {
       body: JSON.stringify({ url, note }),
     });
     closeSubmitLinkModal();
-    state.view = 'all';
-    state.filterSource = 'user-submitted';
-    state.filterCategory = null;
-    state.assetFilter = null;
-    state.assetSort = 'latest';
-    state.contributorSort = 'latest';
-    state.q = '';
-    await Promise.all([loadSources(), loadEntries(), loadContributors()]);
-    updateListTitle();
-    renderList();
-    renderSidebar();
-    if (data.entry) await openEntry(data.entry);
-    toast('已收录到读者提交，正在生成 Namoo 创作草稿');
+    if (data.pending) {
+      toast('投稿已进入审核队列，通过后才会抓取并公开');
+    } else {
+      await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+      updateListTitle();
+      renderList();
+      renderSidebar();
+      if (data.entry) await openEntry(data.entry);
+      toast('已收录到读者提交');
+    }
   } catch (err) {
     toast('提交失败: ' + err.message, 5000);
   } finally {
@@ -5069,16 +5067,20 @@ async function submitArticleLinkToSite() {
   if (state.articleLinkSubmitting) return;
   state.articleLinkSubmitting = true;
   try {
-    await api('/api/submit-link', {
+    const data = await api('/api/submit-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, note }),
     });
-    await Promise.all([loadSources(), loadEntries(), loadContributors()]);
-    updateListTitle();
-    renderList();
-    renderSidebar();
-    toast('已收录到本站，正在生成 Namoo 创作草稿');
+    if (data.pending) {
+      toast('投稿已进入审核队列，通过后才会抓取并公开');
+    } else {
+      await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+      updateListTitle();
+      renderList();
+      renderSidebar();
+      toast('已收录到本站');
+    }
   } catch (err) {
     toast('收录失败: ' + err.message, 5000);
   } finally {
@@ -6572,9 +6574,176 @@ function mountAiConfigPanel(target = 'modal') {
   mount.appendChild(content);
 }
 
+function moderationTime(value) {
+  const timestamp = Number(value) || 0;
+  return timestamp ? formatAssetTime(timestamp) : '暂无时间';
+}
+
+function renderModeration() {
+  const pendingList = $('#moderation-pending-list');
+  const userList = $('#moderation-user-list');
+  const userDetail = $('#moderation-user-detail');
+  if (!pendingList || !userList || !userDetail) return;
+  $('#moderation-pending-count').textContent = String(state.moderationRequests.length);
+  $('#moderation-user-count').textContent = String(state.moderationUsers.length);
+  if (state.moderationLoading && !state.moderationLoaded) {
+    pendingList.innerHTML = '<div class="moderation-empty">正在读取待审队列…</div>';
+    userList.innerHTML = '<div class="moderation-empty">正在读取账号列表…</div>';
+    userDetail.classList.add('hidden');
+    return;
+  }
+  pendingList.innerHTML = state.moderationRequests.length
+    ? state.moderationRequests.map(request => `
+      <article class="moderation-item">
+        <div class="moderation-item-main">
+          <a href="${escapeHtml(request.url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(request.url)}</a>
+          <p>${escapeHtml([request.displayName || request.author, request.email, moderationTime(request.createdAt)].filter(Boolean).join(' · '))}</p>
+          ${request.note ? `<p class="moderation-note">${escapeHtml(request.note)}</p>` : ''}
+        </div>
+        <div class="moderation-actions">
+          <button class="ghost-btn primary" type="button" data-moderation-action="approve" data-request-id="${escapeHtml(request.id)}">批准</button>
+          <button class="ghost-btn moderation-danger" type="button" data-moderation-action="reject" data-request-id="${escapeHtml(request.id)}">拒绝</button>
+        </div>
+      </article>`).join('')
+    : '<div class="moderation-empty">没有待审投稿</div>';
+  userList.innerHTML = state.moderationUsers.length
+    ? state.moderationUsers.map(user => `
+      <article class="moderation-item ${user.disabled ? 'is-disabled' : ''}">
+        <div class="moderation-item-main">
+          <strong>${escapeHtml(user.displayName || user.email || '未命名用户')}</strong>
+          <p>${escapeHtml(user.email || '')}</p>
+          <p>${user.activeSubmissionCount} 条公开 · ${user.totalSubmissionCount} 条累计${user.disabled ? ` · 已停用：${escapeHtml(user.disabledReason || '未填写原因')}` : ''}</p>
+        </div>
+        <div class="moderation-actions">
+          <button class="ghost-btn" type="button" data-moderation-action="view-user" data-user-id="${escapeHtml(user.userId)}">查看投稿</button>
+          ${user.role === 'admin'
+            ? '<span class="moderation-badge">管理员</span>'
+            : user.disabled
+              ? `<button class="ghost-btn" type="button" data-moderation-action="restore-user" data-user-id="${escapeHtml(user.userId)}">恢复账号</button>`
+              : `<button class="ghost-btn moderation-danger" type="button" data-moderation-action="disable-user" data-user-id="${escapeHtml(user.userId)}">停用账号</button>`}
+        </div>
+      </article>`).join('')
+    : '<div class="moderation-empty">没有账号数据</div>';
+  const selected = state.moderationSelectedUser;
+  if (!selected) {
+    userDetail.classList.add('hidden');
+    userDetail.innerHTML = '';
+    return;
+  }
+  userDetail.classList.remove('hidden');
+  userDetail.innerHTML = `
+    <div class="moderation-section-head">
+      <div>
+        <h3>${escapeHtml(selected.displayName || selected.email || '投稿详情')}</h3>
+        <p>${escapeHtml(selected.email || '')} · ${selected.activeSubmissionCount} 条公开 / ${selected.totalSubmissionCount} 条累计</p>
+      </div>
+      ${selected.activeSubmissionCount > 0
+        ? `<button class="ghost-btn moderation-danger" type="button" data-moderation-action="delete-submissions" data-user-id="${escapeHtml(selected.userId)}">下线全部投稿</button>`
+        : ''}
+    </div>
+    <div class="moderation-list moderation-detail-list">
+      ${state.moderationSubmissions.length
+        ? state.moderationSubmissions.map(item => `
+          <article class="moderation-item ${item.deletedAt ? 'is-disabled' : ''}">
+            <div class="moderation-item-main">
+              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || item.url)}</a>
+              <p>${escapeHtml(moderationTime(item.updatedAt))}${item.deletedAt ? ' · 已下线' : ''}</p>
+            </div>
+          </article>`).join('')
+        : '<div class="moderation-empty">该账号没有已发布投稿</div>'}
+    </div>`;
+}
+
+async function loadModeration({ force = false } = {}) {
+  if (!isAdmin() || state.moderationLoading || (state.moderationLoaded && !force)) return;
+  state.moderationLoading = true;
+  renderModeration();
+  try {
+    const [pendingData, userData] = await Promise.all([
+      api('/api/admin/submission-requests?status=pending&limit=200'),
+      api('/api/admin/users?limit=500'),
+    ]);
+    state.moderationRequests = pendingData.requests || [];
+    state.moderationUsers = userData.users || [];
+    state.moderationLoaded = true;
+    const selectedId = state.moderationSelectedUser && state.moderationSelectedUser.userId;
+    if (selectedId) await loadModerationUser(selectedId, { render: false });
+  } catch (err) {
+    state.moderationLoaded = false;
+    toast('审核数据读取失败: ' + err.message, 5000);
+  } finally {
+    state.moderationLoading = false;
+    renderModeration();
+  }
+}
+
+async function loadModerationUser(userId, { render = true } = {}) {
+  const data = await api(`/api/admin/users/${encodeURIComponent(userId)}/submissions?limit=500`);
+  state.moderationSelectedUser = data.user || null;
+  state.moderationSubmissions = data.submissions || [];
+  if (render) renderModeration();
+}
+
+async function handleModerationAction(button) {
+  const action = button.dataset.moderationAction;
+  const requestId = button.dataset.requestId;
+  const userId = button.dataset.userId;
+  if (!action) return;
+  if (action === 'view-user') {
+    button.disabled = true;
+    try { await loadModerationUser(userId); } catch (err) { toast('投稿读取失败: ' + err.message, 5000); }
+    finally { button.disabled = false; }
+    return;
+  }
+  const confirmations = {
+    approve: '批准后将首次访问目标链接，并把文章公开到读者提交。继续吗？',
+    reject: '拒绝这条投稿？目标链接不会被访问。',
+    'disable-user': '停用该账号？现有会话会被撤销，其公开投稿将全部下线。',
+    'restore-user': '恢复该账号登录权限？旧会话和已下线投稿不会恢复。',
+    'delete-submissions': '下线该账号的全部公开投稿？账号本身仍可登录。',
+  };
+  if (!window.confirm(confirmations[action] || '确认执行此操作？')) return;
+  button.disabled = true;
+  try {
+    if (action === 'approve' || action === 'reject') {
+      await api(`/api/admin/submission-requests/${encodeURIComponent(requestId)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: action === 'reject' ? JSON.stringify({ reason: '管理员审核未通过' }) : '{}',
+      });
+    } else if (action === 'disable-user') {
+      await api(`/api/admin/users/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmUserId: userId, reason: '管理员内容审核处置' }),
+      });
+    } else if (action === 'restore-user') {
+      await api(`/api/admin/users/${encodeURIComponent(userId)}/restore`, { method: 'POST' });
+    } else if (action === 'delete-submissions') {
+      await api(`/api/admin/users/${encodeURIComponent(userId)}/submissions`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmUserId: userId, reason: '管理员批量下线投稿' }),
+      });
+    }
+    if (action === 'approve' || action === 'disable-user' || action === 'delete-submissions') {
+      await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+      updateListTitle();
+      renderList();
+      renderSidebar();
+    }
+    await loadModeration({ force: true });
+    toast('审核操作已完成');
+  } catch (err) {
+    toast('审核操作失败: ' + err.message, 5000);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderDashboardTabs() {
   const requestedTab = normalizeDashboardTab(state.dashboardTab);
-  const tab = !isAdmin() && requestedTab === 'sources'
+  const tab = !isAdmin() && ['sources', 'moderation'].includes(requestedTab)
     ? 'profile'
     : requestedTab;
   state.dashboardTab = tab;
@@ -6588,18 +6757,20 @@ function renderDashboardTabs() {
   $('#dashboard-reading-panel')?.classList.toggle('hidden', tab !== 'reading');
   $('#dashboard-contributions-panel')?.classList.toggle('hidden', tab !== 'contributions');
   $('#dashboard-security-panel')?.classList.toggle('hidden', tab !== 'security');
+  $('#dashboard-moderation-panel')?.classList.toggle('hidden', tab !== 'moderation' || !isAdmin());
   $('#dashboard-sources-panel')?.classList.toggle('hidden', tab !== 'sources' || !isAdmin());
   if (tab === 'reading') {
     mountAiConfigPanel('dashboard');
     renderAiSettings();
   }
+  if (tab === 'moderation' && isAdmin()) loadModeration();
   if (tab === 'sources' && isAdmin()) renderManage('#workspace-manage-list', '#workspace-source-status');
   renderMyPublicProfileActions();
 }
 
 function setDashboardTab(tab = 'profile', { push = false, persist = true } = {}) {
   const requested = normalizeDashboardTab(tab);
-  state.dashboardTab = !isAdmin() && requested === 'sources' ? 'profile' : requested;
+  state.dashboardTab = !isAdmin() && ['sources', 'moderation'].includes(requested) ? 'profile' : requested;
   if (persist) storage.setItem('qm_dashboard_tab', state.dashboardTab);
   renderDashboardTabs();
   if (push && state.workspacePage === 'dashboard') {
@@ -9898,6 +10069,11 @@ $$('#my-dashboard-page [data-my-asset-sort]').forEach(btn => {
 $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
   btn.onclick = () => setDashboardTab(btn.dataset.dashboardTab, { push: true });
 });
+$('#moderation-refresh').onclick = () => loadModeration({ force: true });
+$('#dashboard-moderation-panel').onclick = (e) => {
+  const button = e.target.closest('[data-moderation-action]');
+  if (button) handleModerationAction(button);
+};
 $('#my-comments-list').onclick = (e) => {
   const open = e.target.closest('[data-my-asset-open]');
   if (open) {

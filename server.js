@@ -5,9 +5,11 @@ const { fork } = require('child_process');
 const compression = require('compression');
 const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
+const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 
 const app = express();
+app.disable('x-powered-by');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
 const SITE_URL = (() => {
@@ -38,6 +40,11 @@ const AUTO_REWRITE_SOURCE_IDS = new Set(String(process.env.AUTO_REWRITE_SOURCE_I
 const SESSION_COOKIE = 'namoo_session';
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const INDEX_PATH = path.join(__dirname, 'public', 'index.html');
+const DOMPURIFY_PATH = require.resolve('dompurify/dist/purify.min.js');
+const DOMPURIFY_VERSION = JSON.parse(fs.readFileSync(
+  path.join(path.dirname(require.resolve('dompurify')), '..', 'package.json'),
+  'utf8',
+)).version;
 const REFRESH_WORKER_PATH = path.join(__dirname, 'scripts', 'refresh-worker.js');
 const DEFAULT_TITLE = 'Namoo Reader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。';
@@ -76,6 +83,24 @@ app.set('trust proxy', 1);
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (String(req.get('sec-fetch-site') || '').toLowerCase() === 'cross-site') {
+    return res.status(403).json({ error: '拒绝跨站操作' });
+  }
+  const origin = String(req.get('origin') || '').trim();
+  if (!origin) return next();
+  try {
+    if (new URL(origin).host !== req.get('host')) return res.status(403).json({ error: '拒绝跨站操作' });
+  } catch {
+    return res.status(403).json({ error: '请求来源无效' });
+  }
+  return next();
+});
+app.use((req, res, next) => {
   try {
     req.user = store.getUserBySessionToken(cookieValue(req, SESSION_COOKIE));
   } catch (error) {
@@ -99,6 +124,64 @@ let autoRewriteLast = null;
 const sourceInteractionRefreshAt = new Map();
 const faviconCache = new Map();
 const FAVICON_MAX_BYTES = 256 * 1024;
+const RATE_LIMIT_MAX_BUCKETS = 2048;
+
+function createRateLimiter({ windowMs, max, message, key: keyForRequest = null }) {
+  const buckets = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = String(typeof keyForRequest === 'function'
+      ? keyForRequest(req)
+      : (req.ip || req.socket.remoteAddress || 'unknown'));
+    let bucket = buckets.get(key);
+    if (!bucket || now - bucket.startedAt >= windowMs) {
+      if (!bucket && buckets.size >= RATE_LIMIT_MAX_BUCKETS) {
+        buckets.delete(buckets.keys().next().value);
+      }
+      bucket = { startedAt: now, count: 0 };
+      buckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    if (bucket.count <= max) return next();
+    const retryAfter = Math.max(1, Math.ceil((bucket.startedAt + windowMs - now) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: message || '请求过于频繁，请稍后再试' });
+  };
+}
+
+const registerRateLimit = createRateLimiter({
+  windowMs: HOUR_MS,
+  max: 5,
+  message: '该网络注册账号过于频繁，请稍后再试',
+});
+const loginRateLimit = createRateLimiter({
+  windowMs: 15 * MINUTE_MS,
+  max: 30,
+  message: '登录尝试过于频繁，请稍后再试',
+});
+const submissionHourlyRateLimit = createRateLimiter({
+  windowMs: HOUR_MS,
+  max: 6,
+  message: '投稿过于频繁，请稍后再试',
+  key: req => req.user && req.user.id || req.ip || req.socket.remoteAddress,
+});
+const submissionDailyRateLimit = createRateLimiter({
+  windowMs: 24 * HOUR_MS,
+  max: 20,
+  message: '今日投稿次数已达上限，请明天再试',
+  key: req => req.user && req.user.id || req.ip || req.socket.remoteAddress,
+});
+const originalContentRateLimit = createRateLimiter({
+  windowMs: 10 * MINUTE_MS,
+  max: 20,
+  message: '原文抓取请求过于频繁，请稍后再试',
+  key: req => req.user && req.user.id || req.ip || req.socket.remoteAddress,
+});
+const faviconRateLimit = createRateLimiter({
+  windowMs: MINUTE_MS,
+  max: 120,
+  message: '图标请求过于频繁，请稍后再试',
+});
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => HTML_ESCAPES[char]);
@@ -1531,6 +1614,7 @@ function renderIndex(req, entry = null) {
   const { title, tags } = socialMetaTags(req, entry);
   const umami = umamiScriptTag();
   return INDEX_TEMPLATE
+    .replace(/src="\/purify\.min\.js(?:\?v=[^"]*)?"/, `src="/purify.min.js?v=${escapeHtml(DOMPURIFY_VERSION)}"`)
     .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
     .replace('</head>', `  ${tags}${umami ? `\n  ${umami}` : ''}\n</head>`);
@@ -1599,6 +1683,14 @@ function umamiScriptTag() {
   return `<script defer src="${escapeHtml(src)}" data-website-id="${escapeHtml(UMAMI_WEBSITE_ID)}" data-domains="${escapeHtml(SITE_HOSTNAME)}"></script>`;
 }
 
+app.get('/purify.min.js', (req, res) => {
+  const versioned = String(req.query.v || '') === DOMPURIFY_VERSION;
+  res.setHeader('Cache-Control', versioned
+    ? 'public, max-age=31536000, immutable'
+    : 'public, max-age=0, must-revalidate');
+  res.type('application/javascript').sendFile(DOMPURIFY_PATH);
+});
+
 app.get('/', (req, res) => {
   const entryId = String(req.query.entry || '').trim();
   const entry = entryId ? fetcher.getEntryById(entryId) : null;
@@ -1650,7 +1742,7 @@ app.get('/favicon.ico', (req, res) => {
   res.redirect(302, '/favicon.svg');
 });
 
-app.get('/favicons', async (req, res) => {
+app.get('/favicons', faviconRateLimit, async (req, res) => {
   const target = normalizeFaviconTarget(req.query.domain_url);
   const size = Math.max(16, Math.min(parseInt(req.query.sz || '64', 10) || 64, 128));
   if (!target) {
@@ -1816,22 +1908,6 @@ function siteAiMetadata() {
     temperature: config.temperature,
     maxTokens: config.maxTokens,
   };
-}
-
-function requestAiConfig(req) {
-  const apiKey = String(req.get('x-ai-key') || req.get('x-deepseek-key') || '').trim();
-  const provider = String(req.get('x-ai-provider') || '').trim();
-  const providerType = String(req.get('x-ai-provider-type') || '').trim();
-  const config = {};
-  if (apiKey) config.apiKey = apiKey;
-  if (provider || apiKey) config.provider = provider || 'deepseek';
-  if (String(req.get('x-ai-provider-name') || '').trim()) config.providerName = String(req.get('x-ai-provider-name')).trim();
-  if (providerType || apiKey) config.providerType = providerType || 'openai_compatible';
-  if (String(req.get('x-ai-base-url') || '').trim()) config.baseUrl = String(req.get('x-ai-base-url')).trim();
-  if (String(req.get('x-ai-model') || '').trim()) config.model = String(req.get('x-ai-model')).trim();
-  if (String(req.get('x-ai-temperature') || '').trim()) config.temperature = String(req.get('x-ai-temperature')).trim();
-  if (String(req.get('x-ai-max-tokens') || '').trim()) config.maxTokens = String(req.get('x-ai-max-tokens')).trim();
-  return config;
 }
 
 function requestAuthor(req) {
@@ -2582,7 +2658,7 @@ app.post('/api/me/notifications/read', requireLogin, (req, res) => {
   res.json({ ok: true, changed, user });
 });
 
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', registerRateLimit, (req, res) => {
   try {
     const user = store.createUser({
       email: req.body && req.body.email,
@@ -2597,7 +2673,7 @@ app.post('/api/auth/register', (req, res) => {
   }
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', loginRateLimit, (req, res) => {
   try {
     const user = store.authenticateUser(req.body && req.body.email, req.body && req.body.password);
     const session = store.createSession(user.id, SESSION_TTL_MS);
@@ -2647,6 +2723,111 @@ app.get('/api/contributors', (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   const sort = normalizeContributorSort(req.query.sort);
   res.json({ contributors: store.getContributors({ limit, sort }), sort });
+});
+
+app.get('/api/admin/submission-requests', requireAdmin, (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending').trim();
+    const limit = Math.max(1, Math.min(500, Number.parseInt(req.query.limit, 10) || 200));
+    res.json({ requests: store.getSubmissionRequests({ status, limit }), status });
+  } catch (e) {
+    sendError(res, e, 'submission requests failed');
+  }
+});
+
+app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    const result = await fetcher.approveSubmissionRequest(req.params.id, {
+      adminUserId: req.user.id,
+    });
+    if (result.entry) {
+      await translateSubmittedTitle(result.entry);
+      queueSubmittedRewrite(result.entry);
+    }
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    sendError(res, e, 'approve submission request failed');
+  }
+});
+
+app.post('/api/admin/submission-requests/:id/reject', requireAdmin, (req, res) => {
+  try {
+    const request = fetcher.rejectSubmissionRequest(req.params.id, {
+      adminUserId: req.user.id,
+      reason: String(req.body && req.body.reason || '').trim(),
+    });
+    res.json({ ok: true, request });
+  } catch (e) {
+    sendError(res, e, 'reject submission request failed');
+  }
+});
+
+app.get('/api/admin/submission-users', requireAdmin, (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(500, Number.parseInt(req.query.limit, 10) || 200));
+    res.json({ users: store.getAdminSubmissionUsers({ q: req.query.q, limit }) });
+  } catch (e) {
+    sendError(res, e, 'submission users failed');
+  }
+});
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(1000, Number.parseInt(req.query.limit, 10) || 500));
+    res.json({ users: store.getAdminUsers({ q: req.query.q, limit }) });
+  } catch (e) {
+    sendError(res, e, 'admin users failed');
+  }
+});
+
+app.get('/api/admin/users/:id/submissions', requireAdmin, (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(1000, Number.parseInt(req.query.limit, 10) || 500));
+    res.json(store.getAdminUserSubmissions(req.params.id, { limit }));
+  } catch (e) {
+    sendError(res, e, 'user submissions failed');
+  }
+});
+
+app.delete('/api/admin/users/:id/submissions', requireAdmin, (req, res) => {
+  try {
+    const confirmUserId = String(req.body && req.body.confirmUserId || '').trim();
+    if (confirmUserId !== String(req.params.id || '').trim()) {
+      return res.status(400).json({ error: 'confirmUserId does not match' });
+    }
+    const result = fetcher.deleteUserSubmissions(req.params.id, {
+      deletedBy: req.user.id,
+      reason: String(req.body && req.body.reason || '').trim(),
+    });
+    res.json({ ok: true, result });
+  } catch (e) {
+    sendError(res, e, 'delete user submissions failed');
+  }
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  try {
+    const confirmUserId = String(req.body && req.body.confirmUserId || '').trim();
+    if (confirmUserId !== String(req.params.id || '').trim()) {
+      return res.status(400).json({ error: 'confirmUserId does not match' });
+    }
+    const result = fetcher.moderateUser(req.params.id, {
+      adminUserId: req.user.id,
+      reason: String(req.body && req.body.reason || '').trim(),
+    });
+    res.json({ ok: true, result });
+  } catch (e) {
+    sendError(res, e, 'disable user failed');
+  }
+});
+
+app.post('/api/admin/users/:id/restore', requireAdmin, (req, res) => {
+  try {
+    const user = store.restoreModeratedUser(req.params.id, { adminUserId: req.user.id });
+    res.json({ ok: true, user });
+  } catch (e) {
+    sendError(res, e, 'restore user failed');
+  }
 });
 
 app.get('/api/contributors/:id', (req, res) => {
@@ -2812,23 +2993,19 @@ app.post('/api/entry/:id/reaction', requireLogin, (req, res) => {
   }
 });
 
-app.post('/api/submit-link', async (req, res) => {
+app.post('/api/submit-link', requireLogin, submissionHourlyRateLimit, submissionDailyRateLimit, async (req, res) => {
   const url = String((req.body && req.body.url) || '').trim();
   const note = String((req.body && req.body.note) || '').trim();
   if (!url) return res.status(400).json({ error: '请填写要提交的链接' });
   try {
-    const submitter = req.user || {};
-    const submitted = await fetcher.submitLink(url, submitter, { note });
-    await translateSubmittedTitle(submitted);
-    queueSubmittedRewrite(submitted);
-    const entry = fetcher.getEntryById(submitted.id, req.user || null) || submitted;
-    res.json({ entry });
+    const request = await fetcher.queueSubmittedLink(url, req.user, { note });
+    res.status(202).json({ pending: true, request });
   } catch (e) {
     sendError(res, e, 'submit link failed');
   }
 });
 
-app.post('/api/entry/:id/content', async (req, res) => {
+app.post('/api/entry/:id/content', originalContentRateLimit, async (req, res) => {
   const entry = fetcher.getEntryById(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {

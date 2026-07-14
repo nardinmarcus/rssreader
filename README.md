@@ -13,6 +13,7 @@ Namoo Reader 是大月 Namoo 的个人 RSS 阅读与创作工作台。它把 AI 
 - 阅读原文，生成中文翻译，在文章上下文里和 AI 对话。
 - 生成 Namoo 创作草稿，保留事实和原始链接，并标出需要本人补充的体验、判断和情绪。
 - 给信息源设置标签、编辑优先级、启用状态和侧边栏顺序。
+- 登录用户可以提交文章链接；链接先进入隔离审核队列，管理员批准后才会联网抓取并公开。
 - 把翻译、创作草稿、点评、划线和文章对话沉淀为可分享的公开资产。
 
 ![信息源与文章列表](docs/assets/namoo-reader-article-list.png)
@@ -100,6 +101,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 | `NEWS_REFRESH_INTERVAL_MS` | `1800000` | 资讯默认刷新间隔 |
 | `ARTICLE_REFRESH_INTERVAL_MS` | `7200000` | 文章默认刷新间隔 |
 | `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | 播客默认刷新间隔 |
+| `FETCH_SOURCE_CONCURRENCY` | `6` | 后台批量抓取并发数，范围为 1–8 |
 | `AUTO_REWRITE_SOURCE_IDS` | 空 | 限定自动生成草稿的信息源 |
 | `UMAMI_SRC` | 空 | 可选 Umami 脚本地址 |
 | `UMAMI_WEBSITE_ID` | 空 | 可选 Umami 站点 ID |
@@ -132,6 +134,8 @@ Compose 只运行一个 `namoo-reader` 容器：
 
 迁移完成后，SQLite 是个人设置的事实来源。`state.json` 只作为旧数据证据保留，不再被写入。
 
+运行时的 JSON 缓存同样只是可重建的磁盘投影。并发刷新会在锁内合并各自变更，文章、来源状态和审核记录仍以 SQLite 为准。
+
 ## API
 
 | 方法 | 路径 | 说明 |
@@ -140,6 +144,10 @@ Compose 只运行一个 `namoo-reader` 容器：
 | `PATCH` | `/api/sources/:id` | 管理员修改启用状态或编辑优先级 |
 | `POST` | `/api/sources/:id/move` | 管理员在同一分类内上移或下移 |
 | `POST` | `/api/refresh` | 登录用户刷新当前源，管理员刷新全部源 |
+| `POST` | `/api/submit-article` | 登录用户提交文章链接，进入隔离审核队列 |
+| `GET` | `/api/admin/submission-requests` | 管理员查看待审核投稿 |
+| `POST` | `/api/admin/submission-requests/:id/approve` | 管理员批准投稿并开始抓取 |
+| `POST` | `/api/admin/submission-requests/:id/reject` | 管理员拒绝投稿，不访问目标地址 |
 | `GET` | `/api/entries?source=&category=&q=&limit=` | 获取文章列表 |
 | `GET` | `/api/entry/:id` | 获取单篇文章 |
 | `GET` | `/api/entry/:id/translation` | 获取中文翻译 |
@@ -172,6 +180,8 @@ NAMOO_READER_DATA_DIR="$(mktemp -d)" \
 
 - 不要把服务器 `.env`、用户 AI key、SQLite、缓存和日志公开。
 - 用户 AI key 从浏览器发送到 Namoo Reader 后端，再由后端请求供应商。
+- 站点默认 AI 只使用服务端配置，忽略浏览器伪造的供应商、模型、密钥和 base URL；只有显式的用户自带密钥请求会采用浏览器配置。
+- 投稿链接在管理员批准前不会发起 DNS、HTTP 或 AI 请求；批准后的抓取仍会拒绝 localhost、私有网段、危险重定向和超限响应体。
 - 公开翻译、创作草稿、点评、划线和文章对话可能进入公开资产页，不要写入私密内容。
 - AI base URL 必须使用 HTTPS，并且不能指向 localhost 或私有网段。
 

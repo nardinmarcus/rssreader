@@ -349,6 +349,7 @@
           </div>
           <div id="dashboard-admin-tab-group" class="dashboard-tab-group hidden">
             <span class="dashboard-tab-label">站点管理</span>
+            <button class="dashboard-tab" type="button" data-dashboard-tab="moderation">内容审核</button>
             <button class="dashboard-tab" type="button" data-dashboard-tab="sources">订阅源</button>
           </div>
         </div>
@@ -469,6 +470,34 @@
           <section id="workspace-source-filters" class="source-manage-filters"></section>
           <section id="workspace-manage-list" class="manage-list workspace-manage-list"></section>
         </section>
+        <section id="dashboard-moderation-panel" class="dashboard-panel hidden">
+          <section class="workspace-admin-card">
+            <div class="workspace-section-head">
+              <div>
+                <h2>内容审核</h2>
+                <p>投稿在批准前不会访问目标地址；账号处置会撤销会话并下线其投稿。</p>
+              </div>
+              <button id="moderation-refresh" class="ghost-btn" type="button">刷新</button>
+            </div>
+          </section>
+          <section class="moderation-grid">
+            <div class="workspace-admin-card moderation-card">
+              <div class="moderation-section-head">
+                <h3>待审投稿</h3>
+                <span id="moderation-pending-count" class="moderation-count">0</span>
+              </div>
+              <div id="moderation-pending-list" class="moderation-list"></div>
+            </div>
+            <div class="workspace-admin-card moderation-card">
+              <div class="moderation-section-head">
+                <h3>投稿账号</h3>
+                <span id="moderation-user-count" class="moderation-count">0</span>
+              </div>
+              <div id="moderation-user-list" class="moderation-list"></div>
+            </div>
+          </section>
+          <section id="moderation-user-detail" class="workspace-admin-card moderation-card hidden"></section>
+        </section>
       </section>
       <section id="contributor-page" class="workspace-page contributor-page hidden">
         <header class="workspace-page-head">
@@ -578,7 +607,7 @@
       <header>
         <div>
           <h2>提交链接</h2>
-          <p>进入读者提交源，支持点赞、点评和 AI 处理。</p>
+          <p>先进入审核队列；通过后才会抓取、公开并参与 AI 处理。</p>
         </div>
         <button id="submit-link-close" class="icon-btn" aria-label="关闭提交链接"><span data-qm-icon="x"></span></button>
       </header>

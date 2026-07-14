@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const dns = require('node:dns').promises;
 const fs = require('fs');
-const http = require('http');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
 
 const dataDir = createTempDataDir();
@@ -9,6 +9,15 @@ process.env.NAMOO_READER_DATA_DIR = dataDir;
 const store = require('../lib/store');
 const fetcher = require('../lib/fetcher');
 const { normalizeFeedAuthor, structuredDatePublished } = fetcher;
+
+function stubPublicDns(hostnames) {
+  const originalLookup = dns.lookup;
+  const allowed = new Set(hostnames);
+  dns.lookup = async (hostname, options) => allowed.has(hostname)
+    ? [{ address: '93.184.216.34', family: 4 }]
+    : originalLookup(hostname, options);
+  return () => { dns.lookup = originalLookup; };
+}
 
 test.after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
@@ -62,6 +71,7 @@ test('TLDR original fetch preserves every newsletter article in page order', asy
     content: '',
   };
   store.upsertEntries([entry]);
+  const restoreDns = stubPublicDns(['tldr.tech']);
 
   const html = `<!doctype html><html><body>
     <div class="content-center max-w-xl mt-5">
@@ -94,6 +104,7 @@ test('TLDR original fetch preserves every newsletter article in page order', asy
     assert.equal(updated.originalFetchedAt > 0, true);
     assert.equal(store.getEntry(entry.id).content, updated.content);
   } finally {
+    restoreDns();
     globalThis.fetch = originalFetch;
   }
 });
@@ -104,18 +115,13 @@ test('metadata-only sources auto-hydrate at most one newest article per refresh'
       <item><title>Newest metadata-only issue</title><link>https://tldr.tech/ai/2026-07-13</link><guid>auto-hydrate-newest</guid><pubDate>Mon, 13 Jul 2026 08:00:00 GMT</pubDate></item>
       <item><title>Older metadata-only issue</title><link>https://tldr.tech/ai/2026-07-12</link><guid>auto-hydrate-older</guid><pubDate>Sun, 12 Jul 2026 08:00:00 GMT</pubDate></item>
     </channel></rss>`;
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/rss+xml' });
-    res.end(feed);
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  const feedUrl = `http://127.0.0.1:${address.port}/feed.xml`;
+  const feedUrl = 'https://feeds.example/tldr.xml';
   const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['feeds.example', 'tldr.tech']);
   const articleRequests = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
-    if (url === feedUrl) return originalFetch(input, init);
+    if (url === feedUrl) return new Response(feed, { status: 200, headers: { 'content-type': 'application/rss+xml' } });
     articleRequests.push(url);
     return new Response(`<!doctype html><div class="content-center max-w-xl mt-5"><section><h2>Headlines</h2><article><h3>Recovered article</h3><p>This original page contains enough editorial detail to qualify as useful article content and prove that controlled hydration persisted the newest metadata-only entry.</p></article></section></div>`, { status: 200 });
   };
@@ -135,8 +141,8 @@ test('metadata-only sources auto-hydrate at most one newest article per refresh'
     assert.match(newest.content, /Recovered article/);
     assert.equal(older.content, '');
   } finally {
+    restoreDns();
     globalThis.fetch = originalFetch;
-    await new Promise(resolve => server.close(resolve));
   }
 });
 
@@ -145,17 +151,13 @@ test('failed automatic hydration observes the retry cooldown', async () => {
     <rss version="2.0"><channel><title>OpenAI test</title>
       <item><title>Cooldown metadata-only issue</title><link>https://example.com/auto-hydrate-cooldown</link><guid>auto-hydrate-cooldown</guid><pubDate>Mon, 13 Jul 2026 08:00:00 GMT</pubDate></item>
     </channel></rss>`;
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/rss+xml' });
-    res.end(feed);
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const feedUrl = `http://127.0.0.1:${server.address().port}/feed.xml`;
+  const feedUrl = 'https://feeds.example/openai.xml';
   const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['feeds.example', 'example.com']);
   const originalWarn = console.warn;
   let articleRequests = 0;
   globalThis.fetch = async (input, init) => {
-    if (String(input) === feedUrl) return originalFetch(input, init);
+    if (String(input) === feedUrl) return new Response(feed, { status: 200, headers: { 'content-type': 'application/rss+xml' } });
     articleRequests += 1;
     throw new Error('synthetic upstream failure');
   };
@@ -168,9 +170,9 @@ test('failed automatic hydration observes the retry cooldown', async () => {
     assert.equal(articleRequests, 1);
     assert.match(second.entries[0].originalFetchError, /synthetic upstream failure/);
   } finally {
+    restoreDns();
     globalThis.fetch = originalFetch;
     console.warn = originalWarn;
-    await new Promise(resolve => server.close(resolve));
   }
 });
 
