@@ -567,12 +567,21 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - [x] Reproduce the authenticated production click and capture the resulting tab, panel, and URL.
 - [x] Trace the deployed HTML and JavaScript versions to the exact fallback branch.
 - [x] Add a failing regression guard and invalidate the stale application script cache.
-- [ ] Run focused and full tests, deploy the exact commit, and verify the moderation panel in the authenticated production browser.
+- [x] Run focused and full tests, deploy the exact commit, and verify the moderation panel in the authenticated production browser.
 
 ## Verification contract
 
 1. Cache identity -> verify: the version in the `app.js` URL equals a deterministic hash of the shipped script.
 2. Tab behavior -> verify: clicking “内容审核” leaves `moderation` active and shows its panel, including the legitimate empty state when there are no pending submissions.
 3. Production -> verify: a previously stale authenticated browser receives the new script URL and reaches `/me?tab=moderation` without console errors.
+
+## Review
+
+- Root cause: commit `2d15dac` shipped the new moderation markup and JavaScript while retaining `/app.js?v=159`; the server marks versioned static assets immutable for one year, so an existing browser kept the older script whose tab allowlist did not contain `moderation` and normalized the click to `profile`.
+- Replaced the manual numeric version with the shipped script's SHA-256 prefix `ad1abccf67a6` and added a regression test that fails whenever the URL and script content diverge.
+- Passed all 91 automated tests, JavaScript syntax validation, and `git diff --check`.
+- Deployed commit `e851749` to the existing `namoo-reader` container. Production asset identity matches, SQLite `quick_check=ok`, internal and public probes return HTTP 200, and recent error logs are empty.
+- Authenticated production browser verification keeps `moderation` active at `/me?tab=moderation`, shows the moderation panel, reports 0 pending submissions with the explicit empty state, and lists 2 managed accounts.
+- Production backup: `/opt/rssreader-backups/moderation-cache-20260714T100718Z`; rollback image: `rssreader-namoo-reader:rollback-20260714T100718Z`.
 
 ---

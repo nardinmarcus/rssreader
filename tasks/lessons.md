@@ -1,6 +1,7 @@
 # Deployment lessons
 
 - Never ship changed browser JavaScript under an unchanged immutable asset URL. Derive the query version from the shipped file hash and enforce the match in tests so a new HTML shell cannot run against a stale application script.
+- Read the production SQLite filename from the repository's store configuration before running an integrity probe; do not guess a generic database name from the project name.
 - In zsh, enable `null_glob` or test a directory before iterating optional file patterns; one unmatched pattern aborts the whole command even when a later pattern would match.
 - In zsh, `status` is a read-only special parameter; use a descriptive variable such as `merge_exit` when capturing command exit codes in diagnostics.
 - Node 26 stdin scripts cannot mix CommonJS `require()` with top-level `await`; wrap asynchronous deployment probes in an async IIFE so the script has an unambiguous module format before it touches production data.
