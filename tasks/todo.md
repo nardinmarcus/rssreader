@@ -2,6 +2,26 @@
 
 ---
 
+# Versioned structured translation pipeline
+
+## Plan
+
+- [ ] Phase A: establish immutable raw snapshots and versioned article documents behind `shadow` mode.
+- [ ] Phase B: migrate legacy documents and translations without triggering a global regeneration storm.
+- [ ] Phase C: add TranslationInputV2, complete long-form chunking, deterministic resource rendering, and durable jobs.
+- [ ] Phase D: switch API and reader through canary, then complete production rollout with rollback proof.
+
+Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline.md`
+
+## Verification contract
+
+1. Source fidelity -> verify: raw evidence, normalized documents, resource manifests, and source hashes remain reproducible without reading `cache.json`.
+2. Translation completeness -> verify: every translatable segment appears exactly once and no partial long-form result can become current.
+3. Version safety -> verify: source changes mark old translations stale; successful versions switch atomically; history and attribution remain addressable.
+4. Operational recovery -> verify: jobs survive restart, BYOK secrets never persist, and every rollout mode can return to the old read path without data deletion.
+
+---
+
 # Upstream merge assessment
 
 ## Plan
