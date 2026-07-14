@@ -559,3 +559,20 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Browser verification on `https://rss.namooca.com` shows the card as `2025/2/24` with matching `<time datetime="2025-02-24T14:38:00.000Z">`.
 
 ---
+
+# Content moderation tab cache regression
+
+## Plan
+
+- [x] Reproduce the authenticated production click and capture the resulting tab, panel, and URL.
+- [x] Trace the deployed HTML and JavaScript versions to the exact fallback branch.
+- [x] Add a failing regression guard and invalidate the stale application script cache.
+- [ ] Run focused and full tests, deploy the exact commit, and verify the moderation panel in the authenticated production browser.
+
+## Verification contract
+
+1. Cache identity -> verify: the version in the `app.js` URL equals a deterministic hash of the shipped script.
+2. Tab behavior -> verify: clicking “内容审核” leaves `moderation` active and shows its panel, including the legitimate empty state when there are no pending submissions.
+3. Production -> verify: a previously stale authenticated browser receives the new script URL and reaches `/me?tab=moderation` without console errors.
+
+---

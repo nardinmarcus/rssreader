@@ -15,5 +15,5 @@ test('reader exposes a retryable original-content recovery state', () => {
   assert.match(app, /state\.fetchingOriginalIds\.has\(entry\.id\)/);
   assert.match(app, /options\.hasContent === undefined[\s\S]{0,180}entryOriginalTextLength\(entry\) > 0/);
   assert.match(html, /<link rel="stylesheet" href="\/styles\.css\?v=156" \/>/);
-  assert.match(html, /<script src="\/app\.js\?v=159"><\/script>/);
+  assert.match(html, /<script src="\/app\.js\?v=[a-f0-9]{12}"><\/script>/);
 });

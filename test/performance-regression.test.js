@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const crypto = require('crypto');
 const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -10,6 +11,15 @@ const dataDir = createTempDataDir('namoo-reader-performance-');
 process.env.NAMOO_READER_DATA_DIR = dataDir;
 const store = require('../lib/store');
 const projectDir = path.join(__dirname, '..');
+
+test('versioned application script URL matches the shipped content hash', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'));
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const version = html.match(/<script src="\/app\.js\?v=([^"]+)"/);
+
+  assert.ok(version, 'index.html must load a versioned app.js');
+  assert.equal(version[1], crypto.createHash('sha256').update(app).digest('hex').slice(0, 12));
+});
 
 async function freePort() {
   return new Promise((resolve, reject) => {
