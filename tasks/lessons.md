@@ -94,3 +94,5 @@
 - Migration reuse must compare the current semantic projection and compiler versions regardless of provenance; `feed` or `fetched` is evidence type, not proof that the pointer still matches the entry.
 - Long-form chunk size must derive from the persisted provider output-token budget, including per-segment JSON overhead; a fixed character ceiling can still produce deterministic `finish_reason=length` failures.
 - Content that must be preserved exactly, such as code, should bypass the model and be injected locally; asking a probabilistic provider to echo immutable bytes creates avoidable schema failures.
+- When an exact remote archive deployment is sensitive to SSH churn, stream extraction, file-count validation, and destination sync through one connection; after any disconnect, prove the running image and mode are unchanged before retrying.
+- Resource-preservation audits must compare URL occurrences as a multiset, not a set of unique resource IDs; one immutable resource can legitimately appear at multiple AST positions.

@@ -41,7 +41,7 @@
 - [x] Phase A: establish immutable raw snapshots and versioned article documents behind `shadow` mode.
 - [x] Phase B: migrate legacy documents and translations without triggering a global regeneration storm.
 - [x] Phase C: add TranslationInputV2, complete long-form chunking, deterministic resource rendering, and durable jobs.
-- [ ] Phase D: switch API and reader through canary, then complete production rollout with rollback proof.
+- [x] Phase D: switch API and reader through canary, then complete production rollout with rollback proof.
 
 Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline.md`
 
@@ -106,7 +106,7 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 - [x] Re-run both migrations and the verifier against a consistent SQLite backup, never the working database.
 - [x] Validate Compose, rebuild the production image, and smoke-test `/api/me`, schema initialization, SQLite, and Worker presence.
 - [x] Exercise the full local protocol path with a rich four-chunk fixture and a mock provider at the Worker seam.
-- [ ] Complete the real-browser acceptance matrix on the public HTTPS canary after deployment.
+- [x] Complete the real-browser acceptance matrix on the public HTTPS canary after deployment.
 
 ### Task 16 review
 
@@ -114,6 +114,7 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 - A consistent copy of 303 local entries migrated 293 documents, skipped 10 empty entries, verified idempotently, and ended with `quick_check=ok`, zero foreign-key/pointer faults, zero raw orphans, and verifier `ok=true`. The source database was never modified.
 - Image `namoo-reader:versioned-translation-rc` (`sha256:646558760153...`) builds successfully. Isolated smoke confirms `/api/me` exposes only `{user, siteAi}`, all five versioned tables exist, SQLite is healthy, the verifier passes, and the Worker script is present.
 - Protocol acceptance returned `202`, `Location`, the old translation, and progress `0/4`; after four mock-provider chunks it returned schema 2 `fresh`, cleared the active job, and preserved the exact link, image URL, code, list/quote structure, and table. Localhost browser reload was policy-blocked, so the public HTTPS browser pass remains an explicit release gate.
+- Public HTTPS acceptance now passes in both `canary` and `all`: the translated article renders 11 headings, 11 code nodes, 3 tables, 39 links, and 32 images with zero broken images, page errors, or console errors; a missing-translation route also fails safely without browser errors.
 
 ## Audit fixes - authoritative current document identity
 
@@ -134,7 +135,7 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 - [x] RED/GREEN: dual-write post-backfill legacy/BYOK saves into immutable schema-1 versions without changing the legacy response path.
 - [x] Make migration verification compare normalized content, owner, document/source identity, and the contribution asset head before canary cutover.
 - [x] Rerun focused, full-suite, syntax, diff, audit, migration, Docker, and isolated-container acceptance checks.
-- [ ] Complete the public HTTPS browser and production data-path acceptance checks after canary deployment.
+- [x] Complete the public HTTPS browser and production data-path acceptance checks after canary deployment.
 
 ### Final audit review
 
@@ -162,7 +163,7 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 - [x] RED/GREEN: preserve code locally instead of asking the provider to echo immutable bytes.
 - [x] Bump the pipeline identity so old chunk shapes and failed generations cannot be reused under the new policy.
 - [x] Pass focused, full-suite, syntax, diff, secret, and production dependency checks.
-- [ ] Rebuild, push, redeploy, and repeat the five-entry real-provider canary before enabling `all`.
+- [x] Rebuild, push, redeploy, and repeat the five-entry real-provider canary before enabling `all`.
 
 ### Production canary correction review
 
@@ -172,6 +173,14 @@ Detailed plan: `docs/superpowers/plans/2026-07-14-versioned-translation-pipeline
 - The corrected policy reserves output headroom, accounts for JSON overhead, fails an individually oversized translatable segment before provider execution, and injects code locally. The new prompt/validation identity produces a new `pipelineHash`.
 - Focused translation verification passes 71/71; the expanded full suite passes 289/289. Syntax, diff, secret, and production dependency checks pass.
 - Corrected image `namoo-reader:versioned-translation-budget-rc` (`sha256:b19d52384162...`) builds successfully; isolated smoke confirms `/api/me` and the new pipeline hash `0043ce0a57d2...`.
+
+### Production rollout review
+
+- Commit `ae888c0` was pushed with an exact remote-ref match. Production runs image `sha256:911742910873...` from the 139-file commit archive with mode `all` and pipeline hash `0043ce0a57d2...`.
+- The correction rollback point is `/opt/rssreader-backups/versioned-budget-20260714T145950Z` plus image tag `namoo-reader:rollback-budget-20260714T145950Z`; the pre-feature backup remains at `/opt/rssreader-backups/versioned-20260714T143418Z`.
+- The five planned real-provider samples plus one stale-user-pointer remediation sample completed 44/44 durable chunks on the first attempt. A subsequent source-hash invalidation automatically created and completed another 10/10-chunk generation, leaving seven corrected-pipeline jobs and 54/54 chunks succeeded.
+- Final immutable-output audit proves 419/419 segment IDs, 34/34 exact code segments, and 130/130 resource occurrences; the rich sample retains 3 tables. The historical user asset remains addressable as schema 1 with explicit `stale_source` while its new system version is current.
+- Public `/api/me`, `/`, `/assets.xml`, fresh V2 reads, missing reads, and historical asset reads pass. Final maintenance verification reports 973/973 current documents, `quick_check=ok`, zero foreign-key/pointer/snapshot/blob/orphan faults, and no failures.
 
 ---
 
