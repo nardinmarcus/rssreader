@@ -1,5 +1,7 @@
 # Deployment lessons
 
+- In zsh, enable `null_glob` or test a directory before iterating optional file patterns; one unmatched pattern aborts the whole command even when a later pattern would match.
+- In zsh, `status` is a read-only special parameter; use a descriptive variable such as `merge_exit` when capturing command exit codes in diagnostics.
 - Node 26 stdin scripts cannot mix CommonJS `require()` with top-level `await`; wrap asynchronous deployment probes in an async IIFE so the script has an unambiguous module format before it touches production data.
 - Parser regression fixtures must cross the same candidate thresholds as production input. If every sample block is shorter than the extractor minimum, the test can accidentally exercise a whole-page fallback and pass without covering the reported multi-block bug.
 - When a browser API looks slow but the server probe is fast, inspect `requestStart`, same-origin image traffic, and connection protocol before blaming the handler. Under HTTP/1.1, eager favicon/image requests can consume the connection pool; keep non-critical images lazy and low priority, and verify the interaction again in a real browser.
@@ -40,3 +42,10 @@
 - Umami returns HTTP 200 with `{beep: boop}` for filtered bot traffic, so HTTP status alone is not an ingestion proof. Use a normal browser user agent and verify the returned session/visit IDs plus the persisted `website_event` row.
 - Quote shell URLs containing `?` or `&`; otherwise zsh filename generation can prevent a health probe from being sent while later pipeline stages report unrelated JSON errors.
 - When shared bootstrap metadata affects client state, test every authentication entry point (`/api/me`, login, and registration); a passing bootstrap test alone does not prove the state survives login.
+- Rewrite completeness checks must leave headroom for concise, structured drafts: combine a conservative source-length ratio with an absolute floor and structure/refusal checks instead of treating a near-threshold character count as failure.
+- A readiness probe must verify the current response contract as well as the route: `/api/me` returns `{ user, siteAi }`, so checking a guessed `authenticated` field can misclassify a healthy container as unavailable.
+- In SQLite verification snippets, use bound parameters for string predicates instead of nested shell/SQL quotes; double-quoted SQL tokens are identifiers and can turn a harmless integrity check into a false script failure.
+- Runtime dependency probes should load the package's public export instead of assuming `package.json` is exported; packages such as DOMPurify intentionally reject `require('dompurify/package.json')` even when the production dependency is installed correctly.
+- Deployment smoke tests and README API tables must reuse the exact route exercised by automated tests; this project keeps the compatibility endpoint `/api/submit-link`, not a guessed `/api/submit-article` alias.
+- Every remote post-deploy command must establish `/opt/rssreader` explicitly before checking relative files such as `.env`; prefer `cmp -s` for exact secret-file equality so hashes and shell quoting never expose or misread the configuration.
+- In research and recommendation tasks, treat “可以纳入” as a selection decision, not implementation authorization. Wait for an explicit “开始 / 实施 / 部署” before changing the repository or production, and keep implementation and deployment approvals separate.

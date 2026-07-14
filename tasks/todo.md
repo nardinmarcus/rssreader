@@ -2,6 +2,178 @@
 
 ---
 
+# Upstream merge assessment
+
+## Plan
+
+- [x] Fetch all configured remote refs without merging or rebasing.
+- [x] Compare local `main` with the remote default branch at commit and file level.
+- [x] Simulate the merge against the current commit without touching the working tree.
+- [x] Run proportionate checks on both branch tips and state whether it is safe to merge.
+
+## Verification contract
+
+1. Remote state -> verify: fetched refs and ahead/behind counts identify every upstream-only commit.
+2. Merge mechanics -> verify: an isolated merge simulation reports whether conflicts exist.
+3. Behavior -> verify: relevant tests/checks pass against the prospective merged result.
+4. Worktree safety -> verify: the pre-existing `tasks/todo.md` change remains present and no merge is performed.
+
+## Review
+
+- `origin/main` is already aligned with local `main`; the actual upstream is the fork parent `joeseesun/qmreader`, which is not configured as a local remote.
+- Local `main` has 14 unique commits and upstream `main` has 4 unique commits after common ancestor `93193ab`. The upstream range changes 21 files with 4,874 insertions and 528 deletions.
+- The four upstream updates add submission security/content-pipeline hardening, Node 22 character decoding compatibility, pre-fetch submission quarantine/moderation, and fail-closed DeepSeek V4 Flash routing.
+- An isolated three-way merge fails with 47 conflict blocks across `README.md`, `lib/fetcher.js`, `lib/store.js`, `public/app.js`, `public/index.html`, `public/styles.css`, and `server.js`. Several automatically merged files also require semantic review.
+- Both tips are independently healthy: the current Namoo branch passes 37 tests and upstream passes 67 tests under a clean `npm ci`. No combined-tree claim is possible until conflicts are deliberately resolved.
+- Recommendation: integrate the upstream security chain on top of the Namoo architecture rather than accepting upstream files wholesale. Preserve SQLite as source of truth, Namoo branding/configuration, source preferences, original-content recovery, list performance work, and browser-owned custom AI profiles.
+- No merge, rebase, branch switch, remote addition, application-code change, or production change was performed.
+
+## Implementation decision
+
+- Use a capability backport from upstream commits `10ba811`, `2db6d4f`, `7ac96a6`, and `95efab9`; do not merge or cherry-pick their complete trees.
+- Keep the Namoo branch as the architectural base. SQLite remains the article/source source of truth; `cache.json` remains a rebuildable runtime projection only.
+- Keep the single-container boundary. In-memory request rate limits are acceptable for burst control, while durable pending quotas and moderation state live in SQLite.
+- Keep one account workspace. Moderation becomes a My Space tab instead of restoring upstream's separate admin page.
+- AI routing follows credential ownership: requests without a browser-owned key cannot control provider, endpoint, model, temperature, or token limits; BYOK requests may control their own custom provider settings.
+- Implementation and local verification may proceed on a dedicated branch after approval. Push and production deployment require separate gates.
+
+## Implementation plan
+
+### Phase 0 — isolate and baseline
+
+- [x] Configure a read-only `upstream` remote for `joeseesun/qmreader` and pin the reviewed baseline at `95efab9`.
+- [x] Create `codex/backport-upstream-security` from the current `main`; preserve and inventory the existing unstaged `tasks/*.md` changes without staging them into application commits.
+- [x] Record the current 37-test baseline, Node syntax checks, dependency audit, Docker build, SQLite `quick_check`, API response shapes, and list/detail/browser performance timings.
+- [x] Add an upstream-coverage ledger mapping every relevant upstream test and behavior to a local implementation phase so that manual backporting cannot silently omit a cleanly auto-merged change.
+
+### Phase 1 — network and browser security boundary
+
+- [x] Add failing local tests for private/mapped/documentation IP rejection, DNS pinning, redirect revalidation, response byte limits, safe favicon types, declared charset decoding, cross-site write rejection, and baseline security headers.
+- [x] Add the required pinned/direct dependencies (`dompurify`, `iconv-lite`, and `undici`) while preserving Namoo package metadata and the Node 26 container image.
+- [x] Port the public-network fetch primitives into `lib/fetcher.js`: URL shape validation, public DNS resolution, pinned dispatchers, manual redirect handling, total deadlines, bounded response reads, and Node 22-compatible decoding.
+- [x] Port security headers, same-origin write checks, bounded in-memory rate-limit primitives, favicon hardening, and the versioned `/purify.min.js` route into `server.js`.
+- [x] Remove `public/purify.min.js` only after the dependency-backed route passes browser and cache-header verification.
+
+### Phase 2 — additive SQLite moderation model
+
+- [x] Add failing store tests for pending requests, per-user/global quotas, review transitions, disabled-user authentication, session revocation, submission soft deletion, and user restoration.
+- [x] Add the `submission_requests` table and `users.disabled_at/disabled_by/disabled_reason` columns through the existing additive schema path in `lib/store.js`.
+- [x] Port the moderation/query functions while preserving `NAMOO_READER_DATA_DIR`, source preferences, slim entry projections, original-content metadata, and the existing administrator-password bootstrap behavior.
+- [x] Make login/session lookups reject disabled users and ensure disabling an account atomically rejects its pending requests, revokes sessions, and soft-deletes its published submissions.
+- [x] Run the migration twice against a temporary database and a copy of local SQLite; require idempotency, `quick_check=ok`, unchanged article/source counts, and unchanged existing administrator hashes. Production backup/migration remains a deployment gate.
+
+### Phase 3 — quarantined submission workflow
+
+- [x] Add API tests proving anonymous submission returns 401, authenticated submission returns 202, and no DNS/HTTP request occurs before approval.
+- [x] Backport queue/approve/reject behavior into `lib/fetcher.js`; only administrator approval may call the hardened fetch path and persist a public entry.
+- [x] Add the admin submission/user endpoints to `server.js`, including explicit confirmation for destructive moderation actions.
+- [x] Apply the upstream limits: 6 submissions/hour and 20/day per user, at most 3 pending per user, and at most 500 pending globally; keep durable quotas in SQLite.
+- [x] Verify duplicate submission idempotency, approval/rejection transitions, private/redirected URL rejection, failed approvals remaining safely retryable, and disabled-user behavior.
+
+### Phase 4 — fetch, cache, and content-pipeline hardening
+
+- [x] Port bounded refresh concurrency, source-failure persistence, hardened RSS parsing, retry deadlines, and atomic cache-write locking from `lib/fetcher.js` and `lib/background-jobs.js`; keep the local worker's required `fetchOnly` CLI behavior.
+- [x] Adapt cache locking to protect only the runtime projection; retain SQLite-backed `getEntries()`, `getEntryById()`, source counts, source preferences, and the content-free list projection.
+- [x] Preserve the local TLDR multi-article extractor, metadata-only source hydration, `original_fetched_at` overwrite protection, actual publication-date preference, and 500,000-character detail bound.
+- [ ] Port the full upstream structured translation/resource-preservation/hash-invalidation pipeline. This is intentionally deferred; retry, finish-reason, refusal, short-output, and persistence guards are complete.
+- [x] Run upstream fetch/translation/background-job tests together with local source-truth, performance, publication-date, and original-content regressions.
+
+### Phase 5 — AI credential ownership and DeepSeek lock
+
+- [x] Add `lib/request-ai-config.js` with one ownership seam: no browser key returns no caller overrides; a browser-owned key may carry caller-owned provider configuration.
+- [x] Route model discovery, connection tests, translation, Namoo drafts, chat, and streaming through that seam; background jobs continue to use server environment configuration directly.
+- [x] For server-owned DeepSeek and BYOK profiles identified as DeepSeek, allow only the official DeepSeek origin and `deepseek-v4-flash`; reject legacy models and alternate endpoints before any outbound request.
+- [x] Preserve BYOK custom OpenAI-compatible providers, including their caller-owned endpoint/model/tuning, subject to the existing public-HTTPS boundary.
+- [x] Update the browser's official DeepSeek preset to expose only V4 Flash. Site-AI requests send no `X-AI-*` routing/tuning headers; BYOK profiles continue sending their complete owned configuration.
+- [x] Verify that malicious headers cannot redirect a server-funded call, custom BYOK remains caller-owned, no browser key is persisted server-side, and server AI metadata never exposes its secret.
+
+### Phase 6 — My Space moderation UI and brand-safe integration
+
+- [x] Add a `moderation` dashboard tab visible only to administrators, implemented inside the existing My Space workspace.
+- [x] Add pending-review, user-submission, disable, restore, and approval/rejection UI using the new APIs; lazy-load the moderation data only when that tab is active.
+- [x] Preserve `/me?tab=sources`, source CRUD/archive/priority/drag ordering, `/admin` compatibility, browser history behavior, the original-content recovery state, and mobile account access.
+- [x] Port only the moderation-specific CSS. Do not restore upstream's `admin-page`, source-management modal, old sidebar controls, or QMReader layout.
+- [x] Audit runtime copy, metadata, package fields, README, icons, domains, analytics defaults, and prompts. Remaining old names are limited to the disabled upstream source, compatibility database filename, and attribution text.
+
+### Phase 7 — combined acceptance
+
+- [x] Run clean `npm ci`, the full combined test suite, `node --check` for server/workers/store/fetcher/AI/frontend, `git diff --check`, and the production dependency audit.
+- [x] Build the exact Docker image and validate Compose using a temporary secret-free `.env`; verify the worker script exists inside the image.
+- [x] Re-run the SQLite source-of-truth test with an empty cache and a populated database, plus source-preference, administrator-password-restart, list-projection, detail-bound, and TLDR recovery regressions.
+- [x] Run the list-projection/performance regression and real-browser moderation path; no full article content returned to list queries and no interaction regression was observed.
+- [x] Browser-test registration/login submission, zero-fetch pending quarantine, admin approval, disable/restore, My Space routing, and back/forward navigation; API regressions cover site AI, BYOK, source management, and article recovery.
+- [x] Review every one of the 21 upstream-changed files against the coverage ledger; no automatically merged file is accepted without explicit semantic review.
+
+### Phase 8 — review, rollout, and rollback gate
+
+- [x] Present the final diff, test evidence, migration proof, unresolved trade-offs, and proposed commit scope for approval before push or deployment.
+- [x] After explicit deployment approval, back up the production SQLite database and environment, record the old image, deploy the verified application payload, and run internal plus public smoke tests.
+- [ ] Use a disposable account and harmless public article for a live moderation mutation. Deliberately skipped to avoid leaving synthetic production users/content; the exact flow passed local HTTP and browser E2E tests.
+- [x] Re-check SQLite integrity, entry/source counts, public performance, `/api/me`, source management, article detail, and site-AI metadata after container restart. BYOK ownership remains covered by the 91-test suite without transmitting a real user key.
+- [x] Prepare a rollback image and consistent database/environment backup. Rollback was not invoked because every post-deploy gate passed.
+
+## Implementation review
+
+- Backported the upstream security/reliability capabilities onto the Namoo branch without a tree merge: quarantined submissions, moderation, public-network hardening, browser security headers, bounded refresh concurrency, projection-safe cache writes, AI credential ownership, and DeepSeek V4 Flash locking.
+- Preserved SQLite as the source of truth, the single-container boundary, Namoo branding/prompts, My Space, source management, TLDR recovery, content-free list projections, and browser-owned custom AI providers.
+- Clean install and host tests pass 91/91; the same 91 tests pass against the exact production image after injecting only the test directory. Production dependency audit reports zero vulnerabilities.
+- Docker image `namoo-reader:upstream-backport` builds successfully, contains the refresh worker, serves `/api/me` with HTTP 200, and creates a database with `PRAGMA quick_check = ok`. Compose validation passes with a temporary secret-free `.env`.
+- A copied local SQLite database survives two schema initializations with unchanged entry, source-preference, user, and administrator-hash snapshots; the copy remains `quick_check = ok`.
+- Real-browser verification proved pending submission makes zero outbound requests, approval makes exactly one fetch and public entry, disabling removes the entry and revokes access, restoring does not republish it, My Space history works, and the console remains clean.
+- Deliberately deferred: the upstream full structured-translation block coverage, HTML resource preservation/sanitization, targeted completion, and stale-hash invalidation pipeline. The independent retry, finish-reason, refusal, short-output, and persistence guards are included and tested.
+- Committed and pushed the implementation as `2d15dac`, followed by README route correction `56045f1`, on `origin/codex/backport-upstream-security`.
+- Production backup: `/opt/rssreader-backups/upstream-security-20260714T093759Z`; rollback image: `rssreader-namoo-reader:rollback-20260714T093759Z`.
+- Deployed the commit-derived application tree to `/opt/rssreader`, rebuilt and recreated `namoo-reader`, and preserved `.env` byte-for-byte.
+- Post-deploy proof: `/api/me`, sources, entries, DOMPurify, and homepage return 200; cross-site logout returns 403; anonymous `/api/submit-link` returns 401; SQLite remains 938 entries, 2 users, 1 administrator, and `quick_check=ok`; recent error lines are zero.
+- Production browser proof: Namoo branding is fully visible, 100 entry cards render, no old static Purify script loads, and the console has no warning/error entries.
+
+## Proposed reviewable commit boundaries
+
+1. `fix(security): harden public fetch and request boundaries`
+2. `feat(moderation): quarantine and review reader submissions`
+3. `fix(pipeline): backport fetch and translation reliability`
+4. `fix(ai): isolate server-funded routing from BYOK configuration`
+5. `feat(ui): add moderation to the Namoo workspace`
+6. `test(docs): verify and document the upstream backport`
+
+## Implementation verification contract
+
+1. Data authority -> verify: populated SQLite with an empty cache returns the same entries, counts, preferences, and detail content.
+2. Submission safety -> verify: pending submissions perform zero DNS/HTTP work; approval alone can fetch and publish through the hardened network boundary.
+3. Account safety -> verify: disabled accounts cannot authenticate, existing sessions are revoked, administrators cannot disable themselves, and restoration is explicit.
+4. AI ownership -> verify: server-funded calls ignore every caller routing/tuning header; BYOK custom providers retain only their caller-owned configuration.
+5. Product continuity -> verify: Namoo branding, My Space, source management, original-content recovery, draft prompts, and performance remain unchanged except for the approved moderation additions.
+6. Release safety -> verify: migration, full tests, Docker/browser checks, production backup, live smoke tests, and rollback evidence all pass before completion.
+
+---
+
+# Recent 24-hour article volume diagnosis
+
+## Plan
+
+- [x] Establish the exact production query semantics: distinguish ingestion time from upstream publication time and list/UI limits.
+- [x] Count production entries created in the last 24 hours, grouped by source, and compare their upstream publication dates.
+- [x] Inspect each enabled source's persisted refresh state, recent worker logs, and scheduler policy for failures or skipped runs.
+- [x] Trace the list API and client-side filters to determine whether the observed 20–30 items are a presentation limit rather than missing data.
+- [x] State one evidence-backed explanation, with a source-by-source exception list and no code/data changes.
+
+## Verification contract
+
+1. Database -> verify: the live SQLite query returns the exact 24-hour count and per-source breakdown.
+2. Fetch health -> verify: source refresh timestamps/statuses and service logs identify failed, stale, or normally quiet sources.
+3. UI -> verify: API parameters and visible filters explain the observed list size and source mix.
+4. Conclusion -> verify: one cause accounts for every reported symptom; deviations are explicitly enumerated.
+
+## Review
+
+- Root cause: there is no cross-source refresh outage. The public list orders entries by upstream `published_ts`, and in the verified 24-hour window Hacker News supplied 38 of the 52 upstream-recent entries. Its high-frequency 5-minute policy and inherently high publishing volume dominate 45 enabled sources that are mostly weekly/monthly blogs and newsletters.
+- Production SQLite is the source of truth: from 2026-07-12T18:09:52Z to 2026-07-13T18:09:52Z, 108 rows were newly ingested but only 52 had an upstream publication timestamp in that window. The 56-row difference is normal delayed/backfill ingestion: Hugging Face Papers 14, GitHub Trending 11 (no source publication time), Dan Koe 10, plus older items from several sources.
+- Current-public list verification: `/api/entries?limit=100` returns 100 items, 81 from Hacker News. It is not a 20–30 item client cap; the client starts at 100 and can load up to 400. The user-facing perception is driven by sort order and the 52 truly recent upstream publications.
+- Fetch health: all 45 enabled sources report `ok` with no current error; SQLite `quick_check` returns `ok`. The production container restarted three hours before the check with startup full refresh intentionally disabled, but freshness sweeps continued and persisted HN rows through 2026-07-13T17:34:54Z. The current logs contain no refresh failures, though successful per-source refreshes are not logged in enough detail for long-term operational auditing.
+- No application code or production data was changed. A future product decision, not a bug fix, would be to cap/down-rank Hacker News in the mixed feed or introduce a curated/all-source view; that changes editorial behavior and requires approval.
+
+---
+
 # Missing article content diagnosis
 
 ## Plan
