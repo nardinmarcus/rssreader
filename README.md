@@ -144,7 +144,7 @@ Compose 只运行一个 `namoo-reader` 容器：
 | `PATCH` | `/api/sources/:id` | 管理员修改启用状态或编辑优先级 |
 | `POST` | `/api/sources/:id/move` | 管理员在同一分类内上移或下移 |
 | `POST` | `/api/refresh` | 登录用户刷新当前源，管理员刷新全部源 |
-| `POST` | `/api/submit-article` | 登录用户提交文章链接，进入隔离审核队列 |
+| `POST` | `/api/submit-link` | 登录用户提交文章链接，进入隔离审核队列 |
 | `GET` | `/api/admin/submission-requests` | 管理员查看待审核投稿 |
 | `POST` | `/api/admin/submission-requests/:id/approve` | 管理员批准投稿并开始抓取 |
 | `POST` | `/api/admin/submission-requests/:id/reject` | 管理员拒绝投稿，不访问目标地址 |
