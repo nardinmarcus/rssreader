@@ -20,6 +20,17 @@ test('Onepage reader UI keeps preview and publication as separate actions', () =
   assert.match(app, /pane\.scrollTop > target.*pane\.scrollTop = target/s);
 });
 
+test('published Onepages expose native sharing with a copy-link fallback', () => {
+  assert.match(html, /id="onepage-copy"[^>]*title="复制 Onepage 内容"/);
+  assert.match(html, /id="onepage-share"[^>]*>分享</);
+  assert.match(app, /const share = \$\('#onepage-share'\)/);
+  assert.match(app, /share\.classList\.toggle\('hidden', !canShare\)/);
+  assert.match(app, /const canShare = Boolean\(hasContent && onepage\.visibility === 'public'\)/);
+  assert.match(app, /navigator\.share\(shareData\)/);
+  assert.match(app, /copyText\(url, 'Onepage 链接已复制'\)/);
+  assert.match(app, /\$\('#onepage-share'\)\.onclick = shareOnepage/);
+});
+
 test('Onepage stays beside the original and rewrite tabs in one equal-width row', () => {
   const compactReaderTabs = [...styles.matchAll(/#app\.reading \.reader-tabs\s*\{([^}]*)\}/g)]
     .map(match => match[1])

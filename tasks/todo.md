@@ -1,3 +1,31 @@
+# Onepage sharing entry
+
+## Plan
+
+- [x] Trace the generated Onepage from private preview through publication and its stable public route.
+- [x] Add a published-only share action that opens the native share sheet when available and copies the canonical link otherwise.
+- [x] Keep private previews unshareable, keep content copy separate, and add focused regression coverage.
+- [x] Run focused/full tests, syntax checks, asset hash verification, `git diff --check`, and local desktop/mobile browser checks.
+
+## Verification contract
+
+1. Privacy -> verify: a private Onepage still offers explicit publication but no public share action.
+2. Sharing -> verify: a published Onepage exposes one clear share action with a stable versioned Onepage URL.
+3. Fallback -> verify: browsers without Web Share copy the same public URL instead.
+4. Scope -> verify: generation, persistence, publication, and other reader assets remain unchanged.
+
+## Review
+
+- Root cause: the Onepage integration extended the dormant generic link-copy helper but exposed only content copy and publication in the Onepage panel, so the stable public route had no discoverable in-panel share action.
+- Published Onepages now show “分享”; supported browsers receive title, preview text, and the immutable version URL through Web Share, while unsupported browsers copy that same URL. Private previews still show only the explicit “发布” action.
+- The focused Onepage and asset-hash suite passes 25/25; the full suite passes 327/327; JavaScript syntax and `git diff --check` pass.
+- Isolated browser checks covered private/public visibility, native share, copy-link fallback, silent share cancellation, and a 390x844 viewport with no action overflow or page-level horizontal overflow.
+- Sibling sweep: translation and rewrite retain their existing content-copy controls and link-copy surfaces in article summaries, My Space, and contributor pages. They were not changed because this task is the Onepage publication gap; no Onepage public surface remains without a stable link-copy path.
+- Deployed production image `sha256:bf6936aab767e99665332c494dc2f35f7ac9e04fe7d60d4c7e9324539097291d`. Host, container, and public `app.js` hashes match; internal/public probes return 200, SQLite reports `quick_check=ok`, and recent error logs contain 0 matching lines.
+- Backup: `/opt/rssreader-backups/onepage-share-20260715T093630Z`; rollback image: `rssreader-namoo-reader:rollback-onepage-share-20260715T093630Z`.
+
+---
+
 # Onepage 1200-character generation regression
 
 ## Plan

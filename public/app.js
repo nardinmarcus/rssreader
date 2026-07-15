@@ -5944,6 +5944,7 @@ function renderOnepage(onepage) {
   const empty = $('#onepage-empty');
   const meta = $('#onepage-meta');
   const copy = $('#onepage-copy');
+  const share = $('#onepage-share');
   const publish = $('#onepage-publish');
   const action = $('#reader-onepage');
   const hasContent = entryAssetHasContent('onepage', state.onepage);
@@ -5959,6 +5960,9 @@ function renderOnepage(onepage) {
   publish.classList.toggle('hidden', !canPublish);
   publish.disabled = state.onepagePublishing;
   publish.textContent = state.onepagePublishing ? '发布中…' : '发布';
+  const canShare = Boolean(hasContent && onepage.visibility === 'public');
+  share.classList.toggle('hidden', !canShare);
+  share.disabled = !canShare;
   renderAssetHelpfulButton('onepage', hasContent && onepage.visibility === 'public' ? onepage : null);
 
   if (!hasContent) {
@@ -6077,6 +6081,27 @@ async function publishOnepage() {
 
 function copyOnepageText() {
   copyText(onepageText(), 'Onepage 已复制');
+}
+
+async function shareOnepage() {
+  const entry = state.activeEntry;
+  const onepage = state.onepage;
+  if (!entry || !entryAssetHasContent('onepage', onepage) || onepage.visibility !== 'public') return;
+  const url = readerAssetUrl('onepage', entry, onepage.id);
+  const shareData = {
+    title: `${onepage.title || entry.titleZh || entry.title || 'Onepage'} · Onepage`,
+    text: onepage.previewText || 'Onepage',
+    url,
+  };
+  if (typeof navigator.share === 'function') {
+    try {
+      await navigator.share(shareData);
+      return;
+    } catch (error) {
+      if (error && error.name === 'AbortError') return;
+    }
+  }
+  copyText(url, 'Onepage 链接已复制');
 }
 
 async function toggleEntryAssetHelpful(type) {
@@ -10915,6 +10940,7 @@ $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(stat
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
 $('#reader-onepage').onclick = () => generateOnepage({ force: Boolean(state.onepage) });
 $('#onepage-publish').onclick = publishOnepage;
+$('#onepage-share').onclick = shareOnepage;
 $('#translation-helpful').onclick = () => toggleEntryAssetHelpful('translation');
 $('#rewrite-helpful').onclick = () => toggleEntryAssetHelpful('rewrite');
 $('#onepage-helpful').onclick = () => toggleEntryAssetHelpful('onepage');
