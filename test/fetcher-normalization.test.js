@@ -61,6 +61,32 @@ test('SQLite remains the article and source-count truth when cache.json is empty
   assert.equal(openai.status, 'cached');
 });
 
+test('legacy reader-submission cache cannot republish an entry missing from SQLite', () => {
+  fs.writeFileSync(`${dataDir}/cache.json`, JSON.stringify({
+    'user-submitted': {
+      fetchedAt: Date.now(),
+      status: 'ok',
+      entries: [{
+        id: 'stale-reader-submission',
+        sourceId: 'user-submitted',
+        title: 'Must not return from cache',
+        link: 'https://example.com/stale-reader-submission',
+        author: 'legacy cache',
+        published: '2026-07-01T00:00:00.000Z',
+        publishedTs: Date.parse('2026-07-01T00:00:00.000Z'),
+        summary: 'This row does not exist in SQLite.',
+        content: '<p>stale</p>',
+      }],
+    },
+  }));
+
+  fetcher.loadDisk();
+
+  assert.equal(store.getEntry('stale-reader-submission'), null);
+  assert.equal(fetcher.getEntries({ sourceId: 'user-submitted', limit: 20 })
+    .some(entry => entry.id === 'stale-reader-submission'), false);
+});
+
 test('shadow feed refresh captures the normalized entry without changing the legacy read path', async () => {
   const previousMode = process.env.VERSIONED_TRANSLATION_MODE;
   const originalFetch = globalThis.fetch;

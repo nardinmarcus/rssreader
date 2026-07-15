@@ -2020,8 +2020,14 @@ function clearSessionCookie(req, res) {
 }
 
 function sendError(res, error, fallback = 'request failed') {
-  const status = error.statusCode || 500;
-  res.status(status).json({ error: error.message || fallback });
+  const status = Number(error && error.statusCode) || 500;
+  if (status >= 500) console.error(fallback, error);
+  const body = { error: status >= 500 ? fallback : (error.message || fallback) };
+  if (status === 409 && error.currentImpact) body.currentImpact = error.currentImpact;
+  if (status === 409 && Number.isInteger(error.currentVisibleSubmissionCount)) {
+    body.currentVisibleSubmissionCount = error.currentVisibleSubmissionCount;
+  }
+  res.status(status).json(body);
 }
 
 function writeSse(res, payload) {
@@ -3141,33 +3147,107 @@ app.get('/api/admin/submission-users', requireAdmin, (req, res) => {
   }
 });
 
-app.get('/api/admin/users', requireAdmin, (req, res) => {
+function adminPositiveInteger(value, { fallback, maximum, name }) {
+  const clean = value === undefined ? String(fallback) : String(value || '').trim();
+  if (!/^\d+$/.test(clean) || Number(clean) < 1) {
+    const error = new Error(`invalid ${name}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return Math.min(maximum, Number(clean));
+}
+
+function adminConfirmedReason(req) {
+  const confirmUserId = String(req.body && req.body.confirmUserId || '').trim();
+  if (confirmUserId !== String(req.params.id || '').trim()) {
+    const error = new Error('confirmUserId does not match');
+    error.statusCode = 400;
+    throw error;
+  }
+  const reason = String(req.body && req.body.reason || '').trim();
+  if (!reason || reason.length > 300) {
+    const error = new Error('reason is required and must be at most 300 characters');
+    error.statusCode = 400;
+    throw error;
+  }
+  return reason;
+}
+
+function adminExpectedImpact(req) {
+  const value = req.body && req.body.expectedImpact;
+  const keys = ['revokedSessionCount', 'rejectedPendingCount', 'hiddenSubmissionCount'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || keys.some(key => !Number.isInteger(value[key]) || value[key] < 0)) {
+    const error = new Error('expectedImpact is required');
+    error.statusCode = 400;
+    throw error;
+  }
+  return Object.fromEntries(keys.map(key => [key, value[key]]));
+}
+
+function disableAdminUser(req, res) {
   try {
-    const limit = Math.max(1, Math.min(1000, Number.parseInt(req.query.limit, 10) || 500));
-    res.json({ users: store.getAdminUsers({ q: req.query.q, limit }) });
+    const reason = adminConfirmedReason(req);
+    const expectedImpact = adminExpectedImpact(req);
+    const result = fetcher.moderateUser(req.params.id, {
+      adminUserId: req.user.id,
+      reason,
+      expectedImpact,
+    });
+    res.json({ ok: true, result });
+  } catch (e) {
+    sendError(res, e, 'disable user failed');
+  }
+}
+
+app.get('/api/admin/users', requireLogin, requireAdmin, (req, res) => {
+  try {
+    const page = adminPositiveInteger(req.query.page, { fallback: 1, maximum: Number.MAX_SAFE_INTEGER, name: 'page' });
+    const limit = adminPositiveInteger(req.query.limit, { fallback: 50, maximum: 100, name: 'limit' });
+    res.json(store.getAdminUsersPage({
+      q: req.query.q,
+      status: req.query.status,
+      role: req.query.role,
+      sort: req.query.sort,
+      page,
+      limit,
+    }));
   } catch (e) {
     sendError(res, e, 'admin users failed');
   }
 });
 
-app.get('/api/admin/users/:id/submissions', requireAdmin, (req, res) => {
+app.get('/api/admin/users/:id', requireLogin, requireAdmin, (req, res) => {
   try {
-    const limit = Math.max(1, Math.min(1000, Number.parseInt(req.query.limit, 10) || 500));
-    res.json(store.getAdminUserSubmissions(req.params.id, { limit }));
+    res.json(store.getAdminUserDetail(req.params.id));
+  } catch (e) {
+    sendError(res, e, 'admin user detail failed');
+  }
+});
+
+app.get('/api/admin/users/:id/submissions', requireLogin, requireAdmin, (req, res) => {
+  try {
+    const page = adminPositiveInteger(req.query.page, { fallback: 1, maximum: Number.MAX_SAFE_INTEGER, name: 'page' });
+    const limit = adminPositiveInteger(req.query.limit, { fallback: 50, maximum: 100, name: 'limit' });
+    res.json(store.getAdminUserSubmissions(req.params.id, { page, limit }));
   } catch (e) {
     sendError(res, e, 'user submissions failed');
   }
 });
 
-app.delete('/api/admin/users/:id/submissions', requireAdmin, (req, res) => {
+app.delete('/api/admin/users/:id/submissions', requireLogin, requireAdmin, (req, res) => {
   try {
-    const confirmUserId = String(req.body && req.body.confirmUserId || '').trim();
-    if (confirmUserId !== String(req.params.id || '').trim()) {
-      return res.status(400).json({ error: 'confirmUserId does not match' });
+    const reason = adminConfirmedReason(req);
+    const expectedVisibleSubmissionCount = req.body && req.body.expectedVisibleSubmissionCount;
+    if (!Number.isInteger(expectedVisibleSubmissionCount) || expectedVisibleSubmissionCount < 0) {
+      const error = new Error('expectedVisibleSubmissionCount is required');
+      error.statusCode = 400;
+      throw error;
     }
     const result = fetcher.deleteUserSubmissions(req.params.id, {
       deletedBy: req.user.id,
-      reason: String(req.body && req.body.reason || '').trim(),
+      reason,
+      expectedVisibleSubmissionCount,
     });
     res.json({ ok: true, result });
   } catch (e) {
@@ -3175,25 +3255,16 @@ app.delete('/api/admin/users/:id/submissions', requireAdmin, (req, res) => {
   }
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+app.post('/api/admin/users/:id/disable', requireLogin, requireAdmin, disableAdminUser);
+
+app.delete('/api/admin/users/:id', requireLogin, requireAdmin, disableAdminUser);
+
+app.post('/api/admin/users/:id/restore', requireLogin, requireAdmin, (req, res) => {
   try {
-    const confirmUserId = String(req.body && req.body.confirmUserId || '').trim();
-    if (confirmUserId !== String(req.params.id || '').trim()) {
-      return res.status(400).json({ error: 'confirmUserId does not match' });
-    }
-    const result = fetcher.moderateUser(req.params.id, {
+    const user = store.restoreModeratedUser(req.params.id, {
       adminUserId: req.user.id,
       reason: String(req.body && req.body.reason || '').trim(),
     });
-    res.json({ ok: true, result });
-  } catch (e) {
-    sendError(res, e, 'disable user failed');
-  }
-});
-
-app.post('/api/admin/users/:id/restore', requireAdmin, (req, res) => {
-  try {
-    const user = store.restoreModeratedUser(req.params.id, { adminUserId: req.user.id });
     res.json({ ok: true, user });
   } catch (e) {
     sendError(res, e, 'restore user failed');

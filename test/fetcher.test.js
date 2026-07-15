@@ -11,6 +11,7 @@ const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'namoo-reader-fetcher-
 process.env.NAMOO_READER_DATA_DIR = testDataDir;
 
 const fetcher = require('../lib/fetcher');
+const store = require('../lib/store');
 
 after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
 
@@ -458,4 +459,46 @@ test('cache write lock serializes two real processes', async () => {
   const first = lines[0].split(':')[1];
   const second = first === 'a' ? 'b' : 'a';
   assert.deepEqual(lines, [`start:${first}`, `end:${first}`, `start:${second}`, `end:${second}`]);
+});
+
+test('governance succeeds from SQLite when reader projection persistence is locked', () => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const admin = store.createUser({
+    email: `projection-admin-${suffix}@example.com`,
+    password: 'password-123',
+    displayName: 'Projection Admin',
+    role: 'admin',
+  });
+  const reader = store.createUser({
+    email: `projection-reader-${suffix}@example.com`,
+    password: 'password-123',
+    displayName: 'Projection Reader',
+  });
+  store.saveSubmittedEntry({
+    id: `projection-entry-${suffix}`,
+    sourceId: 'user-submitted',
+    title: 'Projection entry',
+    link: `https://example.com/projection-entry-${suffix}`,
+    author: reader.displayName,
+    published: new Date().toISOString(),
+    publishedTs: Date.now(),
+    summary: 'Projection test',
+    content: '<p>Projection test</p>',
+  }, { userId: reader.id, author: reader.displayName });
+
+  assert.equal(fetcher.__test.acquireCacheWriteLock(100), true);
+  try {
+    const result = fetcher.deleteUserSubmissions(reader.id, {
+      deletedBy: admin.id,
+      reason: 'projection lock test',
+      expectedVisibleSubmissionCount: 1,
+    });
+    assert.equal(result.deletedCount, 1);
+    assert.equal(result.projectionRefreshPending, true);
+    assert.equal(store.getEntry(`projection-entry-${suffix}`), null);
+    assert.equal(fetcher.getEntries({ sourceId: 'user-submitted', limit: 20 })
+      .some(entry => entry.id === `projection-entry-${suffix}`), false);
+  } finally {
+    fetcher.__test.releaseCacheWriteLock();
+  }
 });

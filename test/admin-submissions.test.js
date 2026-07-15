@@ -84,6 +84,104 @@ async function loginCookie(baseUrl, email, password) {
   return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
 
+test('user management distinguishes unauthenticated and non-admin access', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir('namoo-reader-user-access-');
+  let server = null;
+  try {
+    server = await startServer(dataDir);
+    const anonymous = await jsonRequest(server.baseUrl, '/api/admin/users');
+    const registration = await jsonRequest(server.baseUrl, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'ordinary-user@example.com',
+        password: 'reader-password-123',
+        displayName: 'Ordinary User',
+      }),
+    });
+    const userCookie = String(registration.response.headers.get('set-cookie') || '').split(';')[0];
+    const nonAdmin = await jsonRequest(server.baseUrl, '/api/admin/users', {
+      headers: { Cookie: userCookie },
+    });
+
+    assert.equal(anonymous.response.status, 401);
+    assert.equal(nonAdmin.response.status, 403);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('administrator user directory exposes paginated list and SQLite detail contracts', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir('namoo-reader-user-directory-');
+  let server = null;
+  try {
+    server = await startServer(dataDir);
+    const registration = await jsonRequest(server.baseUrl, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'directory-reader@example.com',
+        password: 'reader-password-123',
+        displayName: 'Directory Reader',
+      }),
+    });
+    const userId = registration.body.user.id;
+    const adminCookie = await loginCookie(server.baseUrl, 'admin@example.com', 'test-password-123');
+    const list = await jsonRequest(
+      server.baseUrl,
+      '/api/admin/users?q=directory-reader%40example.com&status=active&role=user&sort=created_desc&page=1&limit=1',
+      { headers: { Cookie: adminCookie } },
+    );
+    const detail = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    const submissions = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/users/${userId}/submissions?page=99&limit=1`,
+      { headers: { Cookie: adminCookie } },
+    );
+    const nullSubmissionConfirmation = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/users/${userId}/submissions`,
+      {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+        body: JSON.stringify({
+          confirmUserId: userId,
+          reason: 'Null is not an explicit count.',
+          expectedVisibleSubmissionCount: null,
+        }),
+      },
+    );
+    const invalid = await jsonRequest(server.baseUrl, '/api/admin/users?status=unknown', {
+      headers: { Cookie: adminCookie },
+    });
+
+    assert.equal(list.response.status, 200, JSON.stringify(list.body));
+    assert.deepEqual(list.body.pagination, { page: 1, limit: 1, filteredTotal: 1, pageCount: 1 });
+    assert.equal(list.body.users[0].userId, userId);
+    assert.equal(list.body.summary.total, 2);
+    assert.equal(detail.response.status, 200, JSON.stringify(detail.body));
+    assert.equal(detail.body.user.userId, userId);
+    assert.deepEqual(detail.body.impact, {
+      revokedSessionCount: 1,
+      rejectedPendingCount: 0,
+      hiddenSubmissionCount: 0,
+    });
+    assert.deepEqual(detail.body.recentSubmissions, []);
+    assert.deepEqual(detail.body.recentActions, []);
+    assert.equal(submissions.response.status, 200, JSON.stringify(submissions.body));
+    assert.deepEqual(submissions.body.pagination, { page: 1, limit: 1, filteredTotal: 0, pageCount: 1 });
+    assert.equal(nullSubmissionConfirmation.response.status, 400);
+    assert.equal(invalid.response.status, 400);
+    assert.doesNotMatch(JSON.stringify({ list: list.body, detail: detail.body }), /password_hash|passwordHash|password_salt|passwordSalt|token/i);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('authenticated submissions stay quarantined without DNS or HTTP access', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir('namoo-reader-moderation-');
   let server = null;
@@ -264,6 +362,16 @@ test('administrator moderation revokes sessions, removes submissions, and requir
     });
     const userId = registration.body.user.id;
     const readerCookie = String(registration.response.headers.get('set-cookie') || '').split(';')[0];
+    const compatibilityRegistration = await jsonRequest(server.baseUrl, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'compatibility-reader@example.com',
+        password: 'reader-password-123',
+        displayName: 'Compatibility Reader',
+      }),
+    });
+    const compatibilityUserId = compatibilityRegistration.body.user.id;
     const submitted = await jsonRequest(server.baseUrl, '/api/submit-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: readerCookie },
@@ -281,10 +389,36 @@ test('administrator moderation revokes sessions, removes submissions, and requir
     const submissionsBefore = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}/submissions`, {
       headers: { Cookie: adminCookie },
     });
-    const disabled = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}`, {
+    const detailBefore = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    const concurrentLogin = await jsonRequest(server.baseUrl, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'moderated-reader@example.com', password: 'reader-password-123' }),
+    });
+    const weakCompatibility = await jsonRequest(server.baseUrl, `/api/admin/users/${compatibilityUserId}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
-      body: JSON.stringify({ confirmUserId: userId, reason: 'Repeated policy violations.' }),
+      body: JSON.stringify({ confirmUserId: compatibilityUserId, reason: 'Missing impact must fail.' }),
+    });
+    const staleDisable = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}/disable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        confirmUserId: userId,
+        reason: 'Repeated policy violations.',
+        expectedImpact: detailBefore.body.impact,
+      }),
+    });
+    const disabled = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}/disable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        confirmUserId: userId,
+        reason: 'Repeated policy violations.',
+        expectedImpact: staleDisable.body.currentImpact,
+      }),
     });
     const oldSessionAfterDisable = await jsonRequest(server.baseUrl, '/api/me', {
       headers: { Cookie: readerCookie },
@@ -313,6 +447,10 @@ test('administrator moderation revokes sessions, removes submissions, and requir
       listedUserId: usersBefore.body && usersBefore.body.users && usersBefore.body.users[0] && usersBefore.body.users[0].userId,
       submissionsStatus: submissionsBefore.response.status,
       activeBefore: submissionsBefore.body && submissionsBefore.body.activeSubmissionCount,
+      concurrentLoginStatus: concurrentLogin.response.status,
+      weakCompatibilityStatus: weakCompatibility.response.status,
+      staleDisableStatus: staleDisable.response.status,
+      currentSessionImpact: staleDisable.body && staleDisable.body.currentImpact && staleDisable.body.currentImpact.revokedSessionCount,
       disableStatus: disabled.response.status,
       disabled: disabled.body && disabled.body.result && disabled.body.result.user && disabled.body.result.user.disabled,
       revokedSessions: disabled.body && disabled.body.result && disabled.body.result.revokedSessionCount,
@@ -328,9 +466,13 @@ test('administrator moderation revokes sessions, removes submissions, and requir
       listedUserId: userId,
       submissionsStatus: 200,
       activeBefore: 1,
+      concurrentLoginStatus: 200,
+      weakCompatibilityStatus: 400,
+      staleDisableStatus: 409,
+      currentSessionImpact: 2,
       disableStatus: 200,
       disabled: true,
-      revokedSessions: 1,
+      revokedSessions: 2,
       oldSessionUser: null,
       disabledLoginStatus: 403,
       removedEntryStatus: 404,
