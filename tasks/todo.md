@@ -2,17 +2,27 @@
 
 ## Plan
 
-- [ ] Reproduce the live keyboard-copy path and capture the selection, focus, and clipboard state.
-- [ ] Add a failing regression guard for copying the cached source selection from the annotation popover.
-- [ ] Route the browser `copy` event to the cached source text only when the popover input has no explicit text selection.
-- [ ] Verify native input-copy behavior, button-copy behavior, cleanup, and all annotation surfaces.
-- [ ] Run focused/full tests, refresh the application asset fingerprint, and verify the real interaction in Chrome and production.
+- [x] Reproduce the live keyboard-copy path and capture the selection, focus, and clipboard state.
+- [x] Add a failing regression guard for copying the cached source selection from the annotation popover.
+- [x] Route the browser `copy` event to the cached source text only when the popover input has no explicit text selection.
+- [x] Verify native input-copy behavior, button-copy behavior, cleanup, and all annotation surfaces.
+- [x] Run focused/full tests, refresh the application asset fingerprint, and verify the real interaction in Chrome and production.
 
 ## Verification contract
 
 1. Source selection -> verify: after the popover takes focus, `Command+C` copies the highlighted source quote.
 2. Input selection -> verify: explicitly selected text inside the annotation textarea still uses the browser's native copy behavior.
 3. Scope -> verify: the copy override is active only while an annotation draft is open and never intercepts unrelated page copying.
+
+## Review
+
+- Root cause: focusing the annotation textarea collapses the native DOM Selection. The CSS Custom Highlight added for visual persistence paints the cached Range but does not participate in browser clipboard behavior, so `Command+C` targeted an empty textarea and copied nothing.
+- Added a textarea-local `copy` handler that writes the cached source quote only when neither the textarea nor the document has an explicit selection. It leaves native textarea copying, unrelated page copying, the popover, and the highlight lifecycle unchanged.
+- The regression suite failed first because the copy bridge did not exist, then passed 5/5. The base branch passes 334/334 tests; the production release branch passes 337/337, with syntax, asset identity, and diff checks also passing.
+- Production Chrome copies exact `杀死 AI slop` with the textarea focused, preserves the popover and one highlight Range, and still copies an explicit textarea `ABC` selection natively. The existing copy button continues to copy the source and close the popover. Browser errors: 0.
+- Sibling sweep found one shared annotation popover/input serving original, rewrite, and translation surfaces; no second same-shape keyboard-copy path exists.
+- Deployed image `sha256:bed8741a10384ced1830c8f7a1d3b474cb28857c24c19edfdd3c934774be62ba`. Production serves `app.js?v=23cc1a3a706c` with an exact file-hash match; `/`, `/api/me`, SQLite `quick_check`, foreign-key checks, logs, and restart count are healthy.
+- Backup: `/opt/rssreader-backups/annotation-keyboard-copy-20260715T145720Z`; rollback image: `rssreader-namoo-reader:rollback-annotation-keyboard-copy-20260715T145720Z`.
 
 ---
 
