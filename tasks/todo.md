@@ -1052,3 +1052,31 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - Production backup: `/opt/rssreader-backups/moderation-cache-20260714T100718Z`; rollback image: `rssreader-namoo-reader:rollback-20260714T100718Z`.
 
 ---
+
+# User management implementation
+
+## Plan
+
+- [x] Confirm the product boundary, information architecture, master-detail layout, and account-disable confirmation behavior.
+- [x] Write, review, and approve the user-management design specification.
+- [x] Produce the detailed RED/GREEN implementation plan.
+- [ ] Receive user approval of the implementation plan.
+- [ ] Add the audit schema, paginated user queries, and user detail aggregation.
+- [ ] Make disable, restore, and submission takedown atomic, auditable, and idempotent.
+- [ ] Extend the protected administrator user APIs without weakening the compatibility route.
+- [ ] Split User Management from Content Moderation inside My Space.
+- [ ] Implement desktop master-detail and mobile detail navigation.
+- [ ] Add safe confirmation, conflict refresh, and non-optimistic account actions.
+- [ ] Pass store, HTTP, security, static asset, full-suite, and authenticated browser verification.
+- [ ] Back up production, deploy the verified build, and complete read-only live acceptance.
+
+## Verification contract
+
+1. Source of truth -> verify: users, status, impact counts, and audit history come from SQLite with empty or stale runtime caches.
+2. Authorization -> verify: anonymous requests return 401, signed-in non-admin requests return 403, and no management response exposes secrets.
+3. Atomic governance -> verify: disable updates account, sessions, pending requests, public submissions, and audit together or rolls all of them back.
+4. Restore boundary -> verify: login is re-enabled while old sessions and hidden content remain inactive.
+5. UI behavior -> verify: routes, filters, pagination, master-detail selection, mobile return, confirmation, and 409 refresh work in an authenticated browser.
+6. Production safety -> verify: migration preserves user/admin/article counts and the administrator password hash; live acceptance performs no synthetic destructive mutation.
+
+---
