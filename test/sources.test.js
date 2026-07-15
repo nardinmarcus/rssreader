@@ -40,6 +40,27 @@ test('Namoo core source catalog is present without duplicating existing sources'
   assert.equal(SOURCES.find(source => source.id === 'meta-ai').enabled, false);
 });
 
+test('the six approved high-signal sources use official endpoints and no XiaoHu proxy', () => {
+  const expected = {
+    'claude-blog': ['sitemap:https://claude.com/sitemap.xml', '/blog/'],
+    'langchain-blog': ['sitemap:https://www.langchain.com/sitemap.xml', '/blog/'],
+    every: ['https://every.to/feeds/global.xml', undefined],
+    'thinking-machines': ['https://thinkingmachines.ai/index.xml', undefined],
+    'lilian-weng': ['https://lilianweng.github.io/index.xml', undefined],
+    'google-research': ['https://research.google/blog/rss/', undefined],
+  };
+
+  for (const [id, [feed, sitemapPathPrefix]] of Object.entries(expected)) {
+    const source = SOURCES.find(item => item.id === id);
+    assert.ok(source, `missing ${id}`);
+    assert.equal(source.enabled, true);
+    assert.deepEqual(source.feeds, [feed]);
+    assert.equal(source.sitemapPathPrefix, sitemapPathPrefix);
+    assert.equal(source.editorialPriority, 'high');
+  }
+  assert.equal(SOURCES.some(source => /xiaohu/i.test(`${source.id} ${source.name} ${source.siteUrl}`)), false);
+});
+
 test('RSSHub instances are parsed, normalized, and deduplicated', () => {
   assert.deepEqual(parseRsshubInstances('https://one.example/, https://one.example, http://two.example/'), [
     'https://one.example',

@@ -5,6 +5,8 @@ const { fork } = require('child_process');
 const compression = require('compression');
 const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
+const documentPipeline = require('./lib/document-pipeline');
+const { createOnepageModule } = require('./lib/onepage');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const translationJobs = require('./lib/translation-jobs');
@@ -15,6 +17,10 @@ const { renderTranslation } = require('./lib/translation-renderer');
 const { getVersionedPipelineStatus } = require('./lib/versioned-pipeline-status');
 
 const app = express();
+const onepageService = createOnepageModule({
+  store,
+  generatePayload: deepseek.generateOnepagePayload,
+});
 app.disable('x-powered-by');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -77,6 +83,10 @@ const ASSET_DIRECTORY_META = {
   rewrite: {
     label: 'Namoo 创作草稿',
     description: 'Namoo Reader 已沉淀围绕原文事实、创作角度和真人补充位生成的公开创作草稿目录。',
+  },
+  onepage: {
+    label: 'Onepage',
+    description: 'Namoo Reader 已沉淀基于稳定原文证据生成并由用户主动发布的 Onepage 目录。',
   },
   comments: {
     label: '人工点评',
@@ -250,6 +260,12 @@ const submissionDailyRateLimit = createRateLimiter({
   windowMs: 24 * HOUR_MS,
   max: 20,
   message: '今日投稿次数已达上限，请明天再试',
+  key: req => req.user && req.user.id || req.ip || req.socket.remoteAddress,
+});
+const onepageDailyRateLimit = createRateLimiter({
+  windowMs: 24 * HOUR_MS,
+  max: 20,
+  message: '今日 Onepage 生成次数已达上限，请明天再试',
   key: req => req.user && req.user.id || req.ip || req.socket.remoteAddress,
 });
 const originalContentRateLimit = createRateLimiter({
@@ -515,6 +531,7 @@ function requestAssetItemId(req, focus = '') {
   const articleRoute = articleRouteFromRequest(req);
   if (articleRoute && articleRoute.focus === assetFocus && articleRoute.itemId) return articleRoute.itemId;
   if (assetFocus === 'translation' || assetFocus === 'rewrite') return String(req.query.assetId || '').trim();
+  if (assetFocus === 'onepage') return String(req.query.onepageId || req.query.assetId || '').trim();
   if (assetFocus === 'comments') return String(req.query.comment || '').trim();
   if (assetFocus === 'annotations') return String(req.query.annotation || '').trim();
   if (assetFocus === 'chat') return String(req.query.chat || '').trim();
@@ -527,11 +544,13 @@ function requestAssetFocus(req) {
   if (String(req.query.comment || '').trim()) return 'comments';
   if (String(req.query.annotation || '').trim()) return 'annotations';
   if (String(req.query.chat || '').trim()) return 'chat';
+  if (String(req.query.onepageId || '').trim()) return 'onepage';
   const focus = normalizeAssetDirectoryType(String(req.query.focus || ''));
   if (focus) return focus;
   const tab = String(req.query.tab || '');
   if (tab === 'translation') return 'translation';
   if (tab === 'rewrite') return 'rewrite';
+  if (tab === 'onepage') return 'onepage';
   return '';
 }
 
@@ -549,13 +568,13 @@ function assetDirectoryMeta(req) {
     if (q) {
       return {
         title: `${sortPrefix}公开资产搜索：${q} · Namoo Reader`,
-        description: `搜索“${q}”相关的公开资产，包含中文翻译、Namoo 创作草稿、划线点评、人工点评和文章对话。${sortDescription}${searchSuffix}`,
+        description: `搜索“${q}”相关的公开资产，包含中文翻译、Namoo 创作草稿、Onepage、划线点评、人工点评和文章对话。${sortDescription}${searchSuffix}`,
       };
     }
     return {
       title: stats.assetCount ? `${sortPrefix}公开资产（${stats.assetCount} 条） · Namoo Reader` : `${sortPrefix}公开资产 · Namoo Reader`,
       description: stats.assetCount
-        ? `Namoo Reader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、Namoo 创作草稿、划线点评、人工点评和文章对话。${sortDescription}${latestSuffix}`
+        ? `Namoo Reader 已沉淀 ${stats.assetCount} 条公开资产，覆盖 ${stats.entryCount} 篇文章，包括中文翻译、Namoo 创作草稿、Onepage、划线点评、人工点评和文章对话。${sortDescription}${latestSuffix}`
         : DEFAULT_DESCRIPTION,
     };
   }
@@ -595,8 +614,8 @@ function contributorDirectoryMeta(req = null) {
     contributors,
     title: contributors.length ? `${sortTitle}（${contributors.length} 人） · Namoo Reader` : `${sortTitle} · Namoo Reader`,
     description: contributors.length
-      ? `Namoo Reader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、创作草稿、划线点评、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
-      : '浏览在 Namoo Reader 沉淀过公开翻译、创作草稿、划线点评、点评和文章对话的贡献榜。',
+      ? `Namoo Reader 有 ${contributors.length} 位用户沉淀了 ${totalAssets} 条公开翻译、创作草稿、Onepage、划线点评、点评和文章对话。${helpfulSuffix}${sortDescription}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      : '浏览在 Namoo Reader 沉淀过公开翻译、创作草稿、Onepage、划线点评、点评和文章对话的贡献榜。',
     latestAt,
   };
 }
@@ -616,20 +635,23 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   if (!contributor) return null;
   const translations = store.getUserTranslations(id, { limit: 200 });
   const rewrites = store.getUserRewrites(id, { limit: 200 });
+  const onepages = store.getUserOnepages(id, { limit: 200 });
   const comments = store.getUserComments(id, { limit: 200 });
   const annotations = store.getUserAnnotations(id, { limit: 200 });
   const messages = store.getUserChatMessages(id, { limit: 200 });
   const translationCount = translations.length;
   const rewriteCount = rewrites.length;
+  const onepageCount = onepages.length;
   const commentCount = comments.length;
   const annotationCount = annotations.length;
   const chatCount = messages.length;
-  const assetCount = translationCount + rewriteCount + annotationCount + commentCount + chatCount;
-  const typeCounts = { translation: translationCount, rewrite: rewriteCount, annotations: annotationCount, comments: commentCount, chat: chatCount };
+  const assetCount = translationCount + rewriteCount + onepageCount + annotationCount + commentCount + chatCount;
+  const typeCounts = { translation: translationCount, rewrite: rewriteCount, onepage: onepageCount, annotations: annotationCount, comments: commentCount, chat: chatCount };
   const visibleAssetCount = assetType ? typeCounts[assetType] || 0 : assetCount;
   const latestAt = Math.max(
     translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
     rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0),
+    onepages.reduce((latest, item) => Math.max(latest, Number(item.publishedAt || item.createdAt) || 0), 0),
     annotations.reduce((latest, annotation) => Math.max(latest, Number(annotation.updatedAt || annotation.createdAt) || 0), 0),
     comments.reduce((latest, comment) => Math.max(latest, Number(comment.updatedAt || comment.createdAt) || 0), 0),
     messages.reduce((latest, message) => Math.max(latest, Number(message.createdAt) || 0), 0),
@@ -638,6 +660,8 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
     ? translations.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0)
     : assetType === 'rewrite'
     ? rewrites.reduce((latest, item) => Math.max(latest, Number(item.updatedAt || item.createdAt) || 0), 0)
+    : assetType === 'onepage'
+    ? onepages.reduce((latest, item) => Math.max(latest, Number(item.publishedAt || item.createdAt) || 0), 0)
     : assetType === 'annotations'
     ? annotations.reduce((latest, annotation) => Math.max(latest, Number(annotation.updatedAt || annotation.createdAt) || 0), 0)
     : assetType === 'comments'
@@ -658,17 +682,19 @@ function contributorPageMetaForId(id, { type = '', sort = 'latest' } = {}) {
   const description = typeMeta
     ? `${displayName} 在 Namoo Reader 沉淀了 ${visibleAssetCount} 条${typeMeta.label}资产。${helpfulSentence}${sortSentence}${typeLatestAt ? `最新更新 ${formatShanghaiMinute(typeLatestAt)}。` : ''}`
     : assetCount
-      ? `${displayName} 在 Namoo Reader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条 Namoo 创作草稿、${annotationCount} 条划线点评、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
+      ? `${displayName} 在 Namoo Reader 沉淀了 ${assetCount} 条公开资产，包括 ${translationCount} 条中文翻译、${rewriteCount} 条 Namoo 创作草稿、${onepageCount} 条 Onepage、${annotationCount} 条划线点评、${commentCount} 条人工点评和 ${chatCount} 条文章对话。${helpfulSentence}${sortSentence}${latestAt ? `最新更新 ${formatShanghaiMinute(latestAt)}。` : ''}`
       : `${displayName} 的 Namoo Reader 个人主页。`;
   return {
     contributor: { ...contributor, displayName },
     translations,
     rewrites,
+    onepages,
     annotations,
     comments,
     messages,
     translationCount,
     rewriteCount,
+    onepageCount,
     annotationCount,
     commentCount,
     chatCount,
@@ -720,6 +746,7 @@ function entryAssetCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return aiAssetCount(assets, 'translation');
   if (type === 'rewrite') return aiAssetCount(assets, 'rewrite');
+  if (type === 'onepage') return aiAssetCount(assets, 'onepage');
   if (type === 'comments') return Number(assets.comments) || 0;
   if (type === 'annotations') return Number(assets.annotations) || 0;
   if (type === 'chat') return Number(assets.chatMessages) || 0;
@@ -878,6 +905,14 @@ function contributorAssetStructuredItems(req, contributorPage) {
     helpfulCount: Number(item.helpfulCount) || 0,
     entry: item.entry,
   }));
+  const onepageItems = (contributorPage.onepages || []).map(item => ({
+    type: 'onepage',
+    id: item.id,
+    text: item.previewText || '',
+    at: item.publishedAt || item.createdAt,
+    helpfulCount: Number(item.helpfulCount) || 0,
+    entry: item.entry,
+  }));
   const commentItems = (contributorPage.comments || []).map(comment => ({
     type: 'comments',
     id: comment.id,
@@ -902,7 +937,7 @@ function contributorAssetStructuredItems(req, contributorPage) {
     helpfulCount: Number(message.helpfulCount) || 0,
     entry: message.entry,
   }));
-  return [...translationItems, ...rewriteItems, ...annotationItems, ...commentItems, ...chatItems]
+  return [...translationItems, ...rewriteItems, ...onepageItems, ...annotationItems, ...commentItems, ...chatItems]
     .filter(item => item.entry && item.entry.id)
     .filter(item => !contributorPage.assetType || item.type === contributorPage.assetType)
     .sort((a, b) => {
@@ -1158,6 +1193,20 @@ function exactAssetPreview(entry, focus, req) {
       helpfulCount: Number(store.getEntryAssetReaction(entry.id, focus, null, asset.id).helpfulCount) || 0,
     };
   }
+  if (focus === 'onepage') {
+    const onepage = onepageService.getOnepage(requestAssetItemId(req, focus), { viewer: null });
+    if (!onepage || onepage.entryId !== entry.id) return null;
+    return {
+      type: 'onepage',
+      id: onepage.id,
+      author: onepage.author,
+      title: onepage.title,
+      model: onepage.model,
+      text: onepage.previewText,
+      at: onepage.publishedAt || onepage.createdAt,
+      helpfulCount: Number(store.getEntryAssetReaction(entry.id, 'onepage', null, onepage.id).helpfulCount) || 0,
+    };
+  }
   if (focus === 'comments') {
     const comment = store.getComment(entry.id, requestAssetItemId(req, focus));
     if (!comment) return null;
@@ -1204,13 +1253,14 @@ function exactAssetPreview(entry, focus, req) {
 
 function hasPublicAssets(entry) {
   const assets = entry && entry.assets ? entry.assets : {};
-  return Boolean(aiAssetCount(assets, 'translation') || aiAssetCount(assets, 'rewrite') || assets.annotations || assets.comments || assets.chatMessages);
+  return Boolean(aiAssetCount(assets, 'translation') || aiAssetCount(assets, 'rewrite') || aiAssetCount(assets, 'onepage') || assets.annotations || assets.comments || assets.chatMessages);
 }
 
 function hasPublicAssetType(entry, type) {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return Boolean(aiAssetCount(assets, 'translation'));
   if (type === 'rewrite') return Boolean(aiAssetCount(assets, 'rewrite'));
+  if (type === 'onepage') return Boolean(aiAssetCount(assets, 'onepage'));
   if (type === 'annotations') return Boolean(assets.annotations);
   if (type === 'comments') return Boolean(assets.comments);
   if (type === 'chat') return Boolean(assets.chatMessages);
@@ -1458,6 +1508,28 @@ function contributorFeedItems(req, contributorPage) {
       guid: `namoo-reader:contributor:${contributorPage.contributor.id}:rewrite:${item.id}`,
     };
   });
+  const onepages = (contributorPage.onepages || []).map(item => {
+    const preview = {
+      id: item.id,
+      author: item.author || contributorPage.contributor.displayName || '读者',
+      model: item.model || '',
+      text: item.previewText || '',
+      at: item.publishedAt || item.createdAt,
+      helpfulCount: Number(item.helpfulCount) || 0,
+    };
+    const entry = item.entry || {};
+    const helpfulCount = Number(preview.helpfulCount) || 0;
+    const baseDescription = assetPreviewDescription('onepage', preview);
+    return {
+      type: 'onepage',
+      title: assetFeedTitle(entry, 'onepage', preview),
+      link: entryAssetItemUrl(req, entry, 'onepage', preview),
+      description: helpfulCount ? `有用 ${helpfulCount} 次｜${baseDescription}` : baseDescription,
+      source: [preview.author, preview.model].filter(Boolean).join(' · '),
+      at: Number(preview.at) || 0,
+      guid: `namoo-reader:contributor:${contributorPage.contributor.id}:onepage:${item.id}`,
+    };
+  });
   const comments = (contributorPage.comments || []).map(comment => {
     const preview = {
       id: comment.id,
@@ -1526,7 +1598,7 @@ function contributorFeedItems(req, contributorPage) {
       guid: `namoo-reader:contributor:${contributorPage.contributor.id}:chat:${message.id}`,
     };
   });
-  return [...translations, ...rewrites, ...annotations, ...comments, ...messages]
+  return [...translations, ...rewrites, ...onepages, ...annotations, ...comments, ...messages]
     .filter(item => item.link && item.description)
     .sort((a, b) => b.at - a.at)
     .slice(0, 80);
@@ -1581,7 +1653,7 @@ function renderContributorFeed(req, contributorPage) {
   return renderRssChannel({
     title: `${displayName} 的公开资产 · Namoo Reader`,
     link: contributorPageUrl(req, contributorPage.contributor.id),
-    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、创作草稿、划线点评、点评和文章对话。`,
+    description: `${contributorPage.description} 当前订阅包含该贡献主页的公开翻译、创作草稿、Onepage、划线点评、点评和文章对话。`,
     selfUrl: contributorFeedUrl(req, contributorPage.contributor.id),
     items,
   });
@@ -1978,7 +2050,23 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ error: '需要管理员权限' });
 }
 
-function siteAiMetadata() {
+function onepageMode() {
+  const mode = String(process.env.ONEPAGE_MODE || 'off').trim().toLowerCase();
+  return ['admin', 'all'].includes(mode) ? mode : 'off';
+}
+
+function onepageEnabledFor(user) {
+  if (!user) return false;
+  const mode = onepageMode();
+  return mode === 'all' || (mode === 'admin' && user.role === 'admin');
+}
+
+function requireOnepageAccess(req, res, next) {
+  if (onepageEnabledFor(req.user)) return next();
+  return res.status(403).json({ error: 'Onepage 当前未对该账号开放' });
+}
+
+function siteAiMetadata(user = null) {
   const config = deepseek.getConfig();
   return {
     configured: config.configured,
@@ -1988,6 +2076,8 @@ function siteAiMetadata() {
     model: config.model,
     temperature: config.temperature,
     maxTokens: config.maxTokens,
+    onepageMode: onepageMode(),
+    onepageEnabled: onepageEnabledFor(user),
   };
 }
 
@@ -2280,6 +2370,14 @@ function rewriteResponse(entry, viewer = null, assetId = '') {
     ...rewrite,
     ...reaction,
     stale,
+  };
+}
+
+function onepageResponse(onepage, viewer = null) {
+  if (!onepage) return null;
+  return {
+    ...onepage,
+    ...store.getEntryAssetReaction(onepage.entryId, 'onepage', viewer, onepage.id),
   };
 }
 
@@ -2873,7 +2971,7 @@ app.post('/api/sources/:id/refresh-hint', (req, res) => {
 });
 
 app.get('/api/me', (req, res) => {
-  res.json({ user: req.user || null, siteAi: siteAiMetadata() });
+  res.json({ user: req.user || null, siteAi: siteAiMetadata(req.user) });
 });
 
 app.patch('/api/me/profile', requireLogin, (req, res) => {
@@ -2926,7 +3024,7 @@ app.post('/api/auth/register', registerRateLimit, (req, res) => {
     });
     const session = store.createSession(user.id, SESSION_TTL_MS);
     setSessionCookie(req, res, session.token, session.expiresAt);
-    res.json({ user, siteAi: siteAiMetadata() });
+    res.json({ user, siteAi: siteAiMetadata(user) });
   } catch (e) {
     sendError(res, e, 'register failed');
   }
@@ -2937,7 +3035,7 @@ app.post('/api/auth/login', loginRateLimit, (req, res) => {
     const user = store.authenticateUser(req.body && req.body.email, req.body && req.body.password);
     const session = store.createSession(user.id, SESSION_TTL_MS);
     setSessionCookie(req, res, session.token, session.expiresAt);
-    res.json({ user, siteAi: siteAiMetadata() });
+    res.json({ user, siteAi: siteAiMetadata(user) });
   } catch (e) {
     sendError(res, e, 'login failed');
   }
@@ -2971,6 +3069,11 @@ app.get('/api/me/translations', requireLogin, (req, res) => {
 app.get('/api/me/rewrites', requireLogin, (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   res.json({ rewrites: store.getUserRewrites(req.user.id, { limit }) });
+});
+
+app.get('/api/me/onepages', requireLogin, (req, res) => {
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  res.json({ onepages: store.getUserOnepages(req.user.id, { limit }) });
 });
 
 app.get('/api/me/chat-messages', requireLogin, (req, res) => {
@@ -3103,6 +3206,7 @@ app.get('/api/contributors/:id', (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   const translations = store.getUserTranslations(contributor.id, { limit });
   const rewrites = store.getUserRewrites(contributor.id, { limit });
+  const onepages = store.getUserOnepages(contributor.id, { limit });
   const comments = store.getUserComments(contributor.id, { limit });
   const annotations = store.getUserAnnotations(contributor.id, { limit });
   const messages = store.getUserChatMessages(contributor.id, { limit });
@@ -3111,6 +3215,7 @@ app.get('/api/contributors/:id', (req, res) => {
     contributor,
     translations,
     rewrites,
+    onepages,
     comments,
     annotations,
     messages,
@@ -3118,6 +3223,7 @@ app.get('/api/contributors/:id', (req, res) => {
     counts: {
       translation: translations.length,
       rewrite: rewrites.length,
+      onepage: onepages.length,
       annotations: annotations.length,
       comments: comments.length,
       chat: messages.length,
@@ -3428,11 +3534,59 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
   }
 });
 
+app.get('/api/entry/:id/onepage', (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  const onepageId = String(req.query.onepageId || '').trim();
+  const onepage = onepageId
+    ? onepageService.getOnepage(onepageId, { viewer: req.user })
+    : onepageService.getLatestOnepage(entry.id, { viewer: req.user });
+  if (onepageId && !onepage) return res.status(404).json({ error: 'onepage not found' });
+  return res.json({ onepage: onepageResponse(onepage, req.user) });
+});
+
+app.post('/api/entry/:id/onepage', requireLogin, requireOnepageAccess, onepageDailyRateLimit, async (req, res) => {
+  const entry = fetcher.getEntryById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'entry not found' });
+  try {
+    const prepared = await prepareEntryForAiAsset(entry, 'Onepage', { productHuntOfficialSite: false });
+    const authoritativeEntry = store.getEntry(prepared.entry.id);
+    if (!authoritativeEntry) return res.status(404).json({ error: 'entry not found' });
+    if (!store.getCurrentArticleDocument(authoritativeEntry.id)) {
+      await documentPipeline.captureFeed({ entry: authoritativeEntry, forceCapture: true });
+    }
+    const result = await onepageService.generateOnepage(authoritativeEntry, {
+      viewer: req.user,
+      force: Boolean(req.body && req.body.force),
+      aiConfig: requestAiConfig(req),
+    });
+    return res.json({
+      ...result,
+      onepage: onepageResponse(result.onepage, req.user),
+      originalFetched: prepared.fetched,
+      originalFetchError: prepared.error || null,
+      entry: prepared.fetched ? prepared.entry : undefined,
+    });
+  } catch (error) {
+    return sendError(res, error, 'onepage generation failed');
+  }
+});
+
+app.post('/api/onepages/:onepageId/publish', requireLogin, requireOnepageAccess, (req, res) => {
+  try {
+    const onepage = onepageService.publishOnepage(req.params.onepageId, { viewer: req.user });
+    publicProjectionCache.clear();
+    return res.json({ onepage: onepageResponse(onepage, req.user) });
+  } catch (error) {
+    return sendError(res, error, 'onepage publication failed');
+  }
+});
+
 app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   const type = normalizeAssetDirectoryType(String(req.params.type || ''));
-  if (!['translation', 'rewrite'].includes(type)) {
+  if (!['translation', 'rewrite', 'onepage'].includes(type)) {
     return res.status(404).json({ error: 'asset not found' });
   }
   try {
@@ -3447,7 +3601,7 @@ app.post('/api/entry/:id/assets/:type/helpful', requireLogin, (req, res) => {
         type: 'asset_helpful',
         objectType: type,
         entryId: entry.id,
-        fallbackMessage: `有人觉得你的${type === 'translation' ? '中文翻译' : '创作草稿'}有用`,
+        fallbackMessage: `有人觉得你的${type === 'translation' ? '中文翻译' : type === 'onepage' ? ' Onepage' : '创作草稿'}有用`,
       });
     }
     res.json({
