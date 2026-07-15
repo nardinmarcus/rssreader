@@ -85,6 +85,45 @@
 
 ---
 
+# Reader-submitted RSS classification diagnosis
+
+## Plan
+
+- [x] Record the screenshot symptoms and define the distinction between a submitted article and a subscribable feed.
+- [x] Trace the homepage submission request through approval, fetching, persistence, and source projection.
+- [x] Verify `https://weekly.tw93.fun/rss.xml` as a real feed and inspect its current production rows.
+- [x] State the root cause, product impact, and the smallest safe behavior change without modifying application code.
+
+## Verification contract
+
+1. Submission routing -> verify: identify the exact branch that chooses `user-submitted` or creates a standalone source.
+2. Feed identity -> verify: confirm the submitted URL's content type, feed metadata, and contained items from the origin response.
+3. Production state -> verify: distinguish the moderation request, submitted entry, and actual subscription-source records in SQLite.
+4. Scope -> verify: this turn remains diagnostic only; no business behavior is changed before the root cause is established.
+
+## Fix plan
+
+- [x] RED: approving a valid RSS/Atom submission creates or reuses a custom source, imports its items, and does not publish the feed URL as a `user-submitted` entry.
+- [x] GREEN: classify only after administrator approval, preserving the zero-network pending queue and the existing HTML article path.
+- [x] Make repeated or previously archived Feed recommendations idempotent without creating duplicate active sources.
+- [x] Run focused and full tests, syntax checks, diff checks, and the same-shape submission-entry sweep.
+- [x] Back up production, deploy the verified files, migrate the existing 潮流周刊 row, and verify the live source plus imported issues.
+
+## Review
+
+- Root cause: approved URLs always enter `submitLink()`, which accepts XML but runs the HTML article extractor and hardcodes `sourceId: user-submitted`; no RSS/Atom classification exists on the submission path.
+- The origin is a valid RSS 2.0 feed (`application/xml`) with 12 items. Production instead contains one approved request, one `user_submissions` row, and one `entries` row under `user-submitted`; it contains zero `weekly.tw93.fun/posts/*` entries.
+- The isolated production-code reproduction returns the same fallback entry: title `潮流周刊`, the RSS URL, and no feed items. The focused approval test passes and explicitly locks the current behavior to publishing one entry.
+- A safe fix should preserve pre-approval quarantine, detect Feed content only after administrator approval, and route valid RSS/Atom into custom-source creation and refresh while retaining the existing article path for HTML.
+- Implemented approval-time RSS/Atom classification with a single fetched response, built-in/custom-source reuse, archived-source restoration, same-process concurrent approval coalescing, and a 30-entry custom-source limit.
+- Focused tests and the complete suite pass (`329/329`); syntax, diff, call-site, frontend cache-key, malformed XML, and production-drift checks also pass.
+- Production backup: `/opt/rssreader-backups/reader-feed-20260715T130959Z`; rollback image: `rssreader-namoo-reader:rollback-reader-feed-20260715T130959Z`.
+- Production now runs image `sha256:8bbc90f6fc044a4ab9989c4ddaf99034e92d503d3e47b5ca566ab5d81e226e7b`. The existing source ID was restored as `潮流周刊`, enabled at the original order, and refreshed with all 12 current issues (273 through 262).
+- The mistaken `user-submitted` entry was soft-deleted, the approved request now points to the source, its related document/rewrite/stats/snapshot/state/submission history remains intact, and `PRAGMA quick_check` is `ok`.
+- A post-deploy refresh through the public `refresh-hint` API completed with worker code 0 and retained 12 visible issues; the old entry returns 404 and the feed URL no longer appears under `读者提交`.
+
+---
+
 # Onepage sharing entry
 
 ## Plan
