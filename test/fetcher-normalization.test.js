@@ -247,6 +247,70 @@ test('Paul Graham hydration carries redirected HTTP bytes into a fetched snapsho
   }
 });
 
+test('Lilian Weng feed excerpts hydrate from the original page and survive refresh', async () => {
+  const previousMode = process.env.VERSIONED_TRANSLATION_MODE;
+  const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['feeds.example', 'lilianweng.github.io']);
+  const feedUrl = 'https://feeds.example/lilian-weng.xml';
+  const articleUrl = 'https://lilianweng.github.io/posts/2026-07-04-harness/';
+  const excerpt = 'The RSS excerpt explains recursive self-improvement and deployment systems, but it only contains the opening discussion. '.repeat(8);
+  const lateMarker = 'Late-page Lilian Weng regression marker 4704.';
+  let articleRequests = 0;
+  process.env.VERSIONED_TRANSLATION_MODE = 'shadow';
+  globalThis.fetch = async input => {
+    const url = String(input);
+    if (url === feedUrl) {
+      return new Response(`<?xml version="1.0"?><rss version="2.0"><channel><title>Lil'Log</title>
+        <item><title>Harness Engineering for Self-Improvement</title><link>${articleUrl}</link>
+          <guid>${articleUrl}</guid><pubDate>Sat, 04 Jul 2026 00:00:00 GMT</pubDate>
+          <description><![CDATA[<p>${excerpt}</p><p>${excerpt}</p>]]></description></item>
+      </channel></rss>`, { status: 200, headers: { 'content-type': 'application/rss+xml' } });
+    }
+    assert.equal(url, articleUrl);
+    articleRequests += 1;
+    return new Response(`<html><head><title>Harness Engineering for Self-Improvement</title></head><body><article>
+      <div class="post-content"><p>${'Complete article evidence about harness design and optimization. '.repeat(80)}</p>
+        <h2>Future Challenges</h2><p>${lateMarker}</p></div>
+    </article></body></html>`, {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  };
+
+  try {
+    const source = {
+      id: 'lilian-weng',
+      name: 'Lilian Weng',
+      category: 'article',
+      enabled: true,
+      limit: 10,
+      feeds: [feedUrl],
+    };
+    const first = await fetcher.fetchSource(source);
+    const entryId = first.entries[0].id;
+    const firstPersisted = store.getEntry(entryId);
+
+    assert.equal(articleRequests, 1);
+    assert.equal(firstPersisted.originalFetchedAt > 0, true);
+    assert.match(first.entries[0].content, /Future Challenges/);
+    assert.match(firstPersisted.content, new RegExp(lateMarker));
+
+    const second = await fetcher.fetchSource(source);
+    const secondPersisted = store.getEntry(entryId);
+    assert.equal(articleRequests, 1);
+    assert.match(second.entries[0].content, new RegExp(lateMarker));
+    assert.equal(secondPersisted.content, firstPersisted.content);
+    assert.equal(secondPersisted.originalFetchedAt, firstPersisted.originalFetchedAt);
+    const current = store.getCurrentArticleDocument(entryId);
+    assert.equal(current.provenance, 'fetched');
+    assert.notEqual(current.snapshotId, null);
+  } finally {
+    restoreDns();
+    process.env.VERSIONED_TRANSLATION_MODE = previousMode;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('sitemap page fetch carries redirected HTTP bytes into a fetched snapshot', async () => {
   const previousMode = process.env.VERSIONED_TRANSLATION_MODE;
   const originalFetch = globalThis.fetch;
@@ -748,6 +812,8 @@ test('shadow refresh cannot replace recovered full content with a short feed doc
     assert.match(persisted.content, /Recovered full article sentence/);
     assert.match(current.plainText, /Recovered full article sentence/);
     assert.doesNotMatch(current.plainText, /Short feed teaser/);
+    assert.equal(current.provenance, 'fetched');
+    assert.notEqual(current.snapshotId, null);
   } finally {
     restoreDns();
     process.env.VERSIONED_TRANSLATION_MODE = previousMode;

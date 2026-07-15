@@ -1,3 +1,31 @@
+# Recover complete Lilian Weng article bodies
+
+## Plan
+
+- [x] Compare the live article page, feed fields, persisted SQLite row, and reader API projection.
+- [x] State one root-cause sentence that explains the matching truncated list and reader bodies.
+- [x] Add a regression fixture that fails on the current extraction/persistence path.
+- [x] Implement the smallest source-safe recovery and sweep every caller with the same shape.
+- [x] Run focused and full tests, then repair and verify the affected production row without using caches as truth.
+
+## Verification contract
+
+1. Source completeness -> verify: the recovered body contains late-page sections, not only the first two feed paragraphs.
+2. Persistence -> verify: SQLite retains the recovered body across a subsequent feed refresh.
+3. Scope -> verify: complete full-content feeds keep their existing bodies and external-fetch safety checks remain unchanged.
+4. Runtime -> verify: the real Lilian Weng entry renders the full extracted article, with API, SQLite integrity, and logs healthy.
+
+## Review
+
+- Root cause: Lilian Weng's RSS description is a long excerpt, and the generic content-length thresholds incorrectly treated it as complete original content.
+- Change: hydrate every unattempted Lilian Weng feed entry through the existing safe original-page fetcher, then preserve the fetched document and raw snapshot across later feed refreshes.
+- Regression proof: the new fixture failed before the fix because the article page was never requested; focused fetcher/recovery tests pass 23/23 and the full suite passes 338/338.
+- Production proof: all 10 Lilian Weng entries now have fetched originals with no fetch errors; the reported entry grew from 1,177 to 66,602 HTML characters and contains `Harness Design Patterns`, `Future Challenges`, and `Appendix`.
+- Integrity: production SQLite reports `quick_check=ok` and zero foreign-key violations; the container is healthy with zero restarts and no recent application errors.
+- Safety: backup `/opt/rssreader-backups/lilian-fulltext-20260715T160023Z` contains the prior fetcher and a consistent SQLite snapshot; rollback image `rssreader-namoo-reader:rollback-lilian-fulltext-20260715T160023Z` is retained.
+
+---
+
 # Consolidate completed branches into main
 
 ## Plan
