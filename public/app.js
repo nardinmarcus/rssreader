@@ -5228,12 +5228,33 @@ function renderOriginalEmptyState(entry, options = {}) {
   updateFetchOriginalButton(entry);
 }
 
+function hydrateYouTubePodcastPlayers(root) {
+  if (!root) return;
+  root.querySelectorAll('.youtube-podcast-player[data-youtube-video-id]').forEach(player => {
+    if (player.querySelector('iframe')) return;
+    const videoId = String(player.dataset.youtubeVideoId || '').trim();
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+      player.removeAttribute('data-youtube-video-id');
+      return;
+    }
+    const iframe = document.createElement('iframe');
+    iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}`;
+    iframe.title = 'YouTube 视频播放器';
+    iframe.loading = 'lazy';
+    iframe.referrerPolicy = 'strict-origin-when-cross-origin';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+    iframe.allowFullscreen = true;
+    player.prepend(iframe);
+  });
+}
+
 function renderOriginalContent(entry, content) {
   const cleaned = sanitize(content || '');
   const hasContent = Boolean(plainTextFromHtml(cleaned) || /<(?:img|video|audio|table|hr)\b/i.test(cleaned));
   const summary = entry && entry.summary ? sanitize(`<p>${escapeHtml(entry.summary)}</p>`) : '';
   const readerContent = $('#reader-content');
   readerContent.innerHTML = hasContent ? cleaned : summary;
+  hydrateYouTubePodcastPlayers(readerContent);
   readerContent.classList.toggle('hidden', !hasContent && !summary);
   $$('#reader-content a').forEach(a => { a.target = '_blank'; a.rel = 'noopener'; });
   renderOriginalEmptyState(entry, { hasContent, hasSummary: Boolean(summary) });

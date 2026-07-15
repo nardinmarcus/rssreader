@@ -34,7 +34,7 @@ test('feed author objects and arrays become SQLite-safe text', () => {
   assert.equal(normalizeFeedAuthor(null), '');
 });
 
-test('YouTube Atom media groups provide the podcast description and thumbnail', async () => {
+test('YouTube Atom podcast descriptions become structured playable show notes', async () => {
   const originalFetch = globalThis.fetch;
   const restoreDns = stubPublicDns(['feeds.example']);
   const feedUrl = 'https://feeds.example/youtube-podcast.xml';
@@ -46,15 +46,25 @@ test('YouTube Atom media groups provide the podcast description and thumbnail', 
         xmlns:media="http://search.yahoo.com/mrss/">
         <title>Zhang Xiaojun Podcast</title>
         <entry>
-          <id>yt:video:test-video-id</id>
-          <yt:videoId>test-video-id</yt:videoId>
+          <id>yt:video:abcDEF123_-</id>
+          <yt:videoId>abcDEF123_-</yt:videoId>
           <title>145. 口述 SpaceX 开发史</title>
-          <link rel="alternate" href="https://www.youtube.com/watch?v=test-video-id"/>
+          <link rel="alternate" href="https://www.youtube.com/watch?v=abcDEF123_-"/>
           <author><name>Zhang Xiaojun Podcast</name></author>
           <published>2026-06-12T11:59:49+00:00</published>
           <media:group>
-            <media:thumbnail url="https://i.ytimg.com/vi/test-video-id/hqdefault.jpg" width="480" height="360"/>
-            <media:description>张小珺与嘉宾的深度访谈节目简介。</media:description>
+            <media:thumbnail url="https://i.ytimg.com/vi/abcDEF123_-/hqdefault.jpg" width="480" height="360"/>
+            <media:description>张小珺与嘉宾的深度访谈节目简介。
+
+OUTLINE:
+00:01:24 SpaceX 的 IPO
+01:03:42 SpaceX 内部的真实情况
+
+LINKS：
+小宇宙 (https://www.xiaoyuzhoufm.com/podcast/example)
+
+DISCLAIMER: 本内容不作为投资建议。
+CONTACT: xiaojunzhang@example.com</media:description>
           </media:group>
         </entry>
       </feed>`, { status: 200, headers: { 'content-type': 'application/atom+xml; charset=utf-8' } });
@@ -72,12 +82,24 @@ test('YouTube Atom media groups provide the podcast description and thumbnail', 
 
     assert.equal(result.status, 'ok');
     assert.equal(entry.title, '145. 口述 SpaceX 开发史');
-    assert.equal(entry.link, 'https://www.youtube.com/watch?v=test-video-id');
+    assert.equal(entry.link, 'https://www.youtube.com/watch?v=abcDEF123_-');
     assert.equal(entry.author, 'Zhang Xiaojun Podcast');
     assert.equal(entry.published, '2026-06-12T11:59:49.000Z');
-    assert.match(entry.summary, /张小珺与嘉宾的深度访谈节目简介/);
-    assert.match(entry.content, /张小珺与嘉宾的深度访谈节目简介/);
-    assert.equal(entry.image, 'https://i.ytimg.com/vi/test-video-id/hqdefault.jpg');
+    assert.match(entry.summary, /^张小珺与嘉宾的深度访谈节目简介/);
+    assert.doesNotMatch(entry.summary, /文字范围|节目时间轴/);
+    assert.match(entry.content, /class="youtube-podcast-player"/);
+    assert.match(entry.content, /data-youtube-video-id="abcDEF123_-"/);
+    assert.doesNotMatch(entry.content, /<iframe\b/i);
+    assert.match(entry.content, /<h2>节目简介<\/h2>/);
+    assert.match(entry.content, /<h2>节目时间轴<\/h2>/);
+    assert.match(entry.content, /href="https:\/\/www\.youtube\.com\/watch\?v=abcDEF123_-&amp;t=84s"/);
+    assert.match(entry.content, /<strong>00:01:24<\/strong>/);
+    assert.match(entry.content, /<h2>相关链接<\/h2>/);
+    assert.match(entry.content, /href="https:\/\/www\.xiaoyuzhoufm\.com\/podcast\/example"/);
+    assert.match(entry.content, /<h2>免责声明<\/h2>/);
+    assert.match(entry.content, /<h2>联系信息<\/h2>/);
+    assert.match(entry.content, /YouTube RSS 未提供逐字稿/);
+    assert.equal(entry.image, 'https://i.ytimg.com/vi/abcDEF123_-/hqdefault.jpg');
   } finally {
     restoreDns();
     globalThis.fetch = originalFetch;

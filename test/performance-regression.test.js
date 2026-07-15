@@ -28,6 +28,18 @@ test('versioned frontend asset URLs match the shipped content hashes', () => {
   }
 });
 
+test('YouTube podcast players are hydrated from validated ids without weakening sanitization', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+
+  assert.match(app, /function hydrateYouTubePodcastPlayers\(root\)/);
+  assert.match(app, /\^\[A-Za-z0-9_-\]\{11\}\$/);
+  assert.match(app, /https:\/\/www\.youtube-nocookie\.com\/embed\/\$\{videoId\}/);
+  assert.match(app, /hydrateYouTubePodcastPlayers\(readerContent\)/);
+  assert.match(app, /FORBID_TAGS: \[[^\]]*'iframe'/);
+  assert.match(styles, /\.youtube-podcast-player iframe\s*\{[\s\S]*?aspect-ratio:\s*16\s*\/\s*9/);
+});
+
 async function freePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();

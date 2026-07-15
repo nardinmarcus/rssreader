@@ -1,3 +1,28 @@
+# YouTube Podcast reader completeness and layout
+
+## Root cause
+
+`normalizeItem()` promotes YouTube `media:description` plain text to full article `content`; the browser therefore collapses its newlines and the non-empty body suppresses original-content recovery, while this episode exposes neither subtitles nor automatic captions.
+
+## Plan
+
+- [x] Reproduce the production layout and compare SQLite content with the exact YouTube Atom field.
+- [x] Verify whether the selected episode exposes subtitles or automatic captions.
+- [x] Add failing regression coverage for a semantic video player, separated show notes, timestamp links, related links, and an explicit transcript boundary.
+- [x] Render YouTube Podcast entries as video-first content without weakening HTML sanitization or generic RSS behavior.
+- [x] Run focused/full tests and an isolated preview from the official Atom snapshot.
+- [ ] Back up production, deploy, refresh existing entries, and verify desktop/mobile screenshots plus SQLite/API/log health.
+
+## Verification contract
+
+1. Completeness -> verify: the full episode is playable in the reader even when YouTube provides no transcript.
+2. Honesty -> verify: the page labels the text as show notes and states that a transcript is unavailable instead of presenting the description as full prose.
+3. Structure -> verify: introduction, timeline, related links, disclaimer, and contact render as separate semantic blocks; timestamp and external links are clickable.
+4. Safety -> verify: iframe origin and URL are derived from a validated YouTube video ID, sanitizer coverage remains intact, and non-YouTube feeds are unchanged.
+5. Production -> verify: the reported episode renders cleanly at desktop and mobile widths, persists after refresh/restart, and public APIs plus logs remain healthy.
+
+---
+
 # Add Zhang Xiaojun YouTube Podcast source
 
 ## Plan

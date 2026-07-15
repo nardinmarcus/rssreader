@@ -5529,6 +5529,89 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: linear-gradient(to right, transparent, var(--border-subtle) 18%, var(--border-subtle) 82%, transparent);
 }
 
+.youtube-podcast-player {
+  margin: 0 0 18px;
+}
+.youtube-podcast-player iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: #000;
+  box-shadow: 0 8px 28px var(--shadow-soft);
+}
+.youtube-podcast-player > a {
+  display: inline-flex;
+  margin-top: 9px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+.reader-content .youtube-podcast-transcript-note {
+  margin: 0 0 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-subtle));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  color: var(--text-1);
+  padding: 12px 14px;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+.youtube-podcast-notes {
+  display: grid;
+  gap: 0;
+}
+.youtube-podcast-section {
+  padding: 0 0 24px;
+}
+.youtube-podcast-section + .youtube-podcast-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 24px;
+}
+.reader-content .youtube-podcast-section h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+.reader-content .youtube-podcast-outline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.reader-content .youtube-podcast-outline li {
+  display: grid;
+  grid-template-columns: 5.6em minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  padding: 9px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 72%, transparent);
+}
+.reader-content .youtube-podcast-outline li:last-child {
+  border-bottom: 0;
+}
+.reader-content .youtube-podcast-outline a {
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+.youtube-podcast-meta {
+  color: var(--text-1);
+  font-size: 14px;
+}
+
+@media (max-width: 560px) {
+  .youtube-podcast-player iframe {
+    border-radius: var(--radius-md);
+  }
+  .reader-content .youtube-podcast-outline li {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
 .annotation-item,
 .comment-item,
 .agent-msg-body,
