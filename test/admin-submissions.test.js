@@ -84,6 +84,38 @@ async function loginCookie(baseUrl, email, password) {
   return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
 
+async function registerReader(baseUrl, email, displayName) {
+  const { response, body } = await jsonRequest(baseUrl, '/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'reader-password-123', displayName }),
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  return {
+    body,
+    cookie: String(response.headers.get('set-cookie') || '').split(';')[0],
+  };
+}
+
+function readSubmissionCapture(capturePath) {
+  try {
+    return JSON.parse(fs.readFileSync(capturePath, 'utf8'));
+  } catch {
+    return { fetches: [] };
+  }
+}
+
+async function queueSubmission(baseUrl, cookie, url) {
+  const { response, body } = await jsonRequest(baseUrl, '/api/submit-link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ url }),
+  });
+  assert.equal(response.status, 202, JSON.stringify(body));
+  assert.equal(body.pending, true);
+  return body.request;
+}
+
 test('user management distinguishes unauthenticated and non-admin access', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir('namoo-reader-user-access-');
   let server = null;
@@ -329,6 +361,8 @@ test('administrator approval performs the first fetch and publishes one entry', 
       reviewStatus: approved.body && approved.body.request && approved.body.request.status,
       entryTitle: approved.body && approved.body.entry && approved.body.entry.title,
       entryLink: approved.body && approved.body.entry && approved.body.entry.link,
+      entrySourceId: approved.body && approved.body.entry && approved.body.entry.sourceId,
+      source: approved.body && approved.body.source || null,
       publicStatus: publicEntry.response.status,
       fetches: capture.fetches,
     }, {
@@ -336,9 +370,151 @@ test('administrator approval performs the first fetch and publishes one entry', 
       reviewStatus: 'approved',
       entryTitle: 'Approved Article',
       entryLink: 'https://approved.example/articles/one',
+      entrySourceId: 'user-submitted',
+      source: null,
       publicStatus: 200,
       fetches: ['https://approved.example/articles/one'],
     });
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('administrator approval promotes RSS and Atom feeds to idempotent custom sources', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir('namoo-reader-feed-submission-');
+  const capturePath = path.join(dataDir, 'submission-fetches.json');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-submission-preload.js');
+  const feedUrl = 'https://feeds.approved.example/feeds/weekly.xml';
+  const atomUrl = 'https://feeds.approved.example/feeds/digest.atom';
+  const brokenFeedUrl = 'https://feeds.approved.example/feeds/broken.xml';
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SUBMISSION_CAPTURE_PATH: capturePath,
+    });
+    const readerOne = await registerReader(server.baseUrl, 'feed-reader-one@example.com', 'Feed Reader One');
+    const readerTwo = await registerReader(server.baseUrl, 'feed-reader-two@example.com', 'Feed Reader Two');
+    const feedRequest = await queueSubmission(server.baseUrl, readerOne.cookie, feedUrl);
+    const concurrentFeedRequest = await queueSubmission(server.baseUrl, readerTwo.cookie, feedUrl);
+    assert.deepEqual(readSubmissionCapture(capturePath).fetches, []);
+
+    const adminCookie = await loginCookie(server.baseUrl, 'admin@example.com', 'test-password-123');
+    const [approvedFeed, concurrentFeed] = await Promise.all([
+      jsonRequest(
+        server.baseUrl,
+        `/api/admin/submission-requests/${feedRequest.id}/approve`,
+        { method: 'POST', headers: { Cookie: adminCookie } },
+      ),
+      jsonRequest(
+        server.baseUrl,
+        `/api/admin/submission-requests/${concurrentFeedRequest.id}/approve`,
+        { method: 'POST', headers: { Cookie: adminCookie } },
+      ),
+    ]);
+    assert.equal(approvedFeed.response.status, 200, JSON.stringify(approvedFeed.body));
+    assert.equal(approvedFeed.body.request.status, 'approved');
+    assert.equal(approvedFeed.body.resultType, 'source');
+    assert.equal(approvedFeed.body.entry || null, null);
+    assert.equal(approvedFeed.body.request.sourceId, approvedFeed.body.source.id);
+    assert.match(approvedFeed.body.source.id, /^custom-/);
+    assert.equal(approvedFeed.body.source.name, 'Approved Weekly');
+    assert.equal(approvedFeed.body.source.category, 'article');
+    assert.equal(approvedFeed.body.feed.entryCount, 12);
+    const sourceId = approvedFeed.body.source.id;
+    assert.equal(concurrentFeed.response.status, 200, JSON.stringify(concurrentFeed.body));
+    assert.equal(concurrentFeed.body.source.id, sourceId);
+
+    const archived = await jsonRequest(server.baseUrl, `/api/sources/${sourceId}`, {
+      method: 'DELETE',
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(archived.response.status, 200, JSON.stringify(archived.body));
+
+    const readerThree = await registerReader(server.baseUrl, 'feed-reader-three@example.com', 'Feed Reader Three');
+    const repeatedFeedRequest = await queueSubmission(server.baseUrl, readerThree.cookie, feedUrl);
+    assert.deepEqual(readSubmissionCapture(capturePath).fetches, [feedUrl, feedUrl]);
+    const repeatedFeed = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/submission-requests/${repeatedFeedRequest.id}/approve`,
+      { method: 'POST', headers: { Cookie: adminCookie } },
+    );
+    assert.equal(repeatedFeed.response.status, 200, JSON.stringify(repeatedFeed.body));
+    assert.equal(repeatedFeed.body.source.id, sourceId);
+    assert.equal(repeatedFeed.body.feed.restored, true);
+
+    const beforeRetry = readSubmissionCapture(capturePath).fetches;
+    const retriedApproval = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/submission-requests/${repeatedFeedRequest.id}/approve`,
+      { method: 'POST', headers: { Cookie: adminCookie } },
+    );
+    assert.equal(retriedApproval.response.status, 200, JSON.stringify(retriedApproval.body));
+    assert.equal(retriedApproval.body.source.id, sourceId);
+    assert.deepEqual(readSubmissionCapture(capturePath).fetches, beforeRetry);
+
+    const atomRequest = await queueSubmission(server.baseUrl, readerOne.cookie, atomUrl);
+    assert.deepEqual(readSubmissionCapture(capturePath).fetches, [feedUrl, feedUrl, feedUrl]);
+    const approvedAtom = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/submission-requests/${atomRequest.id}/approve`,
+      { method: 'POST', headers: { Cookie: adminCookie } },
+    );
+    assert.equal(approvedAtom.response.status, 200, JSON.stringify(approvedAtom.body));
+    assert.equal(approvedAtom.body.entry || null, null);
+    assert.equal(approvedAtom.body.source.name, 'Approved Atom Digest');
+    assert.equal(approvedAtom.body.feed.entryCount, 2);
+
+    const brokenRequest = await queueSubmission(server.baseUrl, readerOne.cookie, brokenFeedUrl);
+    const brokenApproval = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/submission-requests/${brokenRequest.id}/approve`,
+      { method: 'POST', headers: { Cookie: adminCookie } },
+    );
+    assert.equal(brokenApproval.response.status, 422, JSON.stringify(brokenApproval.body));
+    assert.match(brokenApproval.body.error, /RSS\/Atom XML/);
+    const pendingAfterBroken = await jsonRequest(
+      server.baseUrl,
+      '/api/admin/submission-requests?status=pending&limit=200',
+      { headers: { Cookie: adminCookie } },
+    );
+    assert.equal(pendingAfterBroken.body.requests.some(request => request.id === brokenRequest.id), true);
+
+    const builtInRequest = await queueSubmission(server.baseUrl, readerOne.cookie, 'https://www.latent.space/feed');
+    const approvedBuiltIn = await jsonRequest(
+      server.baseUrl,
+      `/api/admin/submission-requests/${builtInRequest.id}/approve`,
+      { method: 'POST', headers: { Cookie: adminCookie } },
+    );
+    assert.equal(approvedBuiltIn.response.status, 200, JSON.stringify(approvedBuiltIn.body));
+    assert.equal(approvedBuiltIn.body.source.id, 'latentspace');
+    assert.equal(approvedBuiltIn.body.feed.created, false);
+    assert.equal(approvedBuiltIn.body.feed.reused, true);
+
+    const sources = await jsonRequest(server.baseUrl, '/api/sources', { headers: { Cookie: adminCookie } });
+    const matchingSources = sources.body.sources.filter(source => source.isCustom && source.feedUrl === feedUrl);
+    assert.equal(matchingSources.length, 1);
+    assert.equal(matchingSources[0].id, sourceId);
+    assert.equal(sources.body.sources.filter(source => source.isCustom && source.feedUrl === 'https://www.latent.space/feed').length, 0);
+    const feedEntries = await jsonRequest(server.baseUrl, `/api/entries?source=${encodeURIComponent(sourceId)}&limit=30`);
+    assert.equal(feedEntries.body.entries.length, 12);
+    assert.ok(feedEntries.body.entries.every(entry => entry.sourceId === sourceId));
+    const atomEntries = await jsonRequest(
+      server.baseUrl,
+      `/api/entries?source=${encodeURIComponent(approvedAtom.body.source.id)}&limit=30`,
+    );
+    assert.deepEqual(atomEntries.body.entries.map(entry => entry.title), ['Approved Atom 01', 'Approved Atom 02']);
+    const readerSubmissions = await jsonRequest(server.baseUrl, '/api/entries?source=user-submitted&limit=30');
+    assert.equal(readerSubmissions.body.entries.some(entry => entry.link === feedUrl || entry.link === atomUrl), false);
+    assert.deepEqual(readSubmissionCapture(capturePath).fetches, [
+      feedUrl,
+      feedUrl,
+      feedUrl,
+      atomUrl,
+      brokenFeedUrl,
+      'https://www.latent.space/feed',
+    ]);
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });

@@ -7337,7 +7337,7 @@ async function handleModerationAction(button) {
   const requestId = button.dataset.requestId;
   if (!action) return;
   const confirmations = {
-    approve: '批准后将首次访问目标链接，并把文章公开到读者提交。继续吗？',
+    approve: '批准后将首次访问目标链接；RSS/Atom 会收录为订阅源，普通网页会公开到读者提交。继续吗？',
     reject: '拒绝这条投稿？目标链接不会被访问。',
   };
   if (!window.confirm(confirmations[action] || '确认执行此操作？')) return;
