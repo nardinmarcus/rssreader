@@ -61,6 +61,26 @@ test('the six approved high-signal sources use official endpoints and no XiaoHu 
   assert.equal(SOURCES.some(source => /xiaohu/i.test(`${source.id} ${source.name} ${source.siteUrl}`)), false);
 });
 
+test('Zhang Xiaojun Podcast uses the official YouTube channel feed', () => {
+  const source = SOURCES.find(item => item.id === 'xiaojunpodcast');
+
+  assert.ok(source, 'missing xiaojunpodcast');
+  assert.equal(source.name, '张小珺商业访谈录');
+  assert.equal(source.category, 'podcast');
+  assert.equal(source.siteUrl, 'https://www.youtube.com/@xiaojunpodcast');
+  assert.deepEqual(source.feeds, [
+    'https://www.youtube.com/feeds/videos.xml?channel_id=UC3Sv1JuKpbOx3csUO8FAo5g',
+  ]);
+  assert.equal(source.enabled, true);
+  assert.deepEqual(source.labels, ['社区']);
+  assert.equal(source.editorialPriority, 'normal');
+  assert.equal(source.refreshIntervalMs, 12 * 60 * 60 * 1000);
+  assert.deepEqual(
+    SOURCES.filter(item => item.category === 'podcast').map(item => item.id),
+    ['lexfridman', 'latentspace', 'xiaojunpodcast', 'cognitiverevolution', 'hours80k'],
+  );
+});
+
 test('RSSHub instances are parsed, normalized, and deduplicated', () => {
   assert.deepEqual(parseRsshubInstances('https://one.example/, https://one.example, http://two.example/'), [
     'https://one.example',

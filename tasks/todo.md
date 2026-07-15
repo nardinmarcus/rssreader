@@ -1,3 +1,22 @@
+# Add Zhang Xiaojun YouTube Podcast source
+
+## Plan
+
+- [x] Bind `@xiaojunpodcast` to its immutable YouTube channel ID and official Atom feed.
+- [x] Add the enabled source to the Podcast catalog with a low-frequency refresh policy.
+- [x] Add regression coverage for category, official feed identity, labels, and ordering.
+- [x] Run a real parser probe plus focused/full tests.
+- [ ] Back up production, deploy the verified source catalog, refresh the new source, and verify the live API, SQLite rows, public UI, and logs.
+
+## Verification contract
+
+1. Identity -> verify: the handle, channel ID, feed self-link, and feed author all resolve to Zhang Xiaojun Podcast.
+2. Parsing -> verify: the application parser returns current videos with title, publication time, YouTube URL, description, and thumbnail.
+3. Catalog -> verify: `xiaojunpodcast` is enabled under `podcast`, labeled `社区`, and ordered after the existing enabled Podcast sources.
+4. Production -> verify: the live source reports `status=ok`, persisted entries belong to `xiaojunpodcast`, public endpoints remain healthy, and recent error logs are empty.
+
+---
+
 # Onepage share link compatibility regression
 
 ## Plan

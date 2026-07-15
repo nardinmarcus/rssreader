@@ -34,6 +34,56 @@ test('feed author objects and arrays become SQLite-safe text', () => {
   assert.equal(normalizeFeedAuthor(null), '');
 });
 
+test('YouTube Atom media groups provide the podcast description and thumbnail', async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['feeds.example']);
+  const feedUrl = 'https://feeds.example/youtube-podcast.xml';
+  globalThis.fetch = async input => {
+    assert.equal(String(input), feedUrl);
+    return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+      <feed xmlns="http://www.w3.org/2005/Atom"
+        xmlns:yt="http://www.youtube.com/xml/schemas/2015"
+        xmlns:media="http://search.yahoo.com/mrss/">
+        <title>Zhang Xiaojun Podcast</title>
+        <entry>
+          <id>yt:video:test-video-id</id>
+          <yt:videoId>test-video-id</yt:videoId>
+          <title>145. 口述 SpaceX 开发史</title>
+          <link rel="alternate" href="https://www.youtube.com/watch?v=test-video-id"/>
+          <author><name>Zhang Xiaojun Podcast</name></author>
+          <published>2026-06-12T11:59:49+00:00</published>
+          <media:group>
+            <media:thumbnail url="https://i.ytimg.com/vi/test-video-id/hqdefault.jpg" width="480" height="360"/>
+            <media:description>张小珺与嘉宾的深度访谈节目简介。</media:description>
+          </media:group>
+        </entry>
+      </feed>`, { status: 200, headers: { 'content-type': 'application/atom+xml; charset=utf-8' } });
+  };
+  try {
+    const result = await fetcher.fetchSource({
+      id: 'youtube-podcast-fixture',
+      name: 'YouTube Podcast fixture',
+      category: 'podcast',
+      enabled: true,
+      limit: 10,
+      feeds: [feedUrl],
+    });
+    const entry = result.entries[0];
+
+    assert.equal(result.status, 'ok');
+    assert.equal(entry.title, '145. 口述 SpaceX 开发史');
+    assert.equal(entry.link, 'https://www.youtube.com/watch?v=test-video-id');
+    assert.equal(entry.author, 'Zhang Xiaojun Podcast');
+    assert.equal(entry.published, '2026-06-12T11:59:49.000Z');
+    assert.match(entry.summary, /张小珺与嘉宾的深度访谈节目简介/);
+    assert.match(entry.content, /张小珺与嘉宾的深度访谈节目简介/);
+    assert.equal(entry.image, 'https://i.ytimg.com/vi/test-video-id/hqdefault.jpg');
+  } finally {
+    restoreDns();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('embedded article publication date wins over CMS update metadata', () => {
   const html = String.raw`self.__next_f.push([1,"{\"_createdAt\":\"2025-02-24T14:37:19Z\",\"_updatedAt\":\"2026-07-03T10:15:42Z\",\"publishedOn\":\"2025-02-24T14:38:00.000Z\"}"])`;
 
