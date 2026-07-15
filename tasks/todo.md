@@ -103,11 +103,11 @@
 
 ## Plan
 
-- [ ] Reproduce the live selection lifecycle and identify why the source highlight disappears.
-- [ ] Add a regression guard for a focus-independent draft highlight and its cleanup lifecycle.
-- [ ] Keep the selected source range visibly highlighted while the annotation popover owns focus.
-- [ ] Verify cleanup on dismiss, submit, navigation, and unsupported-browser fallback behavior.
-- [ ] Run focused/full tests, syntax and diff checks, then verify the rendered interaction in Chrome.
+- [x] Reproduce the live selection lifecycle and identify why the source highlight disappears.
+- [x] Add a regression guard for a focus-independent draft highlight and its cleanup lifecycle.
+- [x] Keep the selected source range visibly highlighted while the annotation popover owns focus.
+- [x] Verify cleanup on dismiss, submit, navigation, and unsupported-browser fallback behavior.
+- [x] Run focused/full tests, syntax and diff checks, then verify the rendered interaction in Chrome.
 
 ## Verification contract
 
@@ -117,7 +117,13 @@
 
 ## Review
 
-- Pending.
+- Root cause: `showAnnotationPopover()` automatically focused its textarea after caching only the selected string. Chrome then collapsed the document Selection; the `selectionchange` guard deliberately kept the focused popover open, producing the exact “popover visible, source highlight missing” state.
+- The draft now clones its live Range into the CSS Custom Highlight registry before autofocus. `hideAnnotationPopover()` removes that highlight, and entry changes, reader close/reload, copy, send-to-AI, submit, Escape, and outside clicks all share that cleanup path. Unsupported browsers skip autofocus so their native selection remains visible.
+- The new three-test regression suite proves registration, cleanup, fallback, cloned-Range wiring, and visible styling. The full base branch passes 332/332 tests; the production release branch, including the podcast work, passes 335/335. JavaScript syntax, asset hashes, and `git diff --check` pass.
+- Local and production Chrome both show the annotation textarea focused while the native Selection is collapsed and one independent highlight Range remains. On the live screenshot article, `杀死 AI slop` keeps its blue-gray background while typing; Escape removes the popover and highlight. Browser errors: 0.
+- Sibling sweep: the one shared selection/popover implementation serves original, rewrite, and translation surfaces. No second autofocus-driven annotation path exists, and all direct draft resets were routed through the shared cleanup.
+- Deployed image `sha256:d2051b08128f0a59ca6d4e2f1e9426f2537b8d997f23b1abd376627a578956f3`. Public `/` and `/api/me` return 200, the public app/style hashes match the release files, SQLite reports `quick_check=ok` with zero foreign-key violations, recent error lines are 0, and the container is running with zero restarts.
+- Backup: `/opt/rssreader-backups/annotation-selection-20260715T141539Z`; rollback image: `rssreader-namoo-reader:rollback-annotation-selection-20260715T141539Z`.
 
 ---
 
