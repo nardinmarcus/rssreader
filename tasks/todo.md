@@ -1,4 +1,231 @@
+# Onepage 1200-character generation regression
+
+## Plan
+
+- [x] Reproduce an otherwise valid model payload that exceeds the aggregate 1200-character contract.
+- [x] Add a regression proving the repair request receives a concrete compact-output budget and succeeds.
+- [x] Align the initial Onepage prompt with the aggregate budget without weakening validation or provenance checks.
+- [x] Run focused Onepage tests, the full suite, syntax checks, and `git diff --check`.
+
+## Verification contract
+
+1. Contract -> verify: direct `OnepageV1` normalization still rejects payload text above 1200 characters.
+2. Generation -> verify: an oversized first provider response is repaired into a valid result instead of surfacing the 422 error.
+3. Safety -> verify: unknown segment IDs, markup, URLs, and invalid structure still fail closed.
+
+## Review
+
+- Root cause: valid per-field maxima and maximum item counts could add up to 4,624 characters, while the provider received only a general 1,200-character request before the aggregate validator rejected the result.
+- Kept the hard 1,200-character contract and added a 900-character generation target, minimum default item counts, field budgets, and an aggregate-length-aware repair instruction.
+- The regression failed against the old generic retry and passes after the fix. Focused Onepage tests pass 19/19; the full suite passes 311/311; syntax and `git diff --check` pass.
+- Deployed only `lib/deepseek.js` and `lib/onepage-contract.js` to production image `sha256:a3c947c6fc99...`. Internal/public HTTP return 200, live and backup SQLite both report `quick_check=ok`, and a real non-persisting DeepSeek probe generated a valid 345-character Onepage.
+- Production backup: `/opt/rssreader-backups/onepage-length-20260715T123000Z`; rollback image: `rssreader-namoo-reader:rollback-onepage-length-20260715T123000Z`.
+
+---
+
+# Sidebar redesign — selected direction 2
+
+## Plan
+
+- [x] Add regression coverage for the selected sidebar hierarchy, theme modes, and explicit 264px/64px states.
+- [x] Move link submission into the brand header and split navigation into primary reading filters plus secondary shortcuts.
+- [x] Move theme control beside the account area with system/light/dark selection and keyboard-safe menu behavior.
+- [x] Remove the 188px half-expanded desktop state while preserving reading, collapsed, and mobile layouts.
+- [x] Verify focused/full tests, syntax and diff checks, then compare browser captures with the selected visual target.
+
+## Verification contract
+
+1. Brand integrity -> verify: expanded title is fully visible; compact layouts intentionally hide it instead of clipping it.
+2. Navigation hierarchy -> verify: all/unread/hot are primary; favorite/history/contributors are secondary; counts and active states still update.
+3. Theme behavior -> verify: system/light/dark persist, system follows OS changes, and the menu supports pointer and keyboard use.
+4. Responsive behavior -> verify: desktop uses only 264px expanded or 64px collapsed; reading and mobile layouts remain usable.
+5. Visual fidelity -> verify: local browser captures match the selected option 2 and `design-qa.md` ends with `final result: passed`.
+
+## Review
+
+- Reworked the sidebar around the selected direction 2: full 264px brand header, quiet `提交` action, edge collapse control, 3+3 navigation, one-line source tools, and a 64px icon rail.
+- Moved theme selection beside the account area and added persistent `浅色 / 深色 / 跟随系统` modes with pointer and complete keyboard behavior.
+- Added hierarchy, width, theme, and content-hash regressions. Focused tests pass 16/16; the full suite passes 310/310; JavaScript syntax and `git diff --check` pass.
+- Browser verification passes at 1280px, 980px, and 390px: the title is not clipped, expanded/collapsed widths are 264px/64px, horizontal overflow is zero, reading-mode Escape behavior is preserved, and the console is clean.
+- Three rounds of visual comparison against the selected target are recorded in `design-qa.md`; the final expanded, theme-menu, and collapsed captures pass with no actionable P0-P2 differences.
+
+## Production deployment
+
+- [x] Confirm the current VPS path, container health, and the four changed runtime assets plus their icon generator source.
+- [x] Back up the production assets, Compose configuration, environment file, and SQLite database before mutation.
+- [x] Copy only the verified sidebar assets and icon generator, then rebuild/recreate `namoo-reader`.
+- [x] Verify SQLite integrity, `/api/me`, public HTTPS, asset hashes, container logs, and rendered sidebar behavior.
+- [x] Record the deployed image, backup path, and rollback command.
+
+### Deployment verification contract
+
+1. Scope -> verify: runtime changes are limited to `public/index.html`, `public/app.js`, `public/styles.css`, and `public/lucide-icons.js`; `scripts/generate-lucide-icons.js` is synchronized as their generation source.
+2. Durability -> verify: SQLite and `.env` have timestamped pre-deploy backups and the database passes `PRAGMA quick_check` after recreation.
+3. Runtime -> verify: the container is healthy, `/api/me` and public HTTPS return 200, and recent logs contain no startup errors.
+4. Frontend identity -> verify: production hashes exactly match the locally tested files and HTML references their content-hash versions.
+5. Behavior -> verify: the live browser shows 264px expanded, 64px collapsed, an untruncated brand, the bottom theme menu, and no horizontal overflow or console errors.
+
+### Deployment review
+
+- Deployed production image `sha256:e88e578bfc36...`, replacing `sha256:9b1373d11d80...`; the previous image remains tagged as `rssreader-namoo-reader:rollback-sidebar-v2-20260715T033716Z`.
+- Preserved the previous assets, build configuration, mode-600 `.env`, and a 213,131,264-byte SQLite snapshot at `/opt/rssreader-backups/sidebar-v2-20260715T033716Z`. The live and backup databases both returned `PRAGMA quick_check=ok`; the backup root is mode 700.
+- Container and public `/` plus `/api/me` return HTTP 200. The new container's five deployed-file hashes match the locally tested files exactly, and the live HTML references the three immutable content-hash asset URLs.
+- Production browser verification passes at 1456px, 980px, and 390px: 264px expanded, 64px collapsed, full brand title, upward theme menu, visible compact theme control, zero horizontal overflow, and zero console warnings/errors.
+- Rollback command:
+
+  ```bash
+  ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/sidebar-v2-20260715T033716Z; cp -a "$b/public/." public/; cp -a "$b/scripts/generate-lucide-icons.js" scripts/; docker image tag rssreader-namoo-reader:rollback-sidebar-v2-20260715T033716Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
+  ```
+
+---
+
+# Reader tabs single-row regression
+
+## Plan
+
+- [x] Reproduce the screenshot symptom and trace the active desktop layout rule.
+- [x] Add a regression test requiring the three reader tabs to share one equal-width row.
+- [x] Fix the stale two-column rule without changing tab behavior or mobile overflow.
+- [x] Verify focused/full tests, desktop and 390px browser geometry, then deploy and recheck production.
+
+## Review
+
+- Root cause: the desktop compact-reader rule still declared a two-column grid after the third Onepage tab was added, so CSS correctly laid the controls out as two items plus a second row.
+- Updated both reader-tab column declarations to three equal tracks and advanced the stylesheet cache key to `v=161`; no tab behavior, Onepage permissions, or content layout changed.
+- The regression test failed against `repeat(2, ...)` before the fix and passes after it. Focused tests pass 5/5; the full suite passes 308/308; `git diff --check` and syntax checks pass.
+- Local and production browser geometry both show one row with equal-width controls at 1280px and 390px with no horizontal overflow; the production page has no console/page errors.
+- Deployed production image `sha256:9b1373d11d80...`; the exact pre-fix CSS, HTML, and image are preserved at `/opt/rssreader-backups/reader-tabs-20260714T173612Z` and its matching rollback tag.
+
+---
+
 # Brand title truncation fix
+
+---
+
+# Onepage implementation plan
+
+> Implementation and the admin-only production canary are complete. Promotion to all signed-in users remains a separate approval gate.
+
+## Product scope
+
+- [x] Add only the six approved sources: Claude Blog, LangChain Blog, Every, Thinking Machines Lab, Lilian Weng, and Google Research.
+- [x] Add a reader-level `Onepage` workspace; keep translation, creation draft, comments, and chat behavior unchanged.
+- [x] Generate Onepage on demand for signed-in users. Do not auto-generate it during feed refresh or background rewrite jobs.
+- [x] Save each Onepage as a private preview first; publish it to the public asset directory, contributor page, RSS, sitemap, and canonical article routes only after an explicit publish action.
+- [x] Use `onepage` as the only code, route, query, storage, and UI identifier; add a regression scan preventing the superseded name from entering product copy or identifiers.
+- [x] Defer Comic completely. This stage adds no Comic schema, route, prompt, provider, image generation, media storage, or image-host integration.
+
+## Recommended first-release contract
+
+### Onepage
+
+- One responsive standalone page, not a claim that all content must fit in one viewport.
+- One fixed light editorial template in the first release; no template gallery or style picker.
+- Structured sections: title, one-sentence thesis, 3–5 key points, evidence, framework/steps when present, implications/questions, and source footer.
+- Maximum target length: 1,200 Chinese characters, excluding source metadata.
+- Every factual point carries one or more `article_documents` segment IDs; the renderer exposes “查看原文依据” without copying large source passages.
+- The model returns validated JSON only. HTML, CSS, links, source metadata, and escaping are produced deterministically by the renderer.
+
+## Architecture and module seams
+
+### Source of truth
+
+- [x] Read article material from the current SQLite `article_documents` row and its stable segments/resources, not from `cache.json` or ad-hoc HTML extraction.
+- [x] Pin every artifact version to `document_id`, `source_hash`, `pipeline_hash`, and `prompt_version`.
+- [x] When the current article document changes, mark the old artifact stale; do not silently overwrite it or mutate an existing public URL.
+
+### Deep Onepage module
+
+- [x] Add `lib/onepage.js` with a small external interface:
+  - `generateOnepage(entry, options)` returns a cached version or creates a new private version.
+  - `getOnepage(entryId, options)` returns one authorized version plus freshness and publication state.
+  - `publishOnepage(onepageId, viewer)` performs the explicit private-to-public transition.
+- [x] Keep prompt construction, JSON validation, provenance checks, deterministic rendering, caching, and freshness rules behind that interface.
+- [x] Reuse the current site-AI/BYOK request configuration path; do not add a new provider abstraction for this text-only stage.
+
+### Additive SQLite model
+
+- [x] Add `entry_onepages` as immutable versions with: `id`, `entry_id`, `document_id`, owner fields, `schema_version`, `source_hash`, `pipeline_hash`, `prompt_version`, `generation_hash`, `title`, `preview_text`, `payload_json`, `visibility`, `published_at`, provider/model metadata, and timestamps.
+- [x] Enforce database checks for `visibility IN ('private','public')`, owner consistency, valid JSON payloads at the module interface, and document/entry identity.
+- [x] Make generation hashes cache identical non-force requests; force regeneration creates a new immutable version and keeps old public links stable.
+- [x] Keep existing translation/rewrite tables intact; this is an additive migration, not a rewrite of the current asset model.
+
+### Routes and public asset integration
+
+- [x] Add authenticated routes:
+  - `POST /api/entry/:id/onepage`
+  - `GET /api/entry/:id/onepage`
+  - `POST /api/onepages/:id/publish`
+- [x] Add the stable public route `/articles/<slug>--<short-id>/onepage/<onepage-id>`.
+- [x] Extend the existing asset type normalizer, counts, previews, reactions, contributor aggregation, canonical metadata, structured data, RSS, and sitemap behavior for published artifacts only.
+- [x] Keep private Onepages out of list projections, public APIs, SEO metadata, RSS, sitemap, contributor pages, and anonymous direct access.
+
+## Phased delivery
+
+### Phase 0 — contracts and exact source scope
+
+- [x] Add the six selected source configurations and an exact allowlist regression test; do not add other candidates from the XiaoHu audit.
+- [x] Write the `OnepageV1` JSON contract and validator before adding the model call.
+- [x] Add representative article-document fixtures: research paper, product launch, long essay, sparse feed article, and article with images/links.
+- [x] Lock the user-facing vocabulary and URL grammar around `Onepage` / `onepage`.
+
+### Phase 1 — Onepage foundation
+
+- [x] Add idempotent SQLite migrations, store queries, immutable version behavior, private/public visibility, and stale-source detection.
+- [x] Implement the Onepage module with an injected model function; prove the full lifecycle through a fake model without an external call.
+- [x] Add route authorization and a recommended default limit of 20 Onepage generations per user per day.
+
+### Phase 2 — Onepage end to end
+
+- [x] Build the Onepage prompt from article-document segments and resources, requiring segment-level evidence references.
+- [x] Reject missing/unknown segment IDs, unsupported sections, excessive text, empty claims, external URLs not present in article resources, and model-generated HTML.
+- [x] Render the validated payload with a deterministic, responsive light template.
+- [x] Add the Onepage reader tab with empty, generating, ready, stale, failed, private, and published states.
+- [x] Support copy link, publish, regenerate, and expandable source-evidence excerpts. Defer PNG export until the responsive HTML version is accepted.
+
+### Phase 3 — Onepage public surface and canary
+
+- [x] Add published Onepage items to the asset directory, My Space, contributor pages, reactions, RSS, sitemap, and social metadata.
+- [x] Add the local rollout gate `ONEPAGE_MODE=off|admin|all` (default `off`) and verify fixtures, provenance, mobile layout, stale behavior, and restart persistence locally.
+- [ ] Promote to signed-in users only after the canary passes and production logs show no job, migration, or authorization errors.
+
+### Phase 4 — release candidate and deployment gate
+
+- [x] Run clean install, full tests, syntax checks, migration-twice/idempotency checks, SQLite `quick_check`, dependency audit, Docker build, and `git diff --check`.
+- [x] Verify populated SQLite still serves articles and generated artifacts independently of `cache.json`.
+- [x] Browser-test desktop and 390px mobile paths, with API regressions covering stale source, retries, private denial, canonical links, restart persistence, and public asset projections.
+- [x] Stop after local verification and request separate deployment approval.
+- [x] After approval, back up production SQLite and environment, deploy the exact verified image, run an admin canary generation, restart the container, and reverify internal/public health.
+- [x] Preserve the previous image and consistent SQLite/environment/application backups as the rollback point. Rollback was not invoked because all deployment gates passed; the database backup remains untouched.
+
+## Verification contract
+
+1. Data authority -> verify: article documents and generated artifacts come from SQLite when runtime cache files are absent.
+2. Provenance -> verify: every factual Onepage item resolves only to segment IDs in its pinned article document.
+3. Immutability -> verify: regeneration creates a new version while every previously published URL keeps its original content.
+4. Privacy -> verify: private previews are inaccessible anonymously and absent from every public projection.
+5. Idempotency -> verify: identical non-force requests reuse an existing private version; force regeneration creates one new immutable version.
+6. Secret boundary -> verify: model keys never enter responses, logs, SQLite payloads, or Git diffs; browser-owned keys remain browser-owned.
+7. Rendering safety -> verify: model output cannot inject HTML, scripts, CSS, arbitrary links, or untrusted image URLs.
+8. Product continuity -> verify: translation, creation drafts, comments, chat, source management, moderation, and current public asset URLs are unchanged.
+9. Production -> verify: private canary Onepages survive container restart and remain anonymous 404 until explicit publication; explicitly published URLs return 200, SQLite is healthy, and recent logs contain no migration or generation errors.
+
+## Decisions to confirm before implementation
+
+- [x] Confirm the recommended publication rule: private preview first, explicit publish second.
+- [x] Confirm the first Onepage template direction: fixed warm-white editorial layout with no theme picker.
+- [x] Defer Comic, image generation, image providers, media storage, and image-host integration to a later project stage.
+
+## Review
+
+- Added only the six approved sources through their official endpoints. The 2026-07-14 live parse snapshot found 185 Claude Blog sitemap URLs, 469 LangChain Blog sitemap URLs, 50 Every RSS items, 6 Thinking Machines Lab RSS items, 53 Lilian Weng RSS items, and 100 Google Research RSS items.
+- Onepage reads authoritative SQLite article documents, validates every claim against pinned segment IDs, renders escaped responsive HTML, and exposes short expandable source excerpts. Each generated version is immutable, private by default, explicitly publishable, and stale-aware.
+- Published Onepages now participate in the existing asset directory, My Space, contributor pages, helpful reactions, RSS, sitemap, canonical article route, and metadata surfaces. Private previews remain absent from every public projection and anonymous direct reads.
+- Clean `npm ci` and the final full suite pass 307/307. Syntax checks, `git diff --check`, app asset hashing, scope scans, dependency audit (0 vulnerabilities), migration-twice plus SQLite `quick_check`, Compose validation, and Docker builds pass.
+- Real-browser verification covered private generation, explicit publication, stable public URL after restart, asset directory projection, desktop layout, 390px mobile stacking with no horizontal overflow, no images, and no console errors. API regressions cover stale source, anonymous denial, rate limiting, and restart persistence.
+- Deployed the admin-only canary to production image `sha256:21d4518024bd...` with `ONEPAGE_MODE=admin`. The six approved sources refreshed 56 entries without source errors; after restart SQLite reports `quick_check=ok`, 0 foreign-key violations, 1 private Onepage, and 0 public Onepages.
+- The real DeepSeek canary exposed and fixed two production-only contract boundaries: Onepage now reserves 4,500 output tokens without changing other AI calls, and one contract-invalid response receives one validation-guided retry before failing closed. The final private canary survived restart, contains no images, and remains anonymous 404; it was not published.
+- Production desktop and 390px browser checks pass with no horizontal overflow, console errors, or private-Onepage leakage. The rollback package is `/opt/rssreader-backups/onepage-20260714T170142Z`; Comic and every image-generation/media-storage integration remain intentionally absent.
 
 ---
 

@@ -1,5 +1,7 @@
 # Deployment lessons
 
+- SQLite `VACUUM INTO` requires the destination to be a SQL string literal; `JSON.stringify()` produces double quotes that SQLite treats as an identifier. Escape single quotes explicitly, verify the snapshot with `PRAGMA quick_check`, and only then move it out of the live data volume.
+- `install -d -m 700 "$backup/public"` can leave an implicitly created parent backup directory at the process default mode. Create or chmod the backup root explicitly and verify both `.env` and SQLite backup permissions before declaring the rollback package complete.
 - Never ship changed browser JavaScript under an unchanged immutable asset URL. Derive the query version from the shipped file hash and enforce the match in tests so a new HTML shell cannot run against a stale application script.
 - Read the production SQLite filename from the repository's store configuration before running an integrity probe; do not guess a generic database name from the project name.
 - In zsh, enable `null_glob` or test a directory before iterating optional file patterns; one unmatched pattern aborts the whole command even when a later pattern would match.
@@ -51,6 +53,10 @@
 - Deployment smoke tests and README API tables must reuse the exact route exercised by automated tests; this project keeps the compatibility endpoint `/api/submit-link`, not a guessed `/api/submit-article` alias.
 - Every remote post-deploy command must establish `/opt/rssreader` explicitly before checking relative files such as `.env`; prefer `cmp -s` for exact secret-file equality so hashes and shell quoting never expose or misread the configuration.
 - In research and recommendation tasks, treat “可以纳入” as a selection decision, not implementation authorization. Wait for an explicit “开始 / 实施 / 部署” before changing the repository or production, and keep implementation and deployment approvals separate.
+- When an implementation scope explicitly defers a feature such as Comic or image generation, remove its schema, routes, prompts, providers, and storage work from the active plan; do not leave dormant scaffolding that silently expands the current phase.
+- In Node stdin verification scripts, do not bind a top-level variable named `window` before loading DOMPurify; use a name such as `jsdomWindow` so the library's global-environment probe cannot collide with the script binding.
+- Do not embed a quoted `node -e` JSON assertion inside a single-quoted SSH script; fetch the safe JSON over SSH and parse it locally, or stream a Node script directly to the remote process.
+- A process cannot use standard input for both a heredoc script and piped JSON; when parsing remote JSON locally, use `node -e` for the parser so stdin remains available for the response body.
 - A shared finalization hook does not prove source provenance survived a parser. Add one fixture per special source path and assert the raw bytes or source components at the document boundary.
 - A migration scan must include every field needed to reconstruct identity, especially the canonical link used to resolve relative HTML resources.
 - Immutable document equality must exclude observation metadata such as snapshot IDs and timestamps while retaining every semantic field that changes rendered output.
@@ -96,3 +102,8 @@
 - Content that must be preserved exactly, such as code, should bypass the model and be injected locally; asking a probabilistic provider to echo immutable bytes creates avoidable schema failures.
 - When an exact remote archive deployment is sensitive to SSH churn, stream extraction, file-count validation, and destination sync through one connection; after any disconnect, prove the running image and mode are unchanged before retrying.
 - Resource-preservation audits must compare URL occurrences as a multiset, not a set of unique resource IDs; one immutable resource can legitimately appear at multiple AST positions.
+- Production database verification scripts must use the repository's actual SQLite driver (`node:sqlite` here); do not assume `better-sqlite3` is installed merely because the database format is SQLite.
+- In zsh verification wrappers, do not assign to the reserved read-only parameter `status`; capture command exit codes in a neutral variable such as `rc`.
+- When adding a reader tab, test the active breakpoint layout as well as DOM presence; a stale fixed column count can turn a valid third tab into a visible second row.
+- A stylesheet cache-busting version and any exact HTML regression assertion are one release unit; update and verify them together so production does not retain the fixed CSS under an old URL.
+- SQLite `VACUUM INTO` requires a single-quoted SQL string literal; `JSON.stringify(path)` emits double quotes that SQLite interprets as an identifier. Build the literal with escaped single quotes or use a safe binding seam, and keep the backup step before runtime-file replacement.
