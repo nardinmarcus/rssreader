@@ -11,7 +11,7 @@
 - [x] Add failing regression coverage for a semantic video player, separated show notes, timestamp links, related links, and an explicit transcript boundary.
 - [x] Render YouTube Podcast entries as video-first content without weakening HTML sanitization or generic RSS behavior.
 - [x] Run focused/full tests and an isolated preview from the official Atom snapshot.
-- [ ] Back up production, deploy, refresh existing entries, and verify desktop/mobile screenshots plus SQLite/API/log health.
+- [x] Back up production, deploy, refresh existing entries, and verify desktop/mobile screenshots plus SQLite/API/log health.
 
 ## Verification contract
 
@@ -20,6 +20,20 @@
 3. Structure -> verify: introduction, timeline, related links, disclaimer, and contact render as separate semantic blocks; timestamp and external links are clickable.
 4. Safety -> verify: iframe origin and URL are derived from a validated YouTube video ID, sanitizer coverage remains intact, and non-YouTube feeds are unchanged.
 5. Production -> verify: the reported episode renders cleanly at desktop and mobile widths, persists after refresh/restart, and public APIs plus logs remain healthy.
+
+## Review
+
+- Replaced the collapsed YouTube description with a video-first reader: a validated `youtube-nocookie.com` player plus separate introduction, timeline, related-links, disclaimer, and contact sections. The reported episode renders 6 clickable timestamps and 12 links.
+- Verified that this episode exposes neither subtitles nor automatic captions. The reader therefore labels the text as show notes, explicitly states the transcript boundary, and presents the playable video as the complete source instead of claiming the description is a transcript.
+- Kept the generic sanitizer unchanged. Stored article HTML contains only a validated player placeholder (`stored iframe count = 0`); the browser creates the trusted iframe from the strict 11-character YouTube video ID.
+- Focused and complete tests pass (`332/332`), the real YouTube Atom feed produced 10 structured entries in the isolated VPS probe, and production Chrome verification passed at desktop and 390 px mobile widths with no horizontal overflow, console errors, or script exceptions.
+- Deployed image `sha256:290cf766f0702b188dcb8dd5c86879cbccd28696972e0d881dc91a975d0066e8`. The targeted refresh updated all 10 `xiaojunpodcast` entries; SQLite `quick_check=ok`, internal/public endpoints return 200, recent error lines are 0, restart count is 0, and the concurrently added 潮流周刊 source remains present.
+- Backup: `/opt/rssreader-backups/youtube-podcast-reader-20260715T132513Z`; rollback image: `rssreader-namoo-reader:rollback-youtube-reader-20260715T132513Z`.
+- Application rollback (keeps later SQLite data intact):
+
+  ```bash
+  ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/youtube-podcast-reader-20260715T132513Z; install -m 644 "$b/lib/fetcher.js" lib/fetcher.js; install -m 644 "$b/lib/store.js" lib/store.js; install -m 644 "$b/public/app.js" public/app.js; install -m 644 "$b/public/index.html" public/index.html; install -m 644 "$b/public/styles.css" public/styles.css; docker image tag rssreader-namoo-reader:rollback-youtube-reader-20260715T132513Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
+  ```
 
 ---
 
