@@ -1060,15 +1060,15 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 - [x] Confirm the product boundary, information architecture, master-detail layout, and account-disable confirmation behavior.
 - [x] Write, review, and approve the user-management design specification.
 - [x] Produce the detailed RED/GREEN implementation plan.
-- [ ] Receive user approval of the implementation plan.
-- [ ] Add the audit schema, paginated user queries, and user detail aggregation.
-- [ ] Make disable, restore, and submission takedown atomic, auditable, and idempotent.
-- [ ] Extend the protected administrator user APIs without weakening the compatibility route.
-- [ ] Split User Management from Content Moderation inside My Space.
-- [ ] Implement desktop master-detail and mobile detail navigation.
-- [ ] Add safe confirmation, conflict refresh, and non-optimistic account actions.
-- [ ] Pass store, HTTP, security, static asset, full-suite, and authenticated browser verification.
-- [ ] Back up production, deploy the verified build, and complete read-only live acceptance.
+- [x] Receive user approval of the implementation plan.
+- [x] Add the audit schema, paginated user queries, and user detail aggregation.
+- [x] Make disable, restore, and submission takedown atomic, auditable, and idempotent.
+- [x] Extend the protected administrator user APIs without weakening the compatibility route.
+- [x] Split User Management from Content Moderation inside My Space.
+- [x] Implement desktop master-detail and mobile detail navigation.
+- [x] Add safe confirmation, conflict refresh, and non-optimistic account actions.
+- [x] Pass store, HTTP, security, static asset, full-suite, and authenticated browser verification.
+- [x] Back up production, deploy the verified build, and complete non-destructive production acceptance.
 
 ## Verification contract
 
@@ -1078,5 +1078,21 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
 4. Restore boundary -> verify: login is re-enabled while old sessions and hidden content remain inactive.
 5. UI behavior -> verify: routes, filters, pagination, master-detail selection, mobile return, confirmation, and 409 refresh work in an authenticated browser.
 6. Production safety -> verify: migration preserves user/admin/article counts and the administrator password hash; live acceptance performs no synthetic destructive mutation.
+
+## Review
+
+- Added atomic, idempotent disable/restore/submission-takedown transactions, exact impact conflicts, session revocation, SQLite-only public projection rebuilding, and immutable audit rows. Implementation commits: `ce007e3` and `841c08f`.
+- `npm test` passes 326/326. The asset identity suite passes 5/5, the dialog regression suite passes 15/15, JavaScript syntax checks pass, and `git diff --check` is clean.
+- Authenticated browser proof used 59 synthetic users, 55 submissions, two sessions, and one pending request. Desktop pagination returned 50 then 5 submissions; 390x844 master-detail navigation had zero horizontal overflow; unsafe display-name markup rendered as text; ordinary users normalized `/me?tab=users` and `/admin` to `/me`; browser warnings/errors were empty.
+- A browser-only Escape regression was found before deployment. The application keydown boundary now closes the governance dialog directly instead of depending on a browser-emitted native `cancel` event; the failed regression test turns green and the real dialog closes without submitting.
+- A local SQLite copy initialized twice with unchanged facts and `quick_check=ok`; `admin_action_logs` migrated from absent to present with zero rows. Production migration preserved 2 users, 1 administrator, 1098 entries, and administrator password digest `fce88356911c4c1a`; live SQLite remains WAL with `quick_check=ok` and zero audit rows.
+- Deployed image `sha256:5b5252a32d7eb48f81a035d0b744fc3bdbad6e11a28361765c2d90ce3db91af3`. All six container file hashes match the locally tested files, public HTML references `styles.css?v=20c2e3e7f969` and `app.js?v=a8c5625599c1`, and internal/public root, `/api/me`, sources, and entries return 200 while anonymous user management returns 401. Recent production error lines: 0.
+- The production bootstrap password correctly failed with 401 because it is no longer the account's current password; it was not reset. Full authenticated list/detail/submission GET acceptance ran against the exact deployed image plus a production SQLite snapshot in an isolated disposable container, returned 200 throughout, exposed no password/session fields, and executed no governance action. The live database remained at 2 users and zero audit rows.
+- Backup: `/opt/rssreader-backups/user-management-20260715T085942Z` (root mode 700; SQLite/config mode 600; snapshot `quick_check=ok`). Rollback image: `rssreader-namoo-reader:rollback-user-management-20260715T085942Z`.
+- Rollback command:
+
+  ```bash
+  ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/user-management-20260715T085942Z; install -m 644 "$b/lib/store.js" lib/store.js; install -m 644 "$b/lib/fetcher.js" lib/fetcher.js; install -m 644 "$b/server.js" server.js; install -m 644 "$b/public/index.html" public/index.html; install -m 644 "$b/public/app.js" public/app.js; install -m 644 "$b/public/styles.css" public/styles.css; docker image tag rssreader-namoo-reader:rollback-user-management-20260715T085942Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
+  ```
 
 ---

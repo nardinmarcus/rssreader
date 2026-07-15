@@ -1,5 +1,8 @@
 # Deployment lessons
 
+- Tests that share one module-scoped temporary SQLite database must clean up globally queried states in `finally`; otherwise an earlier RED failure can pollute later tests and hide the actual missing behavior.
+- Node's `assert.throws()` validates but does not return the thrown error; capture it inside the validation callback when later assertions need structured fields such as `currentImpact`.
+- After a broad-context `apply_patch` touches a repeated mapper field, immediately inspect every match; generic context can land in the first similar object and silently duplicate an unrelated projection.
 - SQLite `VACUUM INTO` requires the destination to be a SQL string literal; `JSON.stringify()` produces double quotes that SQLite treats as an identifier. Escape single quotes explicitly, verify the snapshot with `PRAGMA quick_check`, and only then move it out of the live data volume.
 - `install -d -m 700 "$backup/public"` can leave an implicitly created parent backup directory at the process default mode. Create or chmod the backup root explicitly and verify both `.env` and SQLite backup permissions before declaring the rollback package complete.
 - Never ship changed browser JavaScript under an unchanged immutable asset URL. Derive the query version from the shipped file hash and enforce the match in tests so a new HTML shell cannot run against a stale application script.
@@ -106,6 +109,7 @@
 - In zsh verification wrappers, do not assign to the reserved read-only parameter `status`; capture command exit codes in a neutral variable such as `rc`.
 - When adding a reader tab, test the active breakpoint layout as well as DOM presence; a stale fixed column count can turn a valid third tab into a visible second row.
 - A stylesheet cache-busting version and any exact HTML regression assertion are one release unit; update and verify them together so production does not retain the fixed CSS under an old URL.
+- When a server loads `index.html` into memory at startup, changing the application script and its cache key requires restarting the browser fixture before diagnosis; verify the actually served script URL before trusting an event probe.
 - SQLite `VACUUM INTO` requires a single-quoted SQL string literal; `JSON.stringify(path)` emits double quotes that SQLite interprets as an identifier. Build the literal with escaped single quotes or use a safe binding seam, and keep the backup step before runtime-file replacement.
 - Navigation surfaces must represent distinct dimensions. Do not preserve a left-side group that contains only `全部`, and do not duplicate `热门 / 未读` across columns; keep subscription type/source scope in the sidebar, ordering in the list controls, and unread as an independent list toggle, then verify that changing one dimension preserves the others.
 - A persisted navigation label and its data-query scope must restore atomically. If the URL and entry filter do not persist a selected subscription type, do not persist only the sidebar highlight; verify a full page reload after each stateful navigation redesign, not only in-session clicks.
