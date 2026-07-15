@@ -218,6 +218,83 @@ test('My Space is the sole account workspace and subscription management is not 
   assert.match(styles, /#app\.workspace-page-open #sidebar\s*\{\s*display:\s*none;/);
 });
 
+test('My Space separates user management from pending-content moderation', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const adminTabs = html.slice(
+    html.indexOf('id="dashboard-admin-tab-group"'),
+    html.indexOf('</div>', html.indexOf('id="dashboard-admin-tab-group"')),
+  );
+  const moderationPanel = html.slice(
+    html.indexOf('id="dashboard-moderation-panel"'),
+    html.indexOf('id="contributor-page"'),
+  );
+
+  assert.match(adminTabs, /data-dashboard-tab="users"[\s\S]*data-dashboard-tab="moderation"[\s\S]*data-dashboard-tab="sources"/);
+  assert.match(html, /id="dashboard-users-panel"/);
+  assert.match(html, /id="user-management-list"/);
+  assert.match(html, /id="user-management-detail"/);
+  assert.doesNotMatch(moderationPanel, /投稿账号|moderation-user-list|moderation-user-detail/);
+  assert.match(app, /DASHBOARD_TABS = \[[^\]]*'users'/);
+  assert.match(app, /function adminUrlFor\(\)[\s\S]{0,120}dashboardUrlFor\('users'/);
+  assert.doesNotMatch(app, /api\/admin\/users\?limit=500/);
+});
+
+test('user management keeps server pagination and responsive selection in URL-backed state', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+
+  assert.match(app, /userManagement:\s*\{/);
+  assert.match(app, /function applyUserManagementRoute\(/);
+  assert.match(app, /function syncUserManagementUrl\(/);
+  assert.match(app, /async function loadUserManagement\(/);
+  assert.match(app, /async function loadUserManagementDetail\(/);
+  assert.match(app, /directory\.requestSequence/);
+  assert.match(app, /setTimeout\([\s\S]{0,300}250\)/);
+  assert.match(app, /matchMedia\('\(max-width: 760px\)'\)/);
+  assert.match(app, /replaceState[\s\S]{0,600}userManagement/);
+  assert.match(app, /async function loadAllUserSubmissions\(/);
+  assert.match(app, /\/submissions\?page=\$\{page\}&limit=50/);
+  assert.match(styles, /\.user-management-layout\s*\{[^}]*grid-template-columns:/s);
+  assert.match(styles, /@media \(max-width:\s*760px\)[\s\S]*\.user-management-layout\.is-mobile-detail/s);
+});
+
+test('restricted dashboard routes normalize both the selected panel and browser URL', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const openDashboard = app.slice(
+    app.indexOf('async function openMyCommentsModal'),
+    app.indexOf('function closeMyCommentsModal'),
+  );
+  const openAdmin = app.slice(
+    app.indexOf('async function openAdminPage'),
+    app.indexOf('function closeAdminPage'),
+  );
+
+  assert.match(openDashboard, /requestedTab !== state\.dashboardTab[\s\S]*history\.replaceState/);
+  assert.match(openAdmin, /openMyCommentsModal\(\{ push: false, tab: 'profile' \}\)[\s\S]*history\.replaceState/);
+});
+
+test('user management actions require confirmed snapshots and recover from conflicts without optimistic mutation', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+
+  assert.match(html, /id="user-management-dialog"/);
+  assert.match(html, /id="user-management-dialog-reason"[^>]*maxlength="300"/);
+  assert.match(html, /id="user-management-dialog-check"/);
+  assert.match(app, /function openUserManagementAction\(/);
+  assert.match(app, /async function submitUserManagementAction\(/);
+  assert.match(app, /expectedImpact:\s*action\.impact/);
+  assert.match(app, /expectedVisibleSubmissionCount:\s*action\.impact\.hiddenSubmissionCount/);
+  assert.match(app, /error\.status === 409/);
+  assert.match(app, /action\.impact = error\.data\.currentImpact/);
+  assert.match(app, /check\.checked = false/);
+  assert.match(app, /await loadUserManagement\(\{ force: true \}\)/);
+  assert.match(app, /item\.actorDisplayName \|\| item\.actorEmail \|\| item\.actorUserId/);
+  assert.match(app, /user\.disabledByDisplayName \|\| user\.disabledByEmail \|\| user\.disabledBy/);
+  assert.match(app, /if \(\$\('#user-management-dialog'\)\?\.open\) \{[\s\S]{0,160}e\.preventDefault\(\);[\s\S]{0,160}closeUserManagementAction\(\);[\s\S]{0,80}return;[\s\S]{0,40}\}/);
+  assert.doesNotMatch(app, /detail\.user\.disabled\s*=/);
+});
+
 test('versioned translations expose a safe progress surface and render only server HTML', () => {
   const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');

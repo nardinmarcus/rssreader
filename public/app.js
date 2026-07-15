@@ -38,7 +38,7 @@ const DEFAULT_READER_OPEN_TAB = 'rewrite';
 const READER_OPEN_TABS = ['rewrite', 'original'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'onepage', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
-const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'moderation', 'sources'];
+const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'users', 'moderation', 'sources'];
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', onepage: 'Onepage', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '创作草稿', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
@@ -733,11 +733,32 @@ const state = {
   profileAvatarDraft: '',
   dashboardTab: normalizeDashboardTab(storage.getItem('qm_dashboard_tab')),
   moderationRequests: [],
-  moderationUsers: [],
-  moderationSelectedUser: null,
-  moderationSubmissions: [],
   moderationLoaded: false,
   moderationLoading: false,
+  userManagement: {
+    users: [],
+    summary: { total: 0, active: 0, disabled: 0, admins: 0 },
+    pagination: { page: 1, limit: 50, filteredTotal: 0, pageCount: 1 },
+    q: '',
+    status: 'all',
+    role: 'all',
+    sort: 'created_desc',
+    page: 1,
+    userId: '',
+    detail: null,
+    loading: false,
+    detailLoading: false,
+    loaded: false,
+    requestSequence: 0,
+    detailRequestSequence: 0,
+    searchTimer: null,
+    mobileListScrollTop: 0,
+    allSubmissions: null,
+    allSubmissionsLoading: false,
+    submissionsRequestSequence: 0,
+    action: null,
+    actionBusy: false,
+  },
   editingCustomSourceId: '',
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
@@ -856,7 +877,8 @@ function routeStateFromUrl() {
     entryId: articleRoute && articleRoute.id ? articleRoute.id : String(params.get('entry') || '').trim(),
     dashboard: dashboardPath,
     admin: adminPath,
-    dashboardTab: dashboardPath ? normalizeDashboardTab(params.get('tab')) : 'profile',
+    dashboardTab: adminPath ? 'users' : (dashboardPath ? normalizeDashboardTab(params.get('tab')) : 'profile'),
+    userManagement: userManagementRouteFromParams(params),
     contributorId: contributorMatch ? decodeURIComponent(contributorMatch[1]).trim() : '',
     contributorAssetType: contributorMatch ? normalizeUserAssetTab(params.get('type')) : 'translation',
     contributorAssetSort: contributorMatch && params.get('sort') === 'helpful' ? 'helpful' : 'latest',
@@ -1143,11 +1165,20 @@ function dashboardUrlFor(tab = state.dashboardTab) {
   url.hash = '';
   const nextTab = normalizeDashboardTab(tab);
   if (nextTab !== 'profile') url.searchParams.set('tab', nextTab);
+  if (nextTab === 'users') {
+    const directory = state.userManagement;
+    if (directory.q) url.searchParams.set('q', directory.q);
+    if (directory.status !== 'all') url.searchParams.set('status', directory.status);
+    if (directory.role !== 'all') url.searchParams.set('role', directory.role);
+    if (directory.sort !== 'created_desc') url.searchParams.set('sort', directory.sort);
+    if (directory.page > 1) url.searchParams.set('page', String(directory.page));
+    if (directory.userId) url.searchParams.set('user', directory.userId);
+  }
   return url;
 }
 
 function adminUrlFor() {
-  return dashboardUrlFor('sources');
+  return dashboardUrlFor('users');
 }
 
 function setWorkspacePage(page = '') {
@@ -1799,11 +1830,15 @@ async function api(path, opts) {
   const res = await fetch(path, { ...rest, headers });
   if (!res.ok) {
     let message = `${res.status}`;
+    let data = null;
     try {
-      const data = await res.json();
+      data = await res.json();
       if (data && data.error) message = data.error;
     } catch { /* keep HTTP status */ }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = res.status;
+    error.data = data;
+    throw error;
   }
   return res.json();
 }
@@ -2582,6 +2617,33 @@ function normalizeUserAssetSort(sort = '') {
 function normalizeDashboardTab(tab = '') {
   const normalized = tab === 'ai' ? 'reading' : tab;
   return DASHBOARD_TABS.includes(normalized) ? normalized : 'profile';
+}
+
+function userManagementRouteFromParams(params) {
+  const status = ['all', 'active', 'disabled'].includes(params.get('status')) ? params.get('status') : 'all';
+  const role = ['all', 'user', 'admin'].includes(params.get('role')) ? params.get('role') : 'all';
+  const sort = ['created_desc', 'last_login_desc'].includes(params.get('sort')) ? params.get('sort') : 'created_desc';
+  const parsedPage = Number.parseInt(params.get('page'), 10);
+  return {
+    q: String(params.get('q') || '').trim().slice(0, 100),
+    status,
+    role,
+    sort,
+    page: Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1,
+    userId: String(params.get('user') || '').trim(),
+  };
+}
+
+function applyUserManagementRoute(route) {
+  const next = route && route.userManagement ? route.userManagement : userManagementRouteFromParams(new URLSearchParams());
+  Object.assign(state.userManagement, next, { detail: null, loaded: false });
+  resetUserManagementSubmissions();
+}
+
+function resetUserManagementSubmissions(directory = state.userManagement) {
+  directory.submissionsRequestSequence += 1;
+  directory.allSubmissions = null;
+  directory.allSubmissionsLoading = false;
 }
 
 function assetTypeCount(entries, type) {
@@ -7196,15 +7258,10 @@ function moderationTime(value) {
 
 function renderModeration() {
   const pendingList = $('#moderation-pending-list');
-  const userList = $('#moderation-user-list');
-  const userDetail = $('#moderation-user-detail');
-  if (!pendingList || !userList || !userDetail) return;
+  if (!pendingList) return;
   $('#moderation-pending-count').textContent = String(state.moderationRequests.length);
-  $('#moderation-user-count').textContent = String(state.moderationUsers.length);
   if (state.moderationLoading && !state.moderationLoaded) {
     pendingList.innerHTML = '<div class="moderation-empty">正在读取待审队列…</div>';
-    userList.innerHTML = '<div class="moderation-empty">正在读取账号列表…</div>';
-    userDetail.classList.add('hidden');
     return;
   }
   pendingList.innerHTML = state.moderationRequests.length
@@ -7212,7 +7269,7 @@ function renderModeration() {
       <article class="moderation-item">
         <div class="moderation-item-main">
           <a href="${escapeHtml(request.url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(request.url)}</a>
-          <p>${escapeHtml([request.displayName || request.author, request.email, moderationTime(request.createdAt)].filter(Boolean).join(' · '))}</p>
+          <p>${request.userId ? `<button class="moderation-user-link" type="button" data-moderation-open-user="${escapeHtml(request.userId)}">${escapeHtml(request.displayName || request.author || '投稿用户')}</button> · ` : ''}${escapeHtml([request.email, moderationTime(request.createdAt)].filter(Boolean).join(' · '))}</p>
           ${request.note ? `<p class="moderation-note">${escapeHtml(request.note)}</p>` : ''}
         </div>
         <div class="moderation-actions">
@@ -7221,52 +7278,6 @@ function renderModeration() {
         </div>
       </article>`).join('')
     : '<div class="moderation-empty">没有待审投稿</div>';
-  userList.innerHTML = state.moderationUsers.length
-    ? state.moderationUsers.map(user => `
-      <article class="moderation-item ${user.disabled ? 'is-disabled' : ''}">
-        <div class="moderation-item-main">
-          <strong>${escapeHtml(user.displayName || user.email || '未命名用户')}</strong>
-          <p>${escapeHtml(user.email || '')}</p>
-          <p>${user.activeSubmissionCount} 条公开 · ${user.totalSubmissionCount} 条累计${user.disabled ? ` · 已停用：${escapeHtml(user.disabledReason || '未填写原因')}` : ''}</p>
-        </div>
-        <div class="moderation-actions">
-          <button class="ghost-btn" type="button" data-moderation-action="view-user" data-user-id="${escapeHtml(user.userId)}">查看投稿</button>
-          ${user.role === 'admin'
-            ? '<span class="moderation-badge">管理员</span>'
-            : user.disabled
-              ? `<button class="ghost-btn" type="button" data-moderation-action="restore-user" data-user-id="${escapeHtml(user.userId)}">恢复账号</button>`
-              : `<button class="ghost-btn moderation-danger" type="button" data-moderation-action="disable-user" data-user-id="${escapeHtml(user.userId)}">停用账号</button>`}
-        </div>
-      </article>`).join('')
-    : '<div class="moderation-empty">没有账号数据</div>';
-  const selected = state.moderationSelectedUser;
-  if (!selected) {
-    userDetail.classList.add('hidden');
-    userDetail.innerHTML = '';
-    return;
-  }
-  userDetail.classList.remove('hidden');
-  userDetail.innerHTML = `
-    <div class="moderation-section-head">
-      <div>
-        <h3>${escapeHtml(selected.displayName || selected.email || '投稿详情')}</h3>
-        <p>${escapeHtml(selected.email || '')} · ${selected.activeSubmissionCount} 条公开 / ${selected.totalSubmissionCount} 条累计</p>
-      </div>
-      ${selected.activeSubmissionCount > 0
-        ? `<button class="ghost-btn moderation-danger" type="button" data-moderation-action="delete-submissions" data-user-id="${escapeHtml(selected.userId)}">下线全部投稿</button>`
-        : ''}
-    </div>
-    <div class="moderation-list moderation-detail-list">
-      ${state.moderationSubmissions.length
-        ? state.moderationSubmissions.map(item => `
-          <article class="moderation-item ${item.deletedAt ? 'is-disabled' : ''}">
-            <div class="moderation-item-main">
-              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || item.url)}</a>
-              <p>${escapeHtml(moderationTime(item.updatedAt))}${item.deletedAt ? ' · 已下线' : ''}</p>
-            </div>
-          </article>`).join('')
-        : '<div class="moderation-empty">该账号没有已发布投稿</div>'}
-    </div>`;
 }
 
 async function loadModeration({ force = false } = {}) {
@@ -7274,15 +7285,9 @@ async function loadModeration({ force = false } = {}) {
   state.moderationLoading = true;
   renderModeration();
   try {
-    const [pendingData, userData] = await Promise.all([
-      api('/api/admin/submission-requests?status=pending&limit=200'),
-      api('/api/admin/users?limit=500'),
-    ]);
+    const pendingData = await api('/api/admin/submission-requests?status=pending&limit=200');
     state.moderationRequests = pendingData.requests || [];
-    state.moderationUsers = userData.users || [];
     state.moderationLoaded = true;
-    const selectedId = state.moderationSelectedUser && state.moderationSelectedUser.userId;
-    if (selectedId) await loadModerationUser(selectedId, { render: false });
   } catch (err) {
     state.moderationLoaded = false;
     toast('审核数据读取失败: ' + err.message, 5000);
@@ -7292,56 +7297,23 @@ async function loadModeration({ force = false } = {}) {
   }
 }
 
-async function loadModerationUser(userId, { render = true } = {}) {
-  const data = await api(`/api/admin/users/${encodeURIComponent(userId)}/submissions?limit=500`);
-  state.moderationSelectedUser = data.user || null;
-  state.moderationSubmissions = data.submissions || [];
-  if (render) renderModeration();
-}
-
 async function handleModerationAction(button) {
   const action = button.dataset.moderationAction;
   const requestId = button.dataset.requestId;
-  const userId = button.dataset.userId;
   if (!action) return;
-  if (action === 'view-user') {
-    button.disabled = true;
-    try { await loadModerationUser(userId); } catch (err) { toast('投稿读取失败: ' + err.message, 5000); }
-    finally { button.disabled = false; }
-    return;
-  }
   const confirmations = {
     approve: '批准后将首次访问目标链接，并把文章公开到读者提交。继续吗？',
     reject: '拒绝这条投稿？目标链接不会被访问。',
-    'disable-user': '停用该账号？现有会话会被撤销，其公开投稿将全部下线。',
-    'restore-user': '恢复该账号登录权限？旧会话和已下线投稿不会恢复。',
-    'delete-submissions': '下线该账号的全部公开投稿？账号本身仍可登录。',
   };
   if (!window.confirm(confirmations[action] || '确认执行此操作？')) return;
   button.disabled = true;
   try {
-    if (action === 'approve' || action === 'reject') {
-      await api(`/api/admin/submission-requests/${encodeURIComponent(requestId)}/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: action === 'reject' ? JSON.stringify({ reason: '管理员审核未通过' }) : '{}',
-      });
-    } else if (action === 'disable-user') {
-      await api(`/api/admin/users/${encodeURIComponent(userId)}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmUserId: userId, reason: '管理员内容审核处置' }),
-      });
-    } else if (action === 'restore-user') {
-      await api(`/api/admin/users/${encodeURIComponent(userId)}/restore`, { method: 'POST' });
-    } else if (action === 'delete-submissions') {
-      await api(`/api/admin/users/${encodeURIComponent(userId)}/submissions`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmUserId: userId, reason: '管理员批量下线投稿' }),
-      });
-    }
-    if (action === 'approve' || action === 'disable-user' || action === 'delete-submissions') {
+    await api(`/api/admin/submission-requests/${encodeURIComponent(requestId)}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: action === 'reject' ? JSON.stringify({ reason: '管理员审核未通过' }) : '{}',
+    });
+    if (action === 'approve') {
       await Promise.all([loadSources(), loadEntries(), loadContributors()]);
       updateListTitle();
       renderList();
@@ -7356,9 +7328,524 @@ async function handleModerationAction(button) {
   }
 }
 
+function isUserManagementMobile() {
+  return window.matchMedia('(max-width: 760px)').matches;
+}
+
+function userManagementStateForHistory() {
+  const directory = state.userManagement;
+  return {
+    q: directory.q,
+    status: directory.status,
+    role: directory.role,
+    sort: directory.sort,
+    page: directory.page,
+    userId: directory.userId,
+  };
+}
+
+function syncUserManagementUrl({ replace = false } = {}) {
+  const url = dashboardUrlFor('users');
+  if (url.href === window.location.href) return;
+  if (replace) {
+    history.replaceState({ dashboard: true, tab: 'users', userManagement: userManagementStateForHistory() }, '', url);
+  } else {
+    history.pushState({ dashboard: true, tab: 'users', userManagement: userManagementStateForHistory() }, '', url);
+  }
+}
+
+function userManagementInitial(user) {
+  return String(user && (user.displayName || user.email) || 'U').trim().charAt(0).toUpperCase() || 'U';
+}
+
+function userManagementAvatar(user) {
+  return user && user.avatarUrl
+    ? `<img src="${escapeHtml(user.avatarUrl)}" alt="" />`
+    : escapeHtml(userManagementInitial(user));
+}
+
+function userManagementActionLabel(action) {
+  return {
+    'user.disable': '停用账号',
+    'user.restore': '恢复账号',
+    'user.submissions_hide': '下线投稿',
+  }[action] || action || '管理员操作';
+}
+
+function renderUserManagementDetail(detail) {
+  const user = detail.user;
+  const impact = detail.impact || {};
+  const allSubmissions = state.userManagement.allSubmissions;
+  const expandedSubmissions = allSubmissions && allSubmissions.userId === user.userId ? allSubmissions : null;
+  const submissions = expandedSubmissions
+    ? (Array.isArray(expandedSubmissions.submissions) ? expandedSubmissions.submissions : [])
+    : (Array.isArray(detail.recentSubmissions) ? detail.recentSubmissions : []);
+  const submissionPagination = expandedSubmissions && expandedSubmissions.pagination;
+  const actions = Array.isArray(detail.recentActions) ? detail.recentActions : [];
+  const disabledBy = user.disabledByDisplayName || user.disabledByEmail || user.disabledBy || '未知管理员';
+  return `
+    <button class="ghost-btn user-management-mobile-back" type="button" data-user-management-back>${lucideIcon('arrow-left')} 返回用户列表</button>
+    <div class="user-management-detail-head">
+      <span class="user-management-avatar large">${userManagementAvatar(user)}</span>
+      <div class="user-management-identity">
+        <div class="user-management-title-line">
+          <h3>${escapeHtml(user.displayName || '未命名用户')}</h3>
+          <span class="moderation-badge">${user.role === 'admin' ? '管理员' : '普通用户'}</span>
+          <span class="moderation-badge ${user.disabled ? 'is-danger' : 'is-active'}">${user.disabled ? '已停用' : '正常'}</span>
+        </div>
+        <p>${escapeHtml(user.email || '')}</p>
+        <p>注册于 ${escapeHtml(moderationTime(user.createdAt))} · 最近登录 ${escapeHtml(moderationTime(user.lastLoginAt))}</p>
+      </div>
+      <div class="user-management-detail-actions">
+        ${user.role === 'admin'
+          ? '<span class="user-management-protected">受保护的管理员账号</span>'
+          : user.disabled
+            ? `<button class="ghost-btn" type="button" data-user-management-action="restore" data-user-id="${escapeHtml(user.userId)}">恢复账号</button>`
+            : `<button class="ghost-btn moderation-danger" type="button" data-user-management-action="disable" data-user-id="${escapeHtml(user.userId)}">停用账号</button>`}
+        ${user.activeSubmissionCount > 0
+          ? `<button class="ghost-btn moderation-danger" type="button" data-user-management-action="submissions_hide" data-user-id="${escapeHtml(user.userId)}">下线全部投稿</button>`
+          : ''}
+      </div>
+    </div>
+    ${user.disabled ? `<div class="user-management-disabled-reason"><strong>停用原因</strong><p>${escapeHtml(user.disabledReason || '未填写原因')} · ${escapeHtml(moderationTime(user.disabledAt))} · 执行 ${escapeHtml(disabledBy)}</p></div>` : ''}
+    <div class="user-management-impact" aria-label="当前影响数量">
+      <div><span>有效会话</span><strong>${Number(impact.revokedSessionCount) || 0}</strong></div>
+      <div><span>待审投稿</span><strong>${Number(impact.rejectedPendingCount) || 0}</strong></div>
+      <div><span>公开投稿</span><strong>${Number(impact.hiddenSubmissionCount) || 0}</strong></div>
+      <div><span>累计投稿</span><strong>${Number(user.totalSubmissionCount) || 0}</strong></div>
+      <div><span>已下线</span><strong>${Number(user.deletedSubmissionCount) || 0}</strong></div>
+    </div>
+    <section class="user-management-section">
+      <div class="moderation-section-head">
+        <h4>${expandedSubmissions ? '全部投稿' : '最近投稿'}</h4>
+        ${state.userManagement.allSubmissionsLoading
+          ? '<button class="ghost-btn" type="button" disabled>正在读取…</button>'
+          : expandedSubmissions
+            ? '<button class="ghost-btn" type="button" data-user-management-collapse-submissions>收起</button>'
+            : user.totalSubmissionCount > submissions.length
+              ? `<button class="ghost-btn" type="button" data-user-management-all-submissions="${escapeHtml(user.userId)}">查看全部</button>`
+              : ''}
+      </div>
+      <div class="moderation-list">
+        ${submissions.length ? submissions.map(item => `
+          <article class="moderation-item ${item.deletedAt ? 'is-disabled' : ''}">
+            <div class="moderation-item-main">
+              <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title || item.url || '未命名投稿')}</a>
+              <p>${escapeHtml(moderationTime(item.updatedAt))} · ${item.deletedAt ? '已下线' : '公开'}</p>
+            </div>
+          </article>`).join('') : '<div class="moderation-empty">暂无投稿记录</div>'}
+      </div>
+      ${submissionPagination && submissionPagination.pageCount > 1 ? `
+        <div class="user-management-submission-pagination">
+          <button class="ghost-btn" type="button" data-user-management-submissions-page="${submissionPagination.page - 1}" ${submissionPagination.page <= 1 ? 'disabled' : ''}>上一页</button>
+          <span>第 ${submissionPagination.page} / ${submissionPagination.pageCount} 页</span>
+          <button class="ghost-btn" type="button" data-user-management-submissions-page="${submissionPagination.page + 1}" ${submissionPagination.page >= submissionPagination.pageCount ? 'disabled' : ''}>下一页</button>
+        </div>` : ''}
+    </section>
+    <section class="user-management-section">
+      <div class="moderation-section-head"><h4>最近操作</h4></div>
+      <div class="moderation-list">
+        ${actions.length ? actions.map(item => `
+          <article class="moderation-item">
+            <div class="moderation-item-main">
+              <strong>${escapeHtml(userManagementActionLabel(item.action))}</strong>
+              <p>${escapeHtml(item.reason || '')}</p>
+              <p>${escapeHtml(item.actorDisplayName || item.actorEmail || item.actorUserId || '未知管理员')} · ${escapeHtml(moderationTime(item.createdAt))} · 会话 ${Number(item.impact?.revokedSessionCount) || 0} · 待审 ${Number(item.impact?.rejectedPendingCount) || 0} · 投稿 ${Number(item.impact?.hiddenSubmissionCount) || 0}</p>
+            </div>
+          </article>`).join('') : '<div class="moderation-empty">暂无管理员操作</div>'}
+      </div>
+    </section>`;
+}
+
+function renderUserManagement() {
+  const directory = state.userManagement;
+  const list = $('#user-management-list');
+  const detail = $('#user-management-detail');
+  const layout = $('.user-management-layout');
+  if (!list || !detail || !layout) return;
+  $('#user-management-search').value = directory.q;
+  $('#user-management-status').value = directory.status;
+  $('#user-management-role').value = directory.role;
+  $('#user-management-sort').value = directory.sort;
+  $('#user-summary-total').textContent = String(directory.summary.total || 0);
+  $('#user-summary-active').textContent = String(directory.summary.active || 0);
+  $('#user-summary-disabled').textContent = String(directory.summary.disabled || 0);
+  $('#user-summary-admins').textContent = String(directory.summary.admins || 0);
+  $('#user-management-page').textContent = `第 ${directory.pagination.page || 1} / ${directory.pagination.pageCount || 1} 页`;
+  $('#user-management-prev').disabled = directory.loading || directory.pagination.page <= 1;
+  $('#user-management-next').disabled = directory.loading || directory.pagination.page >= directory.pagination.pageCount;
+  $('#user-management-status-text').textContent = directory.loading
+    ? '正在读取用户…'
+    : `找到 ${directory.pagination.filteredTotal || 0} 个账号`;
+  list.innerHTML = directory.loading && !directory.loaded
+    ? '<div class="moderation-empty">正在读取用户列表…</div>'
+    : directory.users.length
+      ? directory.users.map(user => `
+        <button class="user-management-row ${user.userId === directory.userId ? 'active' : ''}" type="button" data-user-management-user="${escapeHtml(user.userId)}">
+          <span class="user-management-avatar">${userManagementAvatar(user)}</span>
+          <span class="user-management-row-main">
+            <span class="user-management-row-title"><strong>${escapeHtml(user.displayName || '未命名用户')}</strong><span class="moderation-badge">${user.role === 'admin' ? '管理员' : '普通用户'}</span></span>
+            <span>${escapeHtml(user.email || '')}</span>
+            <span>注册 ${escapeHtml(moderationTime(user.createdAt))} · 登录 ${escapeHtml(moderationTime(user.lastLoginAt))}</span>
+          </span>
+          <span class="user-management-row-meta"><span class="moderation-badge ${user.disabled ? 'is-danger' : 'is-active'}">${user.disabled ? '已停用' : '正常'}</span><span>${Number(user.activeSubmissionCount) || 0} 公开 / ${Number(user.totalSubmissionCount) || 0} 累计</span></span>
+        </button>`).join('')
+      : '<div class="moderation-empty">没有符合条件的用户</div>';
+  const mobileDetail = isUserManagementMobile() && Boolean(directory.userId);
+  layout.classList.toggle('is-mobile-detail', mobileDetail);
+  if (directory.detailLoading) {
+    detail.innerHTML = '<div class="moderation-empty">正在读取用户详情…</div>';
+  } else if (directory.detail) {
+    detail.innerHTML = renderUserManagementDetail(directory.detail);
+  } else {
+    detail.innerHTML = '<div class="moderation-empty">选择一位用户查看详情</div>';
+  }
+}
+
+async function loadUserManagementDetail(userId) {
+  const directory = state.userManagement;
+  const id = String(userId || '').trim();
+  if (!id) {
+    directory.detail = null;
+    directory.detailLoading = false;
+    renderUserManagement();
+    return null;
+  }
+  const requestSequence = ++directory.detailRequestSequence;
+  directory.detailLoading = true;
+  renderUserManagement();
+  try {
+    const detail = await api(`/api/admin/users/${encodeURIComponent(id)}`);
+    if (requestSequence !== directory.detailRequestSequence || id !== directory.userId) return null;
+    directory.detail = detail;
+    resetUserManagementSubmissions(directory);
+    return detail;
+  } catch (error) {
+    if (requestSequence !== directory.detailRequestSequence) return null;
+    directory.detail = null;
+    toast('用户详情读取失败: ' + error.message, 5000);
+    return null;
+  } finally {
+    if (requestSequence === directory.detailRequestSequence) {
+      directory.detailLoading = false;
+      renderUserManagement();
+    }
+  }
+}
+
+async function loadUserManagement({ force = false } = {}) {
+  if (!isAdmin()) return;
+  const directory = state.userManagement;
+  if (!force && directory.loaded && !directory.loading) {
+    renderUserManagement();
+    if (directory.userId && !directory.detail) await loadUserManagementDetail(directory.userId);
+    return;
+  }
+  const requestSequence = ++directory.requestSequence;
+  directory.loading = true;
+  renderUserManagement();
+  const params = new URLSearchParams({
+    q: directory.q,
+    status: directory.status,
+    role: directory.role,
+    sort: directory.sort,
+    page: String(directory.page),
+    limit: '50',
+  });
+  try {
+    const data = await api(`/api/admin/users?${params}`);
+    if (requestSequence !== directory.requestSequence) return;
+    directory.users = Array.isArray(data.users) ? data.users : [];
+    directory.summary = data.summary || { total: 0, active: 0, disabled: 0, admins: 0 };
+    directory.pagination = data.pagination || { page: 1, limit: 50, filteredTotal: 0, pageCount: 1 };
+    directory.page = directory.pagination.page;
+    directory.loaded = true;
+    if (!directory.userId && directory.users.length && !isUserManagementMobile()) {
+      directory.userId = directory.users[0].userId;
+      syncUserManagementUrl({ replace: true });
+    } else if (directory.page !== Number(params.get('page'))) {
+      syncUserManagementUrl({ replace: true });
+    }
+    if (directory.userId) await loadUserManagementDetail(directory.userId);
+    else directory.detail = null;
+  } catch (error) {
+    if (requestSequence !== directory.requestSequence) return;
+    directory.loaded = false;
+    toast('用户列表读取失败: ' + error.message, 5000);
+  } finally {
+    if (requestSequence === directory.requestSequence) {
+      directory.loading = false;
+      renderUserManagement();
+    }
+  }
+}
+
+function selectUserManagementUser(userId, { push = true } = {}) {
+  const directory = state.userManagement;
+  directory.mobileListScrollTop = $('#user-management-list')?.scrollTop || 0;
+  directory.userId = String(userId || '').trim();
+  directory.detail = null;
+  resetUserManagementSubmissions(directory);
+  syncUserManagementUrl({ replace: !push });
+  renderUserManagement();
+  loadUserManagementDetail(directory.userId);
+}
+
+function showUserManagementList() {
+  const directory = state.userManagement;
+  directory.userId = '';
+  directory.detail = null;
+  resetUserManagementSubmissions(directory);
+  syncUserManagementUrl({ replace: true });
+  renderUserManagement();
+  requestAnimationFrame(() => {
+    const list = $('#user-management-list');
+    if (list) list.scrollTop = directory.mobileListScrollTop;
+  });
+}
+
+function scheduleUserManagementSearch(value) {
+  const directory = state.userManagement;
+  const nextQuery = String(value || '').trim().slice(0, 100);
+  directory.q = nextQuery;
+  clearTimeout(directory.searchTimer);
+  directory.searchTimer = setTimeout(() => {
+    directory.page = 1;
+    directory.userId = '';
+    directory.detail = null;
+    directory.loaded = false;
+    resetUserManagementSubmissions(directory);
+    syncUserManagementUrl({ replace: true });
+    loadUserManagement({ force: true });
+  }, 250);
+}
+
+async function loadAllUserSubmissions(userId, page = 1) {
+  const directory = state.userManagement;
+  const id = String(userId || '').trim();
+  if (!id || id !== directory.userId || directory.allSubmissionsLoading) return;
+  const requestSequence = ++directory.submissionsRequestSequence;
+  directory.allSubmissionsLoading = true;
+  renderUserManagement();
+  try {
+    const data = await api(`/api/admin/users/${encodeURIComponent(id)}/submissions?page=${page}&limit=50`);
+    if (requestSequence !== directory.submissionsRequestSequence || id !== directory.userId) return;
+    directory.allSubmissions = {
+      userId: id,
+      submissions: Array.isArray(data.submissions) ? data.submissions : [],
+      pagination: data.pagination || { page: 1, limit: 50, filteredTotal: 0, pageCount: 1 },
+    };
+  } catch (error) {
+    if (requestSequence === directory.submissionsRequestSequence) {
+      toast('投稿记录读取失败: ' + error.message, 5000);
+    }
+  } finally {
+    if (requestSequence === directory.submissionsRequestSequence) {
+      directory.allSubmissionsLoading = false;
+      renderUserManagement();
+    }
+  }
+}
+
+function collapseAllUserSubmissions() {
+  const directory = state.userManagement;
+  resetUserManagementSubmissions(directory);
+  renderUserManagement();
+}
+
+function userManagementImpactSnapshot(value = {}) {
+  return {
+    revokedSessionCount: Math.max(0, Number.parseInt(value.revokedSessionCount, 10) || 0),
+    rejectedPendingCount: Math.max(0, Number.parseInt(value.rejectedPendingCount, 10) || 0),
+    hiddenSubmissionCount: Math.max(0, Number.parseInt(value.hiddenSubmissionCount, 10) || 0),
+  };
+}
+
+function updateUserManagementActionConfirm() {
+  const directory = state.userManagement;
+  const action = directory.action;
+  const reason = $('#user-management-dialog-reason');
+  const check = $('#user-management-dialog-check');
+  const confirm = $('#user-management-dialog-confirm');
+  if (!action || !reason || !check || !confirm) return;
+  action.reason = reason.value;
+  const requiresExplicitConfirmation = action.kind !== 'restore';
+  const ready = !directory.actionBusy
+    && (!requiresExplicitConfirmation || (Boolean(action.reason.trim()) && check.checked));
+  confirm.disabled = !ready;
+  reason.disabled = directory.actionBusy;
+  check.disabled = directory.actionBusy;
+  $('#user-management-dialog-close').disabled = directory.actionBusy;
+  $('#user-management-dialog-cancel').disabled = directory.actionBusy;
+}
+
+function renderUserManagementActionDialog() {
+  const action = state.userManagement.action;
+  if (!action) return;
+  const impact = userManagementImpactSnapshot(action.impact);
+  const definitions = {
+    disable: {
+      title: '停用账号',
+      copy: '停用后会立即撤销有效会话、拒绝待审投稿并下线当前公开投稿。',
+      confirm: '确认停用',
+    },
+    submissions_hide: {
+      title: '下线全部投稿',
+      copy: '只下线当前公开投稿，账号仍可正常登录；已下线内容不会自动恢复。',
+      confirm: '确认下线',
+    },
+    restore: {
+      title: '恢复账号',
+      copy: '恢复后允许用户重新登录，但旧会话、已拒绝的待审投稿和已下线内容不会恢复。',
+      confirm: '确认恢复',
+    },
+  };
+  const definition = definitions[action.kind];
+  if (!definition) return;
+  $('#user-management-dialog-title').textContent = definition.title;
+  $('#user-management-dialog-target').textContent = `目标账号：${action.user.displayName || '未命名用户'} · ${action.user.email || ''}`;
+  $('#user-management-dialog-copy').textContent = definition.copy;
+  const impactElement = $('#user-management-dialog-impact');
+  impactElement.innerHTML = action.kind === 'disable'
+    ? `<div>有效会话<strong>${impact.revokedSessionCount}</strong></div>
+       <div>待审投稿<strong>${impact.rejectedPendingCount}</strong></div>
+       <div>公开投稿<strong>${impact.hiddenSubmissionCount}</strong></div>`
+    : action.kind === 'submissions_hide'
+      ? `<div>将下线的公开投稿<strong>${impact.hiddenSubmissionCount}</strong></div>`
+      : '';
+  impactElement.classList.toggle('hidden', action.kind === 'restore');
+  impactElement.classList.toggle('is-single', action.kind === 'submissions_hide');
+  const reason = $('#user-management-dialog-reason');
+  reason.value = action.reason || '';
+  reason.required = action.kind !== 'restore';
+  reason.placeholder = action.kind === 'restore' ? '可选：记录恢复原因' : '请填写治理原因';
+  $('.user-management-dialog-reason span').textContent = action.kind === 'restore' ? '原因（可选）' : '原因';
+  $('#user-management-dialog-check-wrap').classList.toggle('hidden', action.kind === 'restore');
+  const confirm = $('#user-management-dialog-confirm');
+  confirm.textContent = state.userManagement.actionBusy ? '处理中…' : definition.confirm;
+  confirm.classList.toggle('moderation-danger', action.kind !== 'restore');
+  updateUserManagementActionConfirm();
+}
+
+function openUserManagementAction(kind, userId = '') {
+  const directory = state.userManagement;
+  const detail = directory.detail;
+  const user = detail && detail.user;
+  const allowedKinds = ['disable', 'restore', 'submissions_hide'];
+  if (!user || !allowedKinds.includes(kind) || (userId && user.userId !== userId)) return;
+  if ((user.role === 'admin' && kind !== 'submissions_hide')
+    || (kind === 'disable' && user.disabled)
+    || (kind === 'restore' && !user.disabled)) return;
+  directory.action = {
+    kind,
+    user: {
+      userId: user.userId,
+      displayName: user.displayName || '',
+      email: user.email || '',
+    },
+    impact: userManagementImpactSnapshot(detail.impact),
+    reason: '',
+  };
+  directory.actionBusy = false;
+  const check = $('#user-management-dialog-check');
+  check.checked = false;
+  renderUserManagementActionDialog();
+  const dialog = $('#user-management-dialog');
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeUserManagementAction({ force = false } = {}) {
+  const directory = state.userManagement;
+  if (directory.actionBusy && !force) return;
+  const dialog = $('#user-management-dialog');
+  if (dialog.open) dialog.close();
+  directory.action = null;
+  directory.actionBusy = false;
+}
+
+async function submitUserManagementAction() {
+  const directory = state.userManagement;
+  const action = directory.action;
+  if (!action || directory.actionBusy) return;
+  const reason = String($('#user-management-dialog-reason').value || '').trim();
+  const check = $('#user-management-dialog-check');
+  action.reason = reason;
+  if (action.kind !== 'restore' && (!reason || !check.checked)) {
+    updateUserManagementActionConfirm();
+    return;
+  }
+  directory.actionBusy = true;
+  renderUserManagementActionDialog();
+  let response;
+  try {
+    if (action.kind === 'disable') {
+      response = await api(`/api/admin/users/${encodeURIComponent(action.user.userId)}/disable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirmUserId: action.user.userId,
+          reason,
+          expectedImpact: action.impact,
+        }),
+      });
+    } else if (action.kind === 'submissions_hide') {
+      response = await api(`/api/admin/users/${encodeURIComponent(action.user.userId)}/submissions`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirmUserId: action.user.userId,
+          reason,
+          expectedVisibleSubmissionCount: action.impact.hiddenSubmissionCount,
+        }),
+      });
+    } else {
+      response = await api(`/api/admin/users/${encodeURIComponent(action.user.userId)}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+    }
+  } catch (error) {
+    directory.actionBusy = false;
+    if (error.status === 409 && error.data && error.data.currentImpact) {
+      action.impact = error.data.currentImpact;
+      renderUserManagementActionDialog();
+      const reasonInput = $('#user-management-dialog-reason');
+      reasonInput.value = action.reason;
+      check.checked = false;
+      updateUserManagementActionConfirm();
+      toast('影响数量已变化，请重新核对后确认', 5000);
+      return;
+    }
+    renderUserManagementActionDialog();
+    await loadUserManagementDetail(action.user.userId);
+    toast('操作失败: ' + error.message, 5000);
+    return;
+  }
+
+  const kind = action.kind;
+  const projectionRefreshPending = Boolean(response && response.result && response.result.projectionRefreshPending);
+  closeUserManagementAction({ force: true });
+  try {
+    await loadUserManagement({ force: true });
+    if (kind !== 'restore') {
+      await Promise.all([loadSources(), loadEntries(), loadContributors()]);
+      renderList();
+      renderSidebar();
+      updateListTitle();
+    }
+    if (kind === 'disable') await loadModeration({ force: true });
+  } catch (error) {
+    toast('操作已完成，但页面刷新失败: ' + error.message, 5000);
+    return;
+  }
+  toast(kind === 'restore' ? '账号已恢复，请用户重新登录' : kind === 'disable' ? '账号已停用' : '投稿已下线');
+  if (projectionRefreshPending) toast('操作已生效，缓存投影正在后台刷新', 5000);
+}
+
 function renderDashboardTabs() {
   const requestedTab = normalizeDashboardTab(state.dashboardTab);
-  const tab = !isAdmin() && ['sources', 'moderation'].includes(requestedTab)
+  const tab = !isAdmin() && ['users', 'sources', 'moderation'].includes(requestedTab)
     ? 'profile'
     : requestedTab;
   state.dashboardTab = tab;
@@ -7372,12 +7859,14 @@ function renderDashboardTabs() {
   $('#dashboard-reading-panel')?.classList.toggle('hidden', tab !== 'reading');
   $('#dashboard-contributions-panel')?.classList.toggle('hidden', tab !== 'contributions');
   $('#dashboard-security-panel')?.classList.toggle('hidden', tab !== 'security');
+  $('#dashboard-users-panel')?.classList.toggle('hidden', tab !== 'users' || !isAdmin());
   $('#dashboard-moderation-panel')?.classList.toggle('hidden', tab !== 'moderation' || !isAdmin());
   $('#dashboard-sources-panel')?.classList.toggle('hidden', tab !== 'sources' || !isAdmin());
   if (tab === 'reading') {
     mountAiConfigPanel('dashboard');
     renderAiSettings();
   }
+  if (tab === 'users' && isAdmin()) loadUserManagement();
   if (tab === 'moderation' && isAdmin()) loadModeration();
   if (tab === 'sources' && isAdmin()) renderManage('#workspace-manage-list', '#workspace-source-status');
   renderMyPublicProfileActions();
@@ -7385,7 +7874,7 @@ function renderDashboardTabs() {
 
 function setDashboardTab(tab = 'profile', { push = false, persist = true } = {}) {
   const requested = normalizeDashboardTab(tab);
-  state.dashboardTab = !isAdmin() && ['sources', 'moderation'].includes(requested) ? 'profile' : requested;
+  state.dashboardTab = !isAdmin() && ['users', 'sources', 'moderation'].includes(requested) ? 'profile' : requested;
   if (persist) storage.setItem('qm_dashboard_tab', state.dashboardTab);
   renderDashboardTabs();
   if (push && state.workspacePage === 'dashboard') {
@@ -7606,10 +8095,14 @@ async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {
     openAuth('login');
     return false;
   }
+  const requestedTab = normalizeDashboardTab(tab);
   setWorkspacePage('dashboard');
   setDashboardTab(tab, { persist: true, push: false });
   document.title = '我的空间 · Namoo Reader';
   if (push) history.pushState({ dashboard: true, tab: state.dashboardTab }, '', dashboardUrlFor(state.dashboardTab));
+  else if (requestedTab !== state.dashboardTab && /^\/(?:me|dashboard)\/?$/.test(window.location.pathname)) {
+    history.replaceState({ dashboard: true, tab: state.dashboardTab }, '', dashboardUrlFor(state.dashboardTab));
+  }
   renderProfileEditor();
   loadNotifications();
   renderMyAssetTabs();
@@ -8817,6 +9310,7 @@ async function openEntryById(entryId, { tab = null, focus = null, aiAssetId = ''
 async function openEntryFromUrl({ entriesLoaded = false } = {}) {
   const route = routeStateFromUrl();
   if (route.admin) {
+    applyUserManagementRoute(route);
     state.view = 'all';
     state.filterSource = null;
     state.filterCategory = null;
@@ -8832,6 +9326,7 @@ async function openEntryFromUrl({ entriesLoaded = false } = {}) {
     return true;
   }
   if (route.dashboard) {
+    if (route.dashboardTab === 'users') applyUserManagementRoute(route);
     state.view = 'all';
     state.filterSource = null;
     state.filterCategory = null;
@@ -9481,12 +9976,17 @@ function renderManage(target = '#workspace-manage-list', statusTarget = '#worksp
 async function openAdminPage({ push = true } = {}) {
   if (!isAdmin()) {
     if (!state.me) openAuth('login');
-    else toast('需要管理员权限');
+    else {
+      toast('需要管理员权限');
+      const opened = await openMyCommentsModal({ push: false, tab: 'profile' });
+      if (opened) history.replaceState({ dashboard: true, tab: 'profile' }, '', dashboardUrlFor('profile'));
+      return opened;
+    }
     return false;
   }
-  const opened = await openMyCommentsModal({ push, tab: 'sources' });
+  const opened = await openMyCommentsModal({ push, tab: 'users' });
   if (opened && !push && window.location.pathname === '/admin') {
-    history.replaceState({ dashboard: true, tab: 'sources' }, '', dashboardUrlFor('sources'));
+    history.replaceState({ dashboard: true, tab: 'users' }, '', dashboardUrlFor('users'));
   }
   return opened;
 }
@@ -10752,8 +11252,93 @@ $$('#my-dashboard-page [data-dashboard-tab]').forEach(btn => {
 });
 $('#moderation-refresh').onclick = () => loadModeration({ force: true });
 $('#dashboard-moderation-panel').onclick = (e) => {
+  const user = e.target.closest('[data-moderation-open-user]');
+  if (user) {
+    state.userManagement.userId = user.dataset.moderationOpenUser || '';
+    state.userManagement.detail = null;
+    state.userManagement.loaded = false;
+    resetUserManagementSubmissions();
+    setDashboardTab('users', { push: false });
+    syncUserManagementUrl();
+    loadUserManagement({ force: true });
+    return;
+  }
   const button = e.target.closest('[data-moderation-action]');
   if (button) handleModerationAction(button);
+};
+$('#user-management-refresh').onclick = () => loadUserManagement({ force: true });
+$('#user-management-search').oninput = e => scheduleUserManagementSearch(e.target.value);
+for (const [selector, field] of [
+  ['#user-management-status', 'status'],
+  ['#user-management-role', 'role'],
+  ['#user-management-sort', 'sort'],
+]) {
+  $(selector).onchange = e => {
+    const directory = state.userManagement;
+    directory[field] = e.target.value;
+    directory.page = 1;
+    directory.userId = '';
+    directory.detail = null;
+    directory.loaded = false;
+    resetUserManagementSubmissions(directory);
+    syncUserManagementUrl();
+    loadUserManagement({ force: true });
+  };
+}
+$('#user-management-prev').onclick = () => {
+  if (state.userManagement.page <= 1) return;
+  state.userManagement.page -= 1;
+  state.userManagement.userId = '';
+  state.userManagement.detail = null;
+  state.userManagement.loaded = false;
+  resetUserManagementSubmissions();
+  syncUserManagementUrl();
+  loadUserManagement({ force: true });
+};
+$('#user-management-next').onclick = () => {
+  if (state.userManagement.page >= state.userManagement.pagination.pageCount) return;
+  state.userManagement.page += 1;
+  state.userManagement.userId = '';
+  state.userManagement.detail = null;
+  state.userManagement.loaded = false;
+  resetUserManagementSubmissions();
+  syncUserManagementUrl();
+  loadUserManagement({ force: true });
+};
+$('#user-management-list').onclick = e => {
+  const user = e.target.closest('[data-user-management-user]');
+  if (user) selectUserManagementUser(user.dataset.userManagementUser);
+};
+$('#user-management-detail').onclick = e => {
+  if (e.target.closest('[data-user-management-back]')) {
+    showUserManagementList();
+    return;
+  }
+  const allSubmissions = e.target.closest('[data-user-management-all-submissions]');
+  if (allSubmissions) {
+    loadAllUserSubmissions(allSubmissions.dataset.userManagementAllSubmissions, 1);
+    return;
+  }
+  if (e.target.closest('[data-user-management-collapse-submissions]')) {
+    collapseAllUserSubmissions();
+    return;
+  }
+  const submissionsPage = e.target.closest('[data-user-management-submissions-page]');
+  if (submissionsPage && !submissionsPage.disabled) {
+    loadAllUserSubmissions(state.userManagement.userId, Number(submissionsPage.dataset.userManagementSubmissionsPage));
+    return;
+  }
+  const action = e.target.closest('[data-user-management-action]');
+  if (action) openUserManagementAction(action.dataset.userManagementAction, action.dataset.userId);
+};
+$('#user-management-dialog-close').onclick = () => closeUserManagementAction();
+$('#user-management-dialog-cancel').onclick = () => closeUserManagementAction();
+$('#user-management-dialog-confirm').onclick = submitUserManagementAction;
+$('#user-management-dialog-reason').oninput = updateUserManagementActionConfirm;
+$('#user-management-dialog-check').onchange = updateUserManagementActionConfirm;
+$('#user-management-dialog').oncancel = e => {
+  e.preventDefault();
+  closeUserManagementAction();
 };
 $('#my-comments-list').onclick = (e) => {
   const open = e.target.closest('[data-my-asset-open]');
@@ -11053,6 +11638,11 @@ function moveReaderVersion(delta) {
 document.addEventListener('keydown', (e) => {
   const editable = isShortcutEditableTarget(e.target);
   if (e.key === 'Escape') {
+    if ($('#user-management-dialog')?.open) {
+      e.preventDefault();
+      closeUserManagementAction();
+      return;
+    }
     if (!$('#theme-menu')?.classList.contains('hidden')) {
       e.preventDefault();
       setThemeMenuOpen(false, { restoreFocus: true });
@@ -11117,6 +11707,7 @@ window.addEventListener('popstate', () => {
 window.addEventListener('resize', () => {
   hideArticleLinkMenu();
   normalizeReaderWorkbenchLayout();
+  if (state.workspacePage === 'dashboard' && state.dashboardTab === 'users') renderUserManagement();
   if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
 });

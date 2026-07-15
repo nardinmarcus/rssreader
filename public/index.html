@@ -24,7 +24,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/persona/widget.css?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=2858cc1f9070" />
+  <link rel="stylesheet" href="/styles.css?v=20c2e3e7f969" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
   <meta property="og:site_name" content="Namoo Reader" />
@@ -404,6 +404,7 @@
           </div>
           <div id="dashboard-admin-tab-group" class="dashboard-tab-group hidden">
             <span class="dashboard-tab-label">站点管理</span>
+            <button class="dashboard-tab" type="button" data-dashboard-tab="users">用户管理</button>
             <button class="dashboard-tab" type="button" data-dashboard-tab="moderation">内容审核</button>
             <button class="dashboard-tab" type="button" data-dashboard-tab="sources">订阅源</button>
           </div>
@@ -494,6 +495,59 @@
             </div>
           </section>
         </section>
+        <section id="dashboard-users-panel" class="dashboard-panel hidden">
+          <section class="workspace-admin-card">
+            <div class="workspace-section-head">
+              <div>
+                <h2>用户管理</h2>
+                <p>查看注册账号、登录状态和投稿影响，并执行可审计的账号治理。</p>
+              </div>
+              <button id="user-management-refresh" class="ghost-btn" type="button">刷新</button>
+            </div>
+          </section>
+          <section class="user-management-summary" aria-label="账号摘要">
+            <div><span>注册用户</span><strong id="user-summary-total">0</strong></div>
+            <div><span>正常账号</span><strong id="user-summary-active">0</strong></div>
+            <div><span>已停用</span><strong id="user-summary-disabled">0</strong></div>
+            <div><span>管理员</span><strong id="user-summary-admins">0</strong></div>
+          </section>
+          <section class="user-management-layout">
+            <aside class="workspace-admin-card user-management-directory" aria-label="用户列表">
+              <div class="user-management-filters">
+                <label class="user-management-search"><span>搜索</span><input id="user-management-search" type="search" maxlength="100" placeholder="显示名或完整邮箱" /></label>
+                <label><span>状态</span><select id="user-management-status"><option value="all">全部</option><option value="active">正常</option><option value="disabled">已停用</option></select></label>
+                <label><span>角色</span><select id="user-management-role"><option value="all">全部</option><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
+                <label><span>排序</span><select id="user-management-sort"><option value="created_desc">最近注册</option><option value="last_login_desc">最近登录</option></select></label>
+              </div>
+              <div id="user-management-status-text" class="manage-status" role="status"></div>
+              <div id="user-management-list" class="user-management-list"></div>
+              <div class="user-management-pagination">
+                <button id="user-management-prev" class="ghost-btn" type="button">上一页</button>
+                <span id="user-management-page">第 1 / 1 页</span>
+                <button id="user-management-next" class="ghost-btn" type="button">下一页</button>
+              </div>
+            </aside>
+            <section id="user-management-detail" class="workspace-admin-card user-management-detail" aria-live="polite">
+              <div class="moderation-empty">选择一位用户查看详情</div>
+            </section>
+          </section>
+          <dialog id="user-management-dialog" class="user-management-dialog" aria-labelledby="user-management-dialog-title">
+            <div class="user-management-dialog-card">
+              <div class="moderation-section-head">
+                <div><h3 id="user-management-dialog-title">确认操作</h3><p id="user-management-dialog-target"></p></div>
+                <button id="user-management-dialog-close" class="icon-btn" type="button" title="关闭" aria-label="关闭"><span data-qm-icon="x"></span></button>
+              </div>
+              <p id="user-management-dialog-copy" class="user-management-dialog-copy"></p>
+              <div id="user-management-dialog-impact" class="user-management-dialog-impact"></div>
+              <label class="user-management-dialog-reason"><span>原因</span><textarea id="user-management-dialog-reason" maxlength="300" rows="3" placeholder="请填写治理原因"></textarea></label>
+              <label id="user-management-dialog-check-wrap" class="user-management-dialog-check"><input id="user-management-dialog-check" type="checkbox" /> <span>我已核对目标账号和影响数量</span></label>
+              <div class="user-management-dialog-actions">
+                <button id="user-management-dialog-cancel" class="ghost-btn" type="button">取消</button>
+                <button id="user-management-dialog-confirm" class="ghost-btn moderation-danger" type="button">确认</button>
+              </div>
+            </div>
+          </dialog>
+        </section>
         <section id="dashboard-sources-panel" class="dashboard-panel hidden">
           <section class="workspace-admin-card">
             <div class="workspace-section-head">
@@ -531,12 +585,12 @@
             <div class="workspace-section-head">
               <div>
                 <h2>内容审核</h2>
-                <p>投稿在批准前不会访问目标地址；账号处置会撤销会话并下线其投稿。</p>
+                <p>投稿在批准前不会访问目标地址；账号治理请前往“用户管理”。</p>
               </div>
               <button id="moderation-refresh" class="ghost-btn" type="button">刷新</button>
             </div>
           </section>
-          <section class="moderation-grid">
+          <section class="moderation-grid moderation-grid-single">
             <div class="workspace-admin-card moderation-card">
               <div class="moderation-section-head">
                 <h3>待审投稿</h3>
@@ -544,15 +598,7 @@
               </div>
               <div id="moderation-pending-list" class="moderation-list"></div>
             </div>
-            <div class="workspace-admin-card moderation-card">
-              <div class="moderation-section-head">
-                <h3>投稿账号</h3>
-                <span id="moderation-user-count" class="moderation-count">0</span>
-              </div>
-              <div id="moderation-user-list" class="moderation-list"></div>
-            </div>
           </section>
-          <section id="moderation-user-detail" class="workspace-admin-card moderation-card hidden"></section>
         </section>
       </section>
       <section id="contributor-page" class="workspace-page contributor-page hidden">
@@ -834,6 +880,6 @@
   <script src="/purify.min.js"></script>
   <script src="/vendor/persona/index.global.js?v=1"></script>
   <script src="/lucide-icons.js?v=cb5472ff6d82"></script>
-  <script src="/app.js?v=9d2330ebd756"></script>
+  <script src="/app.js?v=a8c5625599c1"></script>
 </body>
 </html>
