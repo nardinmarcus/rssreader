@@ -1,3 +1,32 @@
+# Consolidate completed branches into main
+
+## Plan
+
+- [x] Refresh remote refs and inventory every local branch, remote branch, worktree, and pull request.
+- [x] Classify `codex/add-xiaojun-podcast` as complete and the annotation-selection work as active because its plan and production rollout remain unfinished.
+- [x] Install locked dependencies in the clean integration worktree and run the full suite plus syntax and diff checks.
+- [x] Fast-forward `main` to the complete Podcast branch and push `origin/main`.
+- [x] Preserve the completed branch worktree and refs because they now hold staged work for the still-active annotation task; defer cleanup until that task finishes.
+- [x] Record the branch-closeout preference in the memory update queue and verify the published topology and production health.
+
+## Verification contract
+
+1. Scope -> verify: every commit from the completed Podcast branch is reachable from `main`, with no annotation work included.
+2. Safety -> verify: the active staged annotation file set and byte hashes remain unchanged throughout consolidation.
+3. Quality -> verify: the completed branch passes the full suite, syntax/diff checks, and immutable frontend asset checks before publication.
+4. Publication -> verify: local `main` and `origin/main` share the same head and contain `5b68f2f` in their ancestry.
+5. Cleanup -> verify: no branch or worktree holding active state is removed; completed refs are deleted only when they become clean and unused.
+
+## Review
+
+- Fast-forwarded `main` from `795ab45` through all 28 completed commits ending at `5b68f2f`, then pushed the exact history to `origin/main`.
+- The clean integration worktree initially lacked dependencies and produced `Cannot find module 'express'`; `npm ci` installed 103 locked packages with 0 vulnerabilities, after which syntax checks, `git diff --check`, and the full suite passed (`332/332`).
+- The only other task line is the annotation-selection fix at `9b10d74`. Its repository plan remains pending and production still serves Podcast assets `app.js?v=dd9f50565375` and `styles.css?v=d9a6686f7cfa`, so it was correctly retained as active rather than merged prematurely.
+- The Podcast worktree contains five staged annotation-integration files. Their status and SHA-256 values were recorded and left unchanged; its local and remote branch refs remain available so the concurrent task can finish safely.
+- Added `/Users/dapeng/.codex/memories/extensions/ad_hoc/notes/20260715-220321-merge-completed-branches.md` to remember that every genuinely completed task branch must be verified, merged into `main`, pushed, and cleaned when safe, with sibling branches inspected at closeout.
+
+---
+
 # YouTube Podcast reader completeness and layout
 
 ## Root cause

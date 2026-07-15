@@ -1,5 +1,6 @@
 # Deployment lessons
 
+- Before running the full suite in a fresh worktree, check for `node_modules` and install from the lockfile with `npm ci` when absent; a missing runtime package such as `express` is an environment failure, not evidence of a code regression.
 - When streaming a deployment script through `ssh host 'bash -s'`, detach stdin for child commands such as `docker compose exec -T ... </dev/null` or run them in a separate SSH call; otherwise the child can consume the remaining script and suppress later verification steps.
 - Derive a container health probe's internal port from the live `PORT` environment or exposed-port metadata; assuming a framework default can report `ECONNREFUSED` against an otherwise healthy production container.
 - Tests that share one module-scoped temporary SQLite database must clean up globally queried states in `finally`; otherwise an earlier RED failure can pollute later tests and hide the actual missing behavior.
