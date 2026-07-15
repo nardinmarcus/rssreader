@@ -24,6 +24,33 @@
 - The only other task line is the annotation-selection fix at `9b10d74`. Its repository plan remains pending and production still serves Podcast assets `app.js?v=dd9f50565375` and `styles.css?v=d9a6686f7cfa`, so it was correctly retained as active rather than merged prematurely.
 - The Podcast worktree contains five staged annotation-integration files. Their status and SHA-256 values were recorded and left unchanged; its local and remote branch refs remain available so the concurrent task can finish safely.
 - Added `/Users/dapeng/.codex/memories/extensions/ad_hoc/notes/20260715-220321-merge-completed-branches.md` to remember that every genuinely completed task branch must be verified, merged into `main`, pushed, and cleaned when safe, with sibling branches inspected at closeout.
+---
+
+# Restore Command+C for an open annotation selection
+
+## Plan
+
+- [x] Reproduce the live keyboard-copy path and capture the selection, focus, and clipboard state.
+- [x] Add a failing regression guard for copying the cached source selection from the annotation popover.
+- [x] Route the browser `copy` event to the cached source text only when the popover input has no explicit text selection.
+- [x] Verify native input-copy behavior, button-copy behavior, cleanup, and all annotation surfaces.
+- [x] Run focused/full tests, refresh the application asset fingerprint, and verify the real interaction in Chrome and production.
+
+## Verification contract
+
+1. Source selection -> verify: after the popover takes focus, `Command+C` copies the highlighted source quote.
+2. Input selection -> verify: explicitly selected text inside the annotation textarea still uses the browser's native copy behavior.
+3. Scope -> verify: the copy override is active only while an annotation draft is open and never intercepts unrelated page copying.
+
+## Review
+
+- Root cause: focusing the annotation textarea collapses the native DOM Selection. The CSS Custom Highlight added for visual persistence paints the cached Range but does not participate in browser clipboard behavior, so `Command+C` targeted an empty textarea and copied nothing.
+- Added a textarea-local `copy` handler that writes the cached source quote only when neither the textarea nor the document has an explicit selection. It leaves native textarea copying, unrelated page copying, the popover, and the highlight lifecycle unchanged.
+- The regression suite failed first because the copy bridge did not exist, then passed 5/5. The base branch passes 334/334 tests; the production release branch passes 337/337, with syntax, asset identity, and diff checks also passing.
+- Production Chrome copies exact `杀死 AI slop` with the textarea focused, preserves the popover and one highlight Range, and still copies an explicit textarea `ABC` selection natively. The existing copy button continues to copy the source and close the popover. Browser errors: 0.
+- Sibling sweep found one shared annotation popover/input serving original, rewrite, and translation surfaces; no second same-shape keyboard-copy path exists.
+- Deployed image `sha256:bed8741a10384ced1830c8f7a1d3b474cb28857c24c19edfdd3c934774be62ba`. Production serves `app.js?v=23cc1a3a706c` with an exact file-hash match; `/`, `/api/me`, SQLite `quick_check`, foreign-key checks, logs, and restart count are healthy.
+- Backup: `/opt/rssreader-backups/annotation-keyboard-copy-20260715T145720Z`; rollback image: `rssreader-namoo-reader:rollback-annotation-keyboard-copy-20260715T145720Z`.
 
 ---
 
@@ -96,7 +123,6 @@
   ```bash
   ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/xiaojun-podcast-20260715T124113Z; install -m 644 "$b/fetcher.js" lib/fetcher.js; install -m 644 "$b/sources.js" lib/sources.js; docker image tag rssreader-namoo-reader:rollback-xiaojun-podcast-20260715T124113Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
   ```
-
 ---
 
 # Onepage share link compatibility regression
@@ -125,6 +151,34 @@
 - Sibling sweep found one `navigator.share` call, now fixed. Existing `readerAssetUrl()` callers remain canonical navigation or explicit link-copy surfaces for other asset types and were left unchanged to avoid broadening this Onepage regression fix.
 - Deployed image `sha256:ea333f97615849012177c7c1134fbcb127f037f8397bf890a9ea0a203438a44f`. Host, container, and public `app.js` match hash `ba1953239c6b`; internal/public probes return 200, SQLite reports `quick_check=ok`, recent error logs contain 0 matching lines, and the container has 0 restarts.
 - Backup: `/opt/rssreader-backups/onepage-share-link-20260715T104058Z`; rollback image: `rssreader-namoo-reader:rollback-onepage-share-link-20260715T104058Z`.
+
+---
+
+# Preserve selected-text highlight while annotation popover is open
+
+## Plan
+
+- [x] Reproduce the live selection lifecycle and identify why the source highlight disappears.
+- [x] Add a regression guard for a focus-independent draft highlight and its cleanup lifecycle.
+- [x] Keep the selected source range visibly highlighted while the annotation popover owns focus.
+- [x] Verify cleanup on dismiss, submit, navigation, and unsupported-browser fallback behavior.
+- [x] Run focused/full tests, syntax and diff checks, then verify the rendered interaction in Chrome.
+
+## Verification contract
+
+1. Open state -> verify: after the annotation textarea receives focus, the popover is visible and the source text still has a dedicated rendered highlight.
+2. Cleanup -> verify: dismissing, copying, sending, submitting, changing article, or closing the reader removes the draft highlight.
+3. Compatibility -> verify: browsers without the CSS Custom Highlight API keep the native selection by skipping automatic focus.
+
+## Review
+
+- Root cause: `showAnnotationPopover()` automatically focused its textarea after caching only the selected string. Chrome then collapsed the document Selection; the `selectionchange` guard deliberately kept the focused popover open, producing the exact “popover visible, source highlight missing” state.
+- The draft now clones its live Range into the CSS Custom Highlight registry before autofocus. `hideAnnotationPopover()` removes that highlight, and entry changes, reader close/reload, copy, send-to-AI, submit, Escape, and outside clicks all share that cleanup path. Unsupported browsers skip autofocus so their native selection remains visible.
+- The new three-test regression suite proves registration, cleanup, fallback, cloned-Range wiring, and visible styling. The full base branch passes 332/332 tests; the production release branch, including the podcast work, passes 335/335. JavaScript syntax, asset hashes, and `git diff --check` pass.
+- Local and production Chrome both show the annotation textarea focused while the native Selection is collapsed and one independent highlight Range remains. On the live screenshot article, `杀死 AI slop` keeps its blue-gray background while typing; Escape removes the popover and highlight. Browser errors: 0.
+- Sibling sweep: the one shared selection/popover implementation serves original, rewrite, and translation surfaces. No second autofocus-driven annotation path exists, and all direct draft resets were routed through the shared cleanup.
+- Deployed image `sha256:d2051b08128f0a59ca6d4e2f1e9426f2537b8d997f23b1abd376627a578956f3`. Public `/` and `/api/me` return 200, the public app/style hashes match the release files, SQLite reports `quick_check=ok` with zero foreign-key violations, recent error lines are 0, and the container is running with zero restarts.
+- Backup: `/opt/rssreader-backups/annotation-selection-20260715T141539Z`; rollback image: `rssreader-namoo-reader:rollback-annotation-selection-20260715T141539Z`.
 
 ---
 

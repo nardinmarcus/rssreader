@@ -2828,6 +2828,9 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .annotation-discussion-muted .annotation-discussed-block {
   display: revert;
 }
+::highlight(annotation-draft) {
+  background-color: color-mix(in srgb, var(--focus-ring) 38%, transparent);
+}
 .annotation-popover {
   position: fixed;
   z-index: 80;
