@@ -6650,6 +6650,22 @@ async function copyAnnotationSelection() {
   }
 }
 
+function handleAnnotationDraftCopy(event) {
+  const input = event.currentTarget;
+  const selection = window.getSelection?.();
+  if (
+    !state.annotationDraft
+    || !event.clipboardData
+    || !input
+    || input.selectionStart !== input.selectionEnd
+    || (selection && !selection.isCollapsed)
+  ) return;
+  const text = String(state.annotationDraft.selectedText || state.annotationDraft.quote || '').trim();
+  if (!text) return;
+  event.clipboardData.setData('text/plain', text);
+  event.preventDefault();
+}
+
 function maybeOpenAnnotationPopover() {
   if ($('#annotation-popover')?.contains(document.activeElement)) return;
   const context = selectionAnnotationContext();
@@ -11027,6 +11043,7 @@ document.addEventListener('selectionchange', () => {
 $('#annotation-popover-copy').onclick = copyAnnotationSelection;
 $('#annotation-popover-send-ai').onclick = sendAnnotationDraftToAgent;
 $('#annotation-popover-submit').onclick = submitAnnotationDraft;
+$('#annotation-popover-input').oncopy = handleAnnotationDraftCopy;
 $('#annotation-popover-input').onkeydown = (e) => {
   if (e.key === 'Escape') {
     e.preventDefault();

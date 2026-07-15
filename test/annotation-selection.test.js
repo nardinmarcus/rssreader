@@ -136,3 +136,59 @@ test('selection context clones the live range and the draft highlight has visibl
   assert.match(selectionContext, /range:\s*range\.cloneRange\(\)/);
   assert.match(styles, /::highlight\(annotation-draft\)\s*\{[^}]*background-color:/s);
 });
+
+function createDraftCopyContext({
+  draft = { selectedText: 'source quote', quote: 'fallback quote' },
+  inputSelection = [0, 0],
+  domSelectionCollapsed = true,
+} = {}) {
+  const writes = [];
+  let prevented = false;
+  const context = {
+    state: { annotationDraft: draft },
+    window: {
+      getSelection: () => ({ isCollapsed: domSelectionCollapsed }),
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('handleAnnotationDraftCopy'), context);
+  const event = {
+    currentTarget: {
+      selectionStart: inputSelection[0],
+      selectionEnd: inputSelection[1],
+    },
+    clipboardData: {
+      setData: (type, value) => writes.push({ type, value }),
+    },
+    preventDefault: () => { prevented = true; },
+  };
+  return {
+    context,
+    event,
+    writes,
+    get prevented() { return prevented; },
+  };
+}
+
+test('Command+C copies the cached annotation selection without closing the popover', () => {
+  const fixture = createDraftCopyContext();
+
+  fixture.context.handleAnnotationDraftCopy(fixture.event);
+
+  assert.deepEqual(fixture.writes, [{ type: 'text/plain', value: 'source quote' }]);
+  assert.equal(fixture.prevented, true);
+  assert.equal(fixture.context.state.annotationDraft.selectedText, 'source quote');
+  assert.match(app, /\$\('#annotation-popover-input'\)\.oncopy\s*=\s*handleAnnotationDraftCopy/);
+});
+
+test('Command+C preserves native copying for an explicit textarea or document selection', () => {
+  const textareaSelection = createDraftCopyContext({ inputSelection: [0, 5] });
+  textareaSelection.context.handleAnnotationDraftCopy(textareaSelection.event);
+  assert.deepEqual(textareaSelection.writes, []);
+  assert.equal(textareaSelection.prevented, false);
+
+  const documentSelection = createDraftCopyContext({ domSelectionCollapsed: false });
+  documentSelection.context.handleAnnotationDraftCopy(documentSelection.event);
+  assert.deepEqual(documentSelection.writes, []);
+  assert.equal(documentSelection.prevented, false);
+});

@@ -1,3 +1,21 @@
+# Restore Command+C for an open annotation selection
+
+## Plan
+
+- [ ] Reproduce the live keyboard-copy path and capture the selection, focus, and clipboard state.
+- [ ] Add a failing regression guard for copying the cached source selection from the annotation popover.
+- [ ] Route the browser `copy` event to the cached source text only when the popover input has no explicit text selection.
+- [ ] Verify native input-copy behavior, button-copy behavior, cleanup, and all annotation surfaces.
+- [ ] Run focused/full tests, refresh the application asset fingerprint, and verify the real interaction in Chrome and production.
+
+## Verification contract
+
+1. Source selection -> verify: after the popover takes focus, `Command+C` copies the highlighted source quote.
+2. Input selection -> verify: explicitly selected text inside the annotation textarea still uses the browser's native copy behavior.
+3. Scope -> verify: the copy override is active only while an annotation draft is open and never intercepts unrelated page copying.
+
+---
+
 # YouTube Podcast reader completeness and layout
 
 ## Root cause
@@ -67,7 +85,6 @@
   ```bash
   ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/xiaojun-podcast-20260715T124113Z; install -m 644 "$b/fetcher.js" lib/fetcher.js; install -m 644 "$b/sources.js" lib/sources.js; docker image tag rssreader-namoo-reader:rollback-xiaojun-podcast-20260715T124113Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
   ```
-
 ---
 
 # Onepage share link compatibility regression
