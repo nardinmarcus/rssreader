@@ -6,7 +6,7 @@
 - [x] Add the enabled source to the Podcast catalog with a low-frequency refresh policy.
 - [x] Add regression coverage for category, official feed identity, labels, and ordering.
 - [x] Run a real parser probe plus focused/full tests.
-- [ ] Back up production, deploy the verified source catalog, refresh the new source, and verify the live API, SQLite rows, public UI, and logs.
+- [x] Back up production, deploy the verified source catalog, refresh the new source, and verify the live API, SQLite rows, public UI, and logs.
 
 ## Verification contract
 
@@ -14,6 +14,20 @@
 2. Parsing -> verify: the application parser returns current videos with title, publication time, YouTube URL, description, and thumbnail.
 3. Catalog -> verify: `xiaojunpodcast` is enabled under `podcast`, labeled `社区`, and ordered after the existing enabled Podcast sources.
 4. Production -> verify: the live source reports `status=ok`, persisted entries belong to `xiaojunpodcast`, public endpoints remain healthy, and recent error logs are empty.
+
+## Review
+
+- Resolved `@xiaojunpodcast` to immutable channel ID `UC3Sv1JuKpbOx3csUO8FAo5g` and added its official YouTube Atom feed as enabled Podcast source `xiaojunpodcast` with a 12-hour refresh interval.
+- Added Media RSS group parsing so nested YouTube descriptions and thumbnails survive normalization. The fixture regression covers title, link, author, publication time, description, content, and image.
+- Focused tests passed, the full suite passed 330/330, JavaScript syntax and `git diff --check` passed, and an isolated VPS container fetched 10 real entries with `status=ok` before production was changed.
+- Deployed image `sha256:0b5c2bbc9c29ea4ccfaab56ca1f760b361fa4b1be988f83b9f5bb054d6272231`. Host and container hashes match the tested `lib/fetcher.js` and `lib/sources.js`; `.env` and Compose remain byte-identical to their backups.
+- Production refresh added 10 entries with 0 failures and no automatic rewrites. All 10 have thumbnails; the minimum summary and content lengths are 320 and 822 characters. Public source, list, detail, root readiness, and `/api/me` return HTTP 200; the source reports `status=ok`; SQLite `quick_check=ok`; recent error lines are 0; restart count is 0.
+- Backup: `/opt/rssreader-backups/xiaojun-podcast-20260715T124113Z`; rollback image: `rssreader-namoo-reader:rollback-xiaojun-podcast-20260715T124113Z`.
+- Application rollback (keeps the 10 inert SQLite rows so no later production data is overwritten):
+
+  ```bash
+  ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/xiaojun-podcast-20260715T124113Z; install -m 644 "$b/fetcher.js" lib/fetcher.js; install -m 644 "$b/sources.js" lib/sources.js; docker image tag rssreader-namoo-reader:rollback-xiaojun-podcast-20260715T124113Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
+  ```
 
 ---
 
