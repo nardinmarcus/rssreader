@@ -12,13 +12,20 @@ process.env.NAMOO_READER_DATA_DIR = dataDir;
 const store = require('../lib/store');
 const projectDir = path.join(__dirname, '..');
 
-test('versioned application script URL matches the shipped content hash', () => {
-  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'));
+test('versioned frontend asset URLs match the shipped content hashes', () => {
   const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
-  const version = html.match(/<script src="\/app\.js\?v=([^"]+)"/);
+  const assets = [
+    ['app.js', /<script src="\/app\.js\?v=([^"]+)"/],
+    ['lucide-icons.js', /<script src="\/lucide-icons\.js\?v=([^"]+)"/],
+    ['styles.css', /<link rel="stylesheet" href="\/styles\.css\?v=([^"]+)"/],
+  ];
 
-  assert.ok(version, 'index.html must load a versioned app.js');
-  assert.equal(version[1], crypto.createHash('sha256').update(app).digest('hex').slice(0, 12));
+  for (const [filename, pattern] of assets) {
+    const content = fs.readFileSync(path.join(projectDir, 'public', filename));
+    const version = html.match(pattern);
+    assert.ok(version, `index.html must load a versioned ${filename}`);
+    assert.equal(version[1], crypto.createHash('sha256').update(content).digest('hex').slice(0, 12));
+  }
 });
 
 async function freePort() {

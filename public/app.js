@@ -24,14 +24,22 @@ function readStoredNumber(key) {
 }
 
 const CATEGORY_LABELS = { article: '文章', news: '资讯', podcast: '播客' };
-const READER_TABS = ['original', 'rewrite', 'translation'];
+const THEME_MODES = ['system', 'light', 'dark'];
+const THEME_MODE_LABELS = { system: '跟随系统', light: '浅色', dark: '深色' };
+const THEME_MODE_ICONS = { system: 'monitor', light: 'sun', dark: 'moon' };
+const THEME_STORAGE_KEY = 'fr_theme_mode';
+const themePreferenceMedia = typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-color-scheme: dark)')
+  : null;
+let themeMode = 'system';
+const READER_TABS = ['original', 'rewrite', 'onepage', 'translation'];
 const READER_NAV_TABS = ['original', 'rewrite'];
 const DEFAULT_READER_OPEN_TAB = 'rewrite';
 const READER_OPEN_TABS = ['rewrite', 'original'];
-const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'annotations', 'comments', 'chat'];
+const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'onepage', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
 const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'moderation', 'sources'];
-const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
+const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', onepage: 'Onepage', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '创作草稿', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
 const ENTRY_PANE_MIN_WIDTH = 260;
@@ -144,6 +152,10 @@ const ICON_FALLBACK_GLYPHS = {
   'panel-right-open': '‹',
   'arrow-left': '←',
   'arrow-right': '→',
+  check: '✓',
+  monitor: '▣',
+  moon: '◐',
+  sun: '☼',
   x: '×',
 };
 const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
@@ -392,6 +404,67 @@ function hydrateLucideIcons(root = document) {
     const className = slot.dataset.qmIconClass || 'app-icon';
     slot.innerHTML = iconMarkup(icon, { className });
   });
+}
+
+function normalizeThemeMode(mode) {
+  return THEME_MODES.includes(mode) ? mode : 'system';
+}
+
+function storedThemeMode() {
+  const savedMode = storage.getItem(THEME_STORAGE_KEY);
+  if (THEME_MODES.includes(savedMode)) return savedMode;
+  const legacyTheme = storage.getItem('fr_theme');
+  return legacyTheme === 'light' || legacyTheme === 'dark' ? legacyTheme : 'system';
+}
+
+function resolvedTheme(mode) {
+  if (mode !== 'system') return mode;
+  return themePreferenceMedia?.matches ? 'dark' : 'light';
+}
+
+function updateThemeControl() {
+  const toggle = $('#theme-toggle');
+  if (toggle) {
+    setElementIcon(toggle, THEME_MODE_ICONS[themeMode]);
+    toggle.title = `主题：${THEME_MODE_LABELS[themeMode]}`;
+    toggle.setAttribute('aria-label', toggle.title);
+  }
+  $$('.theme-option[data-theme-mode]').forEach(option => {
+    const selected = option.dataset.themeMode === themeMode;
+    option.setAttribute('aria-checked', selected ? 'true' : 'false');
+    option.tabIndex = selected ? 0 : -1;
+  });
+}
+
+function applyThemeMode(mode, { persist = true } = {}) {
+  themeMode = normalizeThemeMode(mode);
+  const theme = resolvedTheme(themeMode);
+  document.documentElement.dataset.themeMode = themeMode;
+  document.documentElement.dataset.theme = theme;
+  document.body.dataset.themeMode = themeMode;
+  document.body.dataset.theme = theme;
+  if (persist) {
+    storage.setItem(THEME_STORAGE_KEY, themeMode);
+    storage.removeItem('fr_theme');
+  }
+  updateThemeControl();
+  if (state.personaAgentController?.update) {
+    state.personaAgentController.update(buildPersonaAgentConfig());
+  }
+}
+
+function setThemeMenuOpen(open, { focusCurrent = false, restoreFocus = false } = {}) {
+  const toggle = $('#theme-toggle');
+  const menu = $('#theme-menu');
+  if (!toggle || !menu) return;
+  const nextOpen = Boolean(open);
+  menu.classList.toggle('hidden', !nextOpen);
+  toggle.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+  if (nextOpen && focusCurrent) {
+    menu.querySelector(`[data-theme-mode="${themeMode}"]`)?.focus();
+  } else if (!nextOpen && restoreFocus) {
+    toggle.focus();
+  }
 }
 
 function normalizeBaseUrl(input) {
@@ -648,6 +721,7 @@ const state = {
   contextPanel: 'agent',
   myTranslations: [],
   myRewrites: [],
+  myOnepages: [],
   myAnnotations: [],
   myComments: [],
   myChatMessages: [],
@@ -664,7 +738,7 @@ const state = {
   editingCustomSourceId: '',
   myAssetTab: 'translation',
   myAssetSort: storage.getItem('qm_my_asset_sort') === 'helpful' ? 'helpful' : 'latest',
-  contributor: { id: '', profile: null, translations: [], rewrites: [], annotations: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
+  contributor: { id: '', profile: null, translations: [], rewrites: [], onepages: [], annotations: [], comments: [], messages: [], tab: 'translation', sort: 'latest', loading: false },
   workspacePage: '',
   commentSort: storage.getItem('qm_comment_sort') === 'latest' ? 'latest' : 'helpful',
   editingCommentId: '',
@@ -681,6 +755,10 @@ const state = {
   rewriteLoading: false,
   rewriteGenerating: false,
   pendingRewriteGenerate: false,
+  onepage: null,
+  onepageLoading: false,
+  onepageGenerating: false,
+  onepagePublishing: false,
   readerTab: 'original',
   defaultReaderTab: DEFAULT_READER_OPEN_TAB,
   profileDefaultReaderTabDraft: DEFAULT_READER_OPEN_TAB,
@@ -749,10 +827,11 @@ function routeStateFromUrl() {
   const queryAnnotationId = String(params.get('annotation') || '').trim();
   const queryChatMessageId = String(params.get('chat') || '').trim();
   const queryAssetId = String(params.get('assetId') || '').trim();
+  const queryOnepageId = String(params.get('onepageId') || '').trim();
   const pathCommentId = articleRoute && articleRoute.focus === 'comments' ? articleRoute.itemId : '';
   const pathAnnotationId = articleRoute && articleRoute.focus === 'annotations' ? articleRoute.itemId : '';
   const pathChatMessageId = articleRoute && articleRoute.focus === 'chat' ? articleRoute.itemId : '';
-  const pathAssetId = articleRoute && ['translation', 'rewrite'].includes(articleRoute.focus) ? articleRoute.itemId : '';
+  const pathAssetId = articleRoute && ['translation', 'rewrite', 'onepage'].includes(articleRoute.focus) ? articleRoute.itemId : '';
   const commentId = hash.startsWith('comment-') ? hash.slice('comment-'.length).trim() : (pathCommentId || queryCommentId);
   const annotationId = hash.startsWith('annotation-') ? hash.slice('annotation-'.length).trim() : (pathAnnotationId || queryAnnotationId);
   const chatMessageId = hash.startsWith('chat-') ? hash.slice('chat-'.length).trim() : (pathChatMessageId || queryChatMessageId);
@@ -763,6 +842,8 @@ function routeStateFromUrl() {
     ? 'translation'
     : articleRoute && articleRoute.focus === 'rewrite'
       ? 'rewrite'
+      : articleRoute && articleRoute.focus === 'onepage'
+        ? 'onepage'
       : queryReaderTab !== null
         ? queryReaderTab
         : focus
@@ -782,7 +863,7 @@ function routeStateFromUrl() {
     assetSort: params.get('sort') === 'helpful' ? 'helpful' : 'latest',
     contributorSort: contributorsPath ? normalizeContributorSort(params.get('sort')) : 'latest',
     focus: commentId ? 'comments' : annotationId ? 'annotations' : chatMessageId ? 'chat' : focus,
-    assetId: pathAssetId || queryAssetId,
+    assetId: pathAssetId || queryOnepageId || queryAssetId,
     commentId,
     annotationId,
     chatMessageId,
@@ -899,6 +980,8 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
       ? 'translation'
       : nextTab === 'rewrite'
       ? 'rewrite'
+      : nextTab === 'onepage'
+      ? 'onepage'
       : '';
     url.pathname = `/articles/${encodeURIComponent(entryArticleLocator(entry))}`;
     if (nextFocus) {
@@ -911,7 +994,7 @@ function readerUrlFor(entry = state.activeEntry, tab = state.readerTab, focus = 
 
 function readerAssetUrl(type, entry = state.activeEntry, assetId = '') {
   if (!entry || !ASSET_FILTER_TYPES.includes(type)) return '';
-  const tab = type === 'translation' ? 'translation' : type === 'rewrite' ? 'rewrite' : 'original';
+  const tab = type === 'translation' ? 'translation' : type === 'rewrite' ? 'rewrite' : type === 'onepage' ? 'onepage' : 'original';
   return readerUrlFor(entry, tab, type, assetId).href;
 }
 
@@ -937,7 +1020,7 @@ function chatMessageUrl(messageId, entry = state.activeEntry) {
 }
 
 function assetItemUrl(type, entry, itemId = '') {
-  if ((type === 'translation' || type === 'rewrite') && itemId) return readerAssetUrl(type, entry, itemId);
+  if ((type === 'translation' || type === 'rewrite' || type === 'onepage') && itemId) return readerAssetUrl(type, entry, itemId);
   if (type === 'comments' && itemId) return commentUrl(itemId, entry);
   if (type === 'annotations' && itemId) return annotationUrl(itemId, entry);
   if (type === 'chat' && itemId) return chatMessageUrl(itemId, entry);
@@ -948,6 +1031,7 @@ function readerShareFocus() {
   if (state.readerFocus && ASSET_FILTER_TYPES.includes(state.readerFocus)) return state.readerFocus;
   if (state.readerTab === 'translation' && state.translation) return 'translation';
   if (state.readerTab === 'rewrite' && state.rewrite) return 'rewrite';
+  if (state.readerTab === 'onepage' && state.onepage?.visibility === 'public') return 'onepage';
   return null;
 }
 
@@ -955,7 +1039,7 @@ function copyReaderLink() {
   const entry = state.activeEntry;
   if (!entry) return;
   const focus = readerShareFocus();
-  const tab = focus === 'translation' ? 'translation' : focus === 'rewrite' ? 'rewrite' : state.readerTab;
+  const tab = focus === 'translation' ? 'translation' : focus === 'rewrite' ? 'rewrite' : focus === 'onepage' ? 'onepage' : state.readerTab;
   const url = readerUrlFor(entry, tab, focus, state.readerAssetId);
   document.title = readerRouteTitle(entry, focus);
   if (url.href !== window.location.href) {
@@ -966,6 +1050,7 @@ function copyReaderLink() {
 
 function readerVisibleContentRoot() {
   if (state.readerTab === 'rewrite') return $('#rewrite-content');
+  if (state.readerTab === 'onepage') return $('#onepage-content');
   if (state.readerTab === 'translation') return $('#translation-list');
   return $('#reader-content');
 }
@@ -987,9 +1072,12 @@ function activeReaderCopyText(entry = state.activeEntry) {
   const meta = [src?.name, entry.author, date].filter(Boolean).join(' · ');
   let body = elementTextForCopy(readerVisibleContentRoot());
   if (!body && state.readerTab === 'rewrite' && state.rewrite?.body) body = String(state.rewrite.body).trim();
+  if (!body && state.readerTab === 'onepage' && state.onepage) body = onepageText(state.onepage);
   if (!body && state.readerTab === 'original') body = plainTextFromHtml(contentCache.get(entry.id) || entry.content || entry.summary || '');
   const versionLabel = state.readerTab === 'rewrite'
     ? rewriteUiCopy(entry).section
+    : state.readerTab === 'onepage'
+      ? 'Onepage'
     : state.readerTab === 'translation'
       ? '中文翻译'
       : '原文';
@@ -1474,7 +1562,7 @@ function aiPurposeOverrideKey(purpose, scope = aiScope()) {
 }
 
 function setSiteAi(siteAi) {
-  state.siteAi = siteAi && siteAi.configured ? siteAi : null;
+  state.siteAi = siteAi && typeof siteAi === 'object' ? siteAi : null;
 }
 
 function siteAiProfile() {
@@ -1681,6 +1769,23 @@ function rewriteAiConfig() {
   };
 }
 
+function onepageAiConfig() {
+  const config = aiConfigForPurpose('rewrite');
+  if (hasUsableAiConfig(config)) {
+    return { ...config, temperature: Math.min(config.temperature || 0.2, 0.2), maxTokens: Math.max(config.maxTokens || 0, 4500) };
+  }
+  return {
+    provider: 'deepseek',
+    providerName: 'DeepSeek',
+    providerType: 'openai_compatible',
+    apiKey: '',
+    baseUrl: '',
+    model: '',
+    temperature: 0.2,
+    maxTokens: 4500,
+  };
+}
+
 async function api(path, opts) {
   const headers = { ...(opts && opts.headers ? opts.headers : {}) };
   if (opts && opts.aiConfig) Object.assign(headers, aiHeadersFromConfig(opts.aiConfig));
@@ -1861,7 +1966,7 @@ function entryQualityBreakdown(entry) {
     helpful: (Number(assets.helpfulCount) || 0) * 3,
     comments: (Number(assets.comments) || 0) * 2,
     annotations: (Number(assets.annotations) || 0) * 1.6,
-    aiAssets: (assetCountForType(entry, 'translation') + assetCountForType(entry, 'rewrite')) * 1.4,
+    aiAssets: (assetCountForType(entry, 'translation') + assetCountForType(entry, 'rewrite') + assetCountForType(entry, 'onepage')) * 1.4,
     chat: (Number(assets.chatMessages) || 0) * 1.1,
     reads: Math.min(8, (Number(stats.viewCount) || 0) / 8),
   };
@@ -1949,6 +2054,7 @@ function renderReaderStatsUi() {
   const railComment = $('#reader-rail-comment');
   const railAnnotation = $('#reader-rail-annotation');
   const railRewrite = $('#reader-rail-rewrite');
+  const railOnepage = $('#reader-rail-onepage');
   const railTranslate = $('#reader-rail-translate');
   if (railLike) {
     railLike.classList.toggle('active', stats.reactionByMe === 'like');
@@ -1963,6 +2069,7 @@ function renderReaderStatsUi() {
   if (railComment) $('#reader-rail-comment-count').textContent = formatCompactCount((state.comments || []).length) || '0';
   if (railAnnotation) $('#reader-rail-annotation-count').textContent = formatCompactCount((state.annotations || []).length) || '0';
   if (railRewrite) railRewrite.classList.toggle('active', Boolean(state.rewrite));
+  if (railOnepage) railOnepage.classList.toggle('active', Boolean(state.onepage));
   if (railTranslate) railTranslate.classList.toggle('active', Boolean(state.translation));
   const viewCount = $('#reader-view-count');
   if (viewCount) viewCount.textContent = `访问 ${formatCompactCount(stats.viewCount) || 0}`;
@@ -2065,9 +2172,17 @@ function renderSidebar() {
     setSidebarCategory(state.filterCategory);
   }
   const activeCategory = normalizeSidebarCategory(state.sidebarCategory);
+  const list = groups[activeCategory];
 
   const wrap = $('#feed-groups');
   wrap.innerHTML = '';
+
+  const sourceTools = document.createElement('div');
+  sourceTools.className = 'sidebar-source-tools';
+  const sourceHeading = document.createElement('div');
+  sourceHeading.className = 'sidebar-source-heading';
+  sourceHeading.innerHTML = `<strong>订阅源</strong><span>${list.length}</span>`;
+  sourceTools.appendChild(sourceHeading);
 
   const categoryTabs = document.createElement('div');
   categoryTabs.className = 'sidebar-category-tabs';
@@ -2088,9 +2203,9 @@ function renderSidebar() {
     tab.onclick = () => selectCategory(category);
     categoryTabs.appendChild(tab);
   }
-  wrap.appendChild(categoryTabs);
+  sourceTools.appendChild(categoryTabs);
+  wrap.appendChild(sourceTools);
 
-  const list = groups[activeCategory];
   if (!list.length) {
     const empty = document.createElement('div');
     empty.className = 'sidebar-category-empty';
@@ -2151,6 +2266,7 @@ function renderSidebar() {
     const btn = document.createElement('button');
     btn.className = 'feed-item' + (state.filterSource === s.id ? ' active' : '');
     const total = entryCountForSource(s);
+    btn.setAttribute('aria-label', `${s.name}，${total} 篇文章`);
     btn.innerHTML = `${faviconHtml(s.siteUrl, s.name)}
       <span class="fname" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</span>
       ${s.status === 'error' ? '<span class="err-dot" title="抓取失败"></span>' : ''}
@@ -2169,7 +2285,12 @@ function renderSidebar() {
   renderAssetDashboard();
   renderSidebarMore();
 
-  $$('.view-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === state.view && !state.filterSource && !state.filterCategory));
+  $$('.view-btn[data-view]').forEach(b => {
+    const active = b.dataset.view === state.view && !state.filterSource && !state.filterCategory;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
 }
 
 async function reorderSidebarSource(sourceId, targetId, placement = 'before') {
@@ -2238,7 +2359,7 @@ function hasEntryAssets(entry) {
 
 function assetCountForType(entry, type) {
   const assets = entry && entry.assets ? entry.assets : {};
-  if (type === 'translation' || type === 'rewrite') {
+  if (type === 'translation' || type === 'rewrite' || type === 'onepage') {
     const count = Number(assets[`${type}Count`]) || 0;
     if (count) return count;
     const items = assets.items && Array.isArray(assets.items[type]) ? assets.items[type] : [];
@@ -2407,6 +2528,7 @@ function assetBadgesHtml(entry, { interactive = false, copyable = false } = {}) 
 const ASSET_TYPE_LABELS = {
   translation: '中译',
   rewrite: '草稿',
+  onepage: 'Onepage',
   annotations: '划线',
   comments: '点评',
   chat: '对话',
@@ -2415,6 +2537,7 @@ const ASSET_TYPE_LABELS = {
 const ASSET_DIRECTORY_LABELS = {
   translation: '中文翻译',
   rewrite: '创作草稿',
+  onepage: 'Onepage',
   annotations: '划线点评',
   comments: '人工点评',
   chat: '文章对话',
@@ -2427,6 +2550,7 @@ function assetDirectoryLabel(type) {
 const ASSET_FILTERS = {
   translation: { label: '中译', count: entry => assetCountForType(entry, 'translation'), title: '查看有中文翻译的文章' },
   rewrite: { label: '草稿', count: entry => assetCountForType(entry, 'rewrite'), title: '查看有创作草稿的文章' },
+  onepage: { label: 'Onepage', count: entry => assetCountForType(entry, 'onepage'), title: '查看有 Onepage 的文章' },
   annotations: { label: '划线', count: entry => assetCountForType(entry, 'annotations'), title: '查看有划线点评的文章' },
   comments: { label: '点评', count: entry => assetCountForType(entry, 'comments'), title: '查看有人工点评的文章' },
   chat: { label: '对话', count: entry => assetCountForType(entry, 'chat'), title: '查看有文章对话的文章' },
@@ -2486,6 +2610,7 @@ function assetHelpfulScoreForType(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return Number(assets.translationHelpfulCount) || 0;
   if (type === 'rewrite') return Number(assets.rewriteHelpfulCount) || 0;
+  if (type === 'onepage') return Number(assets.onepageHelpfulCount) || 0;
   if (type === 'annotations') return Number(assets.annotationHelpfulCount) || 0;
   if (type === 'comments') return Number(assets.commentHelpfulCount ?? assets.helpfulCount) || 0;
   if (type === 'chat') return Number(assets.chatHelpfulCount) || 0;
@@ -2496,11 +2621,13 @@ function assetHelpfulItemCount(entry, type = '') {
   const assets = entry && entry.assets ? entry.assets : {};
   if (type === 'translation') return helpfulAiAssetItemCount(assets, 'translation');
   if (type === 'rewrite') return helpfulAiAssetItemCount(assets, 'rewrite');
+  if (type === 'onepage') return helpfulAiAssetItemCount(assets, 'onepage');
   if (type === 'annotations') return Number(assets.helpfulAnnotations) || 0;
   if (type === 'comments') return Number(assets.helpfulComments) || 0;
   if (type === 'chat') return Number(assets.helpfulChats) || 0;
   return helpfulAiAssetItemCount(assets, 'translation')
     + helpfulAiAssetItemCount(assets, 'rewrite')
+    + helpfulAiAssetItemCount(assets, 'onepage')
     + (Number(assets.helpfulAnnotations) || 0)
     + (Number(assets.helpfulComments) || 0)
     + (Number(assets.helpfulChats) || 0);
@@ -3006,6 +3133,7 @@ function mergeAssets(entry, patch = {}) {
   return {
     translation: false,
     rewrite: false,
+    onepage: false,
     comments: 0,
     annotations: 0,
     chatMessages: 0,
@@ -3031,6 +3159,7 @@ function mergeAssets(entry, patch = {}) {
     topHelpfulChat: null,
     topHelpfulTranslation: null,
     topHelpfulRewrite: null,
+    topHelpfulOnepage: null,
     topHelpfulAsset: null,
     ...(entry && entry.assets ? entry.assets : {}),
     ...patch,
@@ -3120,6 +3249,7 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
   const rows = [];
   const translation = state.translation && state.translation.entryId === entry.id ? state.translation : null;
   const rewrite = state.rewrite && state.rewrite.entryId === entry.id ? state.rewrite : null;
+  const onepage = state.onepage && state.onepage.entryId === entry.id && state.onepage.visibility === 'public' ? state.onepage : null;
   const annotations = (state.annotations || []).filter(annotation => annotation.entryId === entry.id);
   const comments = (state.comments || []).filter(comment => comment.entryId === entry.id);
   const messages = (state.agentMessages || []).filter(message => !message.entryId || message.entryId === entry.id);
@@ -3144,6 +3274,15 @@ function renderReaderAssetSummary(entry = state.activeEntry) {
       label: copy.asset,
       value: rewrite ? assetMetaLine([total > 1 ? `${total} 条` : '', rewrite.createdBy, rewrite.model, assetHelpfulMeta(rewrite), formatAssetTime(rewrite.updatedAt)]) : (readerAssetPreviewMeta(entry, 'rewrite', [total > 1 ? `${total} 条` : '']) || '正在加载详情'),
       preview: readerAssetPreview(entry, 'rewrite', rewrite && rewrite.body),
+    });
+  }
+  if (assets.onepage) {
+    const total = assetCountForType(entry, 'onepage');
+    rows.push({
+      type: 'onepage',
+      label: 'Onepage',
+      value: onepage ? assetMetaLine([total > 1 ? `${total} 条` : '', onepage.author, onepage.model, assetHelpfulMeta(onepage), formatAssetTime(onepage.publishedAt || onepage.createdAt)]) : (readerAssetPreviewMeta(entry, 'onepage', [total > 1 ? `${total} 条` : '']) || '正在加载详情'),
+      preview: readerAssetPreview(entry, 'onepage', onepage && onepage.previewText),
     });
   }
   if (assets.comments) {
@@ -3290,6 +3429,12 @@ function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = 
     scrollReaderTarget('#reader-rewrite-panel');
     return;
   }
+  if (type === 'onepage') {
+    state.readerFocus = 'onepage';
+    setReaderTab('onepage', { syncUrl, replaceUrl });
+    scrollReaderTarget('#reader-onepage-panel');
+    return;
+  }
   if (type === 'comments') {
     state.readerFocus = 'comments';
     if (syncUrl) syncReaderUrl({ replace: replaceUrl });
@@ -3331,7 +3476,7 @@ function settlePendingAssetJump(type, { clear = true } = {}) {
 }
 
 function jumpToArticleAsset(type) {
-  if (type === 'translation' || type === 'rewrite') state.readerAssetId = '';
+  if (type === 'translation' || type === 'rewrite' || type === 'onepage') state.readerAssetId = '';
   state.pendingAssetJump = type;
   performArticleAssetJump(type);
 }
@@ -3406,9 +3551,12 @@ function renderAuthState() {
       </span>
     `;
     $('#account-info').title = '打开我的空间';
+    $('#account-info').setAttribute('aria-label', `打开${state.me.displayName || '读者'}的个人空间`);
   }
   renderAdminEntryControls();
   updateAgentControls();
+  updateOnepageVisibility();
+  if (state.activeEntry) renderOnepage(state.onepage);
 }
 
 function renderSidebarAiSettings() {
@@ -5098,6 +5246,14 @@ function openArticleLinkInWindow() {
   window.open(url, '_blank', 'noopener');
 }
 
+function alignOnepagePanelToReaderTabs() {
+  const pane = $('#reader-pane');
+  const tabs = $('.reader-tabs');
+  if (!pane || !tabs) return;
+  const target = Math.max(0, tabs.offsetTop - 12);
+  if (pane.scrollTop > target) pane.scrollTop = target;
+}
+
 function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   const next = normalizeReaderTab(tab);
   state.readerTab = next;
@@ -5105,6 +5261,8 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   $('#reader-original-panel').classList.toggle('hidden', next !== 'original');
   $('#reader-translation').classList.toggle('hidden', next !== 'translation');
   $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
+  $('#reader-onepage-panel').classList.toggle('hidden', next !== 'onepage');
+  if (next === 'onepage') alignOnepagePanelToReaderTabs();
   updateReaderTocVisibility(next);
   updateReaderLanguageProfile();
   applyTextAnnotations();
@@ -5126,6 +5284,7 @@ function maybeGenerateRewriteAfterLoad() {
 function entryAssetHasContent(type, asset) {
   if (type === 'translation') return Boolean(asset && Array.isArray(asset.content) && asset.content.length);
   if (type === 'rewrite') return Boolean(asset && asset.body);
+  if (type === 'onepage') return Boolean(asset && asset.html && asset.payload);
   return false;
 }
 
@@ -5133,18 +5292,20 @@ function assetPreviewFromCurrent(type, asset) {
   if (!entryAssetHasContent(type, asset)) return null;
   const text = type === 'translation'
     ? asset.content.map(translationPairText).find(Boolean)
-    : asset.body;
+    : type === 'onepage'
+      ? asset.previewText || asset.payload?.thesis?.text
+      : asset.body;
   const previewText = assetSummaryText(text || '');
   if (!previewText) return null;
   return {
     type,
     id: asset.id || state.readerAssetId || '',
     role: '',
-    author: asset.createdBy || '',
+    author: asset.author || asset.createdBy || '',
     title: type === 'translation' ? asset.titleZh || '' : asset.title || '',
     model: asset.model || '',
     text: previewText,
-    at: Number(asset.updatedAt || asset.createdAt || 0) || Date.now(),
+    at: Number(asset.publishedAt || asset.updatedAt || asset.createdAt || 0) || Date.now(),
     helpfulCount: Number(asset.helpfulCount) || 0,
   };
 }
@@ -5160,7 +5321,11 @@ function helpfulAiAssetItemCount(assets, type) {
   if (items.length) {
     return items.reduce((sum, item) => sum + (Number(item && item.helpfulCount) > 0 ? 1 : 0), 0);
   }
-  const count = type === 'translation' ? assets && assets.translationHelpfulCount : assets && assets.rewriteHelpfulCount;
+  const count = type === 'translation'
+    ? assets && assets.translationHelpfulCount
+    : type === 'onepage'
+      ? assets && assets.onepageHelpfulCount
+      : assets && assets.rewriteHelpfulCount;
   return Number(count) > 0 ? 1 : 0;
 }
 
@@ -5197,6 +5362,7 @@ function entryAssetHelpfulPatch(type, asset, entry = state.activeEntry) {
     : nextCount;
   const translationHelpfulCount = type === 'translation' ? typeHelpfulCount : Number(assets.translationHelpfulCount) || 0;
   const rewriteHelpfulCount = type === 'rewrite' ? typeHelpfulCount : Number(assets.rewriteHelpfulCount) || 0;
+  const onepageHelpfulCount = type === 'onepage' ? typeHelpfulCount : Number(assets.onepageHelpfulCount) || 0;
 
   const topHelpfulTranslation = type === 'translation'
     ? topHelpfulAssetPreview(typeItems.length ? typeItems : [previews.translation])
@@ -5204,9 +5370,13 @@ function entryAssetHelpfulPatch(type, asset, entry = state.activeEntry) {
   const topHelpfulRewrite = type === 'rewrite'
     ? topHelpfulAssetPreview(typeItems.length ? typeItems : [previews.rewrite])
     : assets.topHelpfulRewrite;
+  const topHelpfulOnepage = type === 'onepage'
+    ? topHelpfulAssetPreview(typeItems.length ? typeItems : [previews.onepage])
+    : assets.topHelpfulOnepage;
   const topHelpfulAsset = topHelpfulAssetPreview([
     topHelpfulTranslation,
     topHelpfulRewrite,
+    topHelpfulOnepage,
     assets.topHelpfulComment,
     assets.topHelpfulChat,
   ]);
@@ -5223,11 +5393,14 @@ function entryAssetHelpfulPatch(type, asset, entry = state.activeEntry) {
     preview: primaryPreview || null,
     translationHelpfulCount,
     rewriteHelpfulCount,
-    helpfulAssets: helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount }, 'translation')
-      + helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount }, 'rewrite'),
-    helpfulCount: translationHelpfulCount + rewriteHelpfulCount + commentHelpfulCount + chatHelpfulCount,
+    onepageHelpfulCount,
+    helpfulAssets: helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount, onepageHelpfulCount }, 'translation')
+      + helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount, onepageHelpfulCount }, 'rewrite')
+      + helpfulAiAssetItemCount({ ...assets, items, translationHelpfulCount, rewriteHelpfulCount, onepageHelpfulCount }, 'onepage'),
+    helpfulCount: translationHelpfulCount + rewriteHelpfulCount + onepageHelpfulCount + commentHelpfulCount + chatHelpfulCount,
     topHelpfulTranslation,
     topHelpfulRewrite,
+    topHelpfulOnepage,
     topHelpfulAsset,
   };
 }
@@ -5637,9 +5810,196 @@ async function loadRewrite(entry) {
   }
 }
 
+function sanitizeOnepageHtml(html) {
+  if (!window.DOMPurify) return '';
+  return DOMPurify.sanitize(String(html || ''), {
+    FORBID_TAGS: ['script', 'style', 'form', 'input', 'button', 'svg', 'canvas', 'iframe', 'object', 'embed', 'img'],
+    FORBID_ATTR: ['style', 'src', 'srcset'],
+  });
+}
+
+function onepageText(onepage = state.onepage) {
+  const payload = onepage && onepage.payload;
+  if (!payload) return '';
+  const lines = [payload.title, payload.thesis?.text];
+  if (Array.isArray(payload.keyPoints)) {
+    lines.push('', '关键观点', ...payload.keyPoints.map(item => `${item.title}：${item.text}`));
+  }
+  if (Array.isArray(payload.evidence)) lines.push('', '事实依据', ...payload.evidence.map(item => item.text));
+  if (payload.framework && Array.isArray(payload.framework.steps)) {
+    lines.push('', payload.framework.title, ...payload.framework.steps.map(item => `${item.label}：${item.text}`));
+  }
+  if (Array.isArray(payload.implications)) lines.push('', '意味着什么', ...payload.implications.map(item => item.text));
+  if (Array.isArray(payload.questions)) lines.push('', '继续思考', ...payload.questions);
+  return lines.filter((line, index, all) => line || (index > 0 && all[index - 1])).join('\n');
+}
+
+function onepageCanGenerate() {
+  return Boolean(state.me && state.siteAi && state.siteAi.onepageEnabled);
+}
+
+function updateOnepageVisibility(entry = state.activeEntry) {
+  const available = Boolean(state.onepage || onepageCanGenerate() || assetCountForType(entry, 'onepage'));
+  const tab = $('.reader-tab[data-tab="onepage"]');
+  const rail = $('#reader-rail-onepage');
+  if (tab) tab.classList.toggle('hidden', !available);
+  if (rail) rail.classList.toggle('hidden', !available);
+}
+
+function onepageMetaText(onepage) {
+  if (!onepage) return '';
+  return [
+    onepage.visibility === 'private' ? '私有预览' : '已发布',
+    onepage.stale ? '原文已更新' : '',
+    onepage.model,
+    formatAssetTime(onepage.publishedAt || onepage.createdAt),
+  ].filter(Boolean).join(' · ');
+}
+
+function renderOnepage(onepage) {
+  state.onepage = onepage || null;
+  const content = $('#onepage-content');
+  const empty = $('#onepage-empty');
+  const meta = $('#onepage-meta');
+  const copy = $('#onepage-copy');
+  const publish = $('#onepage-publish');
+  const action = $('#reader-onepage');
+  const hasContent = entryAssetHasContent('onepage', state.onepage);
+  const canGenerate = onepageCanGenerate();
+  updateOnepageVisibility();
+  content.innerHTML = '';
+  copy.classList.toggle('hidden', !hasContent);
+  copy.disabled = !hasContent;
+  action.classList.toggle('hidden', !canGenerate);
+  action.disabled = state.onepageGenerating;
+  action.textContent = hasContent ? (onepage.stale ? '更新' : '重新生成') : '生成';
+  const canPublish = Boolean(hasContent && onepage.visibility === 'private' && canGenerate);
+  publish.classList.toggle('hidden', !canPublish);
+  publish.disabled = state.onepagePublishing;
+  publish.textContent = state.onepagePublishing ? '发布中…' : '发布';
+  renderAssetHelpfulButton('onepage', hasContent && onepage.visibility === 'public' ? onepage : null);
+
+  if (!hasContent) {
+    empty.classList.remove('hidden');
+    empty.querySelector('p').textContent = canGenerate
+      ? '这篇文章还没有 Onepage。生成后先私有预览，再决定是否发布。'
+      : '这篇文章还没有公开 Onepage。';
+    meta.textContent = '';
+    meta.classList.add('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  const safeHtml = sanitizeOnepageHtml(onepage.html);
+  if (!safeHtml) {
+    content.innerHTML = '<div class="onepage-safety-error">安全渲染组件未就绪，暂不显示内容。</div>';
+  } else {
+    content.innerHTML = safeHtml;
+  }
+  meta.textContent = onepageMetaText(onepage);
+  meta.classList.remove('hidden');
+  renderReaderAssetSummary();
+  settlePendingAssetJump('onepage');
+}
+
+async function loadOnepage(entry) {
+  state.onepageLoading = true;
+  renderOnepage(null);
+  try {
+    const onepageId = state.readerFocus === 'onepage' ? state.readerAssetId : '';
+    const query = onepageId ? `?onepageId=${encodeURIComponent(onepageId)}` : '';
+    const data = await api(`/api/entry/${encodeURIComponent(entry.id)}/onepage${query}`);
+    if (state.activeEntry?.id !== entry.id) return;
+    renderOnepage(data.onepage);
+    if (data.onepage && data.onepage.visibility === 'public') {
+      updateEntryAssets(entry.id, entryAssetHelpfulPatch('onepage', data.onepage), { rerenderList: false });
+      renderList();
+    }
+  } catch {
+    if (state.activeEntry?.id === entry.id) renderOnepage(null);
+  } finally {
+    state.onepageLoading = false;
+  }
+}
+
+async function generateOnepage({ force = false } = {}) {
+  const entry = state.activeEntry;
+  if (!entry || state.onepageGenerating) return;
+  if (state.onepage && !force) {
+    setReaderTab('onepage');
+    return;
+  }
+  if (!requireAuth('login')) return;
+  if (!onepageCanGenerate()) {
+    toast('Onepage 当前未对该账号开放');
+    return;
+  }
+  const config = onepageAiConfig();
+  if (!hasUsableAiConfig(config)) {
+    openAiConfigModal('rewrite', 'onepage');
+    return;
+  }
+  state.readerAssetId = '';
+  setReaderTab('onepage');
+  state.onepageGenerating = true;
+  renderOnepage(state.onepage);
+  const action = $('#reader-onepage');
+  action.textContent = '生成中…';
+  try {
+    const data = await api(`/api/entry/${encodeURIComponent(entry.id)}/onepage`, {
+      method: 'POST',
+      aiConfig: config,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    if (state.activeEntry?.id !== entry.id) return;
+    if (data.entry) applyServerEntryUpdate(data.entry);
+    renderOnepage(data.onepage);
+    setReaderTab('onepage');
+    toast(data.cached ? '已显示现有 Onepage' : 'Onepage 已生成，仅自己可见');
+  } catch (error) {
+    if (/API Key|未配置|Authentication|authentication|invalid_request_error|401/i.test(error.message)) {
+      openAiConfigModal('rewrite', 'onepage');
+    }
+    toast('Onepage 生成失败: ' + error.message, 5000);
+  } finally {
+    state.onepageGenerating = false;
+    if (state.activeEntry?.id === entry.id) renderOnepage(state.onepage);
+  }
+}
+
+async function publishOnepage() {
+  const entry = state.activeEntry;
+  const onepage = state.onepage;
+  if (!entry || !onepage || onepage.visibility !== 'private' || state.onepagePublishing) return;
+  if (!requireAuth('login')) return;
+  state.onepagePublishing = true;
+  renderOnepage(onepage);
+  try {
+    const data = await api(`/api/onepages/${encodeURIComponent(onepage.id)}/publish`, { method: 'POST' });
+    if (state.activeEntry?.id !== entry.id) return;
+    state.readerFocus = 'onepage';
+    state.readerAssetId = data.onepage.id;
+    renderOnepage(data.onepage);
+    updateEntryAssets(entry.id, entryAssetHelpfulPatch('onepage', data.onepage), { rerenderList: false });
+    renderList();
+    syncReaderUrl({ replace: true });
+    toast('Onepage 已发布');
+  } catch (error) {
+    toast('Onepage 发布失败: ' + error.message, 5000);
+  } finally {
+    state.onepagePublishing = false;
+    if (state.activeEntry?.id === entry.id) renderOnepage(state.onepage);
+  }
+}
+
+function copyOnepageText() {
+  copyText(onepageText(), 'Onepage 已复制');
+}
+
 async function toggleEntryAssetHelpful(type) {
   const entry = state.activeEntry;
-  const asset = type === 'translation' ? state.translation : type === 'rewrite' ? state.rewrite : null;
+  const asset = type === 'translation' ? state.translation : type === 'rewrite' ? state.rewrite : type === 'onepage' ? state.onepage : null;
   if (!entry || !entryAssetHasContent(type, asset)) return;
   if (!requireAuth('login')) return;
   const btn = $(`#${type}-helpful`);
@@ -5653,18 +6013,19 @@ async function toggleEntryAssetHelpful(type) {
       body: JSON.stringify({ helpful: nextHelpful, assetId }),
     });
     if (state.activeEntry?.id !== entry.id) return;
-    const nextAsset = state.readerAssetId && (type === 'translation' || type === 'rewrite')
+    const nextAsset = state.readerAssetId && (type === 'translation' || type === 'rewrite' || type === 'onepage')
       ? { ...asset, ...(data.reaction || {}) }
       : data[type] || { ...asset, ...(data.reaction || {}) };
     if (type === 'translation') renderTranslation(nextAsset);
     if (type === 'rewrite') renderRewrite(nextAsset);
+    if (type === 'onepage') renderOnepage(nextAsset);
     updateEntryAssets(entry.id, entryAssetHelpfulPatch(type, nextAsset, state.activeEntry), { rerenderList: false });
     renderList();
     toast(nextHelpful ? '已标记有用' : '已取消有用标记');
   } catch (err) {
     toast('反馈失败: ' + err.message, 5000);
   } finally {
-    renderAssetHelpfulButton(type, type === 'translation' ? state.translation : state.rewrite);
+    renderAssetHelpfulButton(type, type === 'translation' ? state.translation : type === 'rewrite' ? state.rewrite : state.onepage);
   }
 }
 
@@ -6726,7 +7087,7 @@ function myAssetUrl(type, item) {
   if (!item) return '';
   const entry = item.entry || { id: item.entryId };
   if (type === 'likes') return readerUrlFor(entry);
-  if (type === 'translation' || type === 'rewrite') return readerAssetUrl(type, entry, item.id);
+  if (type === 'translation' || type === 'rewrite' || type === 'onepage') return readerAssetUrl(type, entry, item.id);
   if (type === 'annotations') return annotationUrl(item.id, entry);
   if (type === 'chat') return chatMessageUrl(item.id, entry);
   return commentUrl(item.id, entry);
@@ -6758,6 +7119,7 @@ function myAssetCounts() {
   return {
     translation: (state.myTranslations || []).length,
     rewrite: (state.myRewrites || []).length,
+    onepage: (state.myOnepages || []).length,
     annotations: (state.myAnnotations || []).length,
     comments: (state.myComments || []).length,
     chat: (state.myChatMessages || []).length,
@@ -6768,6 +7130,7 @@ function renderMyAssetTabs() {
   const counts = myAssetCounts();
   $('#my-translation-count').textContent = counts.translation;
   $('#my-rewrite-count').textContent = counts.rewrite;
+  $('#my-onepage-count').textContent = counts.onepage;
   $('#my-annotations-count').textContent = counts.annotations;
   $('#my-comments-count').textContent = counts.comments;
   $('#my-chat-count').textContent = counts.chat;
@@ -7167,6 +7530,8 @@ function renderMyAssets() {
       ? (item.titleZh || entry.titleZh || entry.title || '未命名文章')
       : type === 'rewrite'
         ? (item.title || entry.titleZh || entry.title || '未命名文章')
+        : type === 'onepage'
+          ? (item.title || entry.titleZh || entry.title || '未命名文章')
         : (entry.titleZh || entry.title || '未命名文章');
     const meta = type === 'chat' ? [
       sourceName(entry.sourceId),
@@ -7230,15 +7595,17 @@ async function openMyCommentsModal({ push = true, tab = state.dashboardTab } = {
   renderMyAssetTabs();
   $('#my-comments-list').innerHTML = '<div class="my-comments-empty">正在读取我的资产…</div>';
   try {
-    const [translationData, rewriteData, annotationData, commentData, chatData] = await Promise.all([
+    const [translationData, rewriteData, onepageData, annotationData, commentData, chatData] = await Promise.all([
       api('/api/me/translations?limit=100'),
       api('/api/me/rewrites?limit=100'),
+      api('/api/me/onepages?limit=100'),
       api('/api/me/annotations?limit=100'),
       api('/api/me/comments?limit=100'),
       api('/api/me/chat-messages?limit=100'),
     ]);
     state.myTranslations = translationData.translations || [];
     state.myRewrites = rewriteData.rewrites || [];
+    state.myOnepages = onepageData.onepages || [];
     state.myAnnotations = annotationData.annotations || [];
     state.myComments = commentData.comments || [];
     state.myChatMessages = chatData.messages || [];
@@ -7264,6 +7631,8 @@ function myAssetItemsForTab(type) {
     ? state.myTranslations || []
     : type === 'rewrite'
     ? state.myRewrites || []
+    : type === 'onepage'
+    ? state.myOnepages || []
     : type === 'annotations'
     ? state.myAnnotations || []
     : type === 'chat'
@@ -7280,6 +7649,7 @@ function userAssetDisplay(type, item) {
   if (type === 'likes') return { label: '点赞文章', body: item.summaryZh || item.summary || item.entry?.summaryZh || item.entry?.summary || '' };
   if (type === 'translation') return { label: '中文翻译', body: item.contentSnippet || item.summaryZh || '' };
   if (type === 'rewrite') return { label: '创作草稿', body: item.bodySnippet || '' };
+  if (type === 'onepage') return { label: 'Onepage', body: item.previewText || item.payload?.thesis?.text || '' };
   if (type === 'annotations') return { label: `划线 · ${ANNOTATION_SURFACE_LABELS[item.surface] || '原文'}`, body: `「${item.quoteSnippet || item.quote || ''}」\n${item.bodySnippet || item.body || ''}` };
   if (type === 'chat') return { label: item.role === 'assistant' ? '回答' : '提问', body: item.content || item.contentSnippet || '' };
   return commentDisplayParts(item.body || item.bodySnippet || '');
@@ -7299,6 +7669,7 @@ function assetContentText(type, item, fullAsset = null) {
   const assetType = normalizeUserAssetTab(type);
   if (assetType === 'translation') return translationAssetText(fullAsset || item, item);
   if (assetType === 'rewrite') return String((fullAsset && fullAsset.body) || item.body || item.bodySnippet || '').trim();
+  if (assetType === 'onepage') return onepageText(fullAsset || item);
   if (assetType === 'annotations') {
     const quote = String(item.quote || item.quoteSnippet || '').trim();
     const body = String(item.body || item.bodySnippet || item.text || '').trim();
@@ -7314,11 +7685,12 @@ function assetContentText(type, item, fullAsset = null) {
 
 async function fullAiAssetForCopy(type, item) {
   const assetType = normalizeUserAssetTab(type);
-  if (!item || !item.id || !['translation', 'rewrite'].includes(assetType)) return null;
+  if (!item || !item.id || !['translation', 'rewrite', 'onepage'].includes(assetType)) return null;
   const entryId = item.entry?.id || item.entryId;
   if (!entryId) return null;
-  const endpoint = assetType === 'translation' ? 'translation' : 'rewrite';
-  const data = await api(`/api/entry/${encodeURIComponent(entryId)}/${endpoint}?assetId=${encodeURIComponent(item.id)}`);
+  const endpoint = assetType === 'translation' ? 'translation' : assetType === 'onepage' ? 'onepage' : 'rewrite';
+  const queryKey = assetType === 'onepage' ? 'onepageId' : 'assetId';
+  const data = await api(`/api/entry/${encodeURIComponent(entryId)}/${endpoint}?${queryKey}=${encodeURIComponent(item.id)}`);
   return data && data[endpoint] ? data[endpoint] : null;
 }
 
@@ -7350,7 +7722,7 @@ async function openMyAsset(itemId) {
   }
   closeMyCommentsModal();
   const type = normalizeUserAssetTab(state.myAssetTab);
-  const ok = type === 'translation' || type === 'rewrite'
+  const ok = type === 'translation' || type === 'rewrite' || type === 'onepage'
     ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
     : type === 'annotations'
     ? await openEntryById(entryId, { focus: 'annotations', annotationId: itemId, updateUrl: true, replaceUrl: false })
@@ -7399,6 +7771,8 @@ function contributorAssetItemsForCurrentTab() {
     ? state.contributor.translations || []
     : type === 'rewrite'
     ? state.contributor.rewrites || []
+    : type === 'onepage'
+    ? state.contributor.onepages || []
     : type === 'annotations'
     ? state.contributor.annotations || []
     : type === 'chat'
@@ -7412,12 +7786,14 @@ function contributorAssetItemsForCurrentTab() {
 function renderContributorTabs() {
   const translationCount = (state.contributor.translations || []).length;
   const rewriteCount = (state.contributor.rewrites || []).length;
+  const onepageCount = (state.contributor.onepages || []).length;
   const annotationCount = (state.contributor.annotations || []).length;
   const commentCount = (state.contributor.comments || []).length;
   const chatCount = (state.contributor.messages || []).length;
   const likesCount = (state.contributor.likedEntries || []).length;
   $('#contributor-translation-count').textContent = translationCount;
   $('#contributor-rewrite-count').textContent = rewriteCount;
+  $('#contributor-onepage-count').textContent = onepageCount;
   $('#contributor-annotations-count').textContent = annotationCount;
   $('#contributor-comments-count').textContent = commentCount;
   $('#contributor-chat-count').textContent = chatCount;
@@ -7435,7 +7811,7 @@ function renderContributorTabs() {
 }
 
 function assetItemTime(item) {
-  return Math.max(Number(item && item.updatedAt) || 0, Number(item && item.createdAt) || 0, Number(item && item.at) || 0);
+  return Math.max(Number(item && item.publishedAt) || 0, Number(item && item.updatedAt) || 0, Number(item && item.createdAt) || 0, Number(item && item.at) || 0);
 }
 
 function sortContributorAssets(items, sort = 'latest') {
@@ -7511,7 +7887,7 @@ function renderContributorAssets() {
   const helpfulAssets = Number(profile && profile.helpfulAssets) || 0;
   $('#contributor-title').textContent = profile ? `${profile.displayName} 的贡献主页` : '贡献主页';
   $('#contributor-subtitle').textContent = profile
-    ? `公开沉淀的翻译、创作草稿、划线点评、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
+    ? `公开沉淀的翻译、创作草稿、Onepage、划线点评、点评、文章对话和点赞文章。${helpfulCount ? `获得 ${helpfulCount} 次有用反馈，覆盖 ${helpfulAssets} 条资产。` : ''}`
     : '正在读取公开资产…';
   renderContributorProfile();
   if (rssLink) {
@@ -7538,6 +7914,8 @@ function renderContributorAssets() {
       ? (item.titleZh || entry.titleZh || entry.title || '未命名文章')
       : type === 'rewrite'
         ? (item.title || entry.titleZh || entry.title || '未命名文章')
+        : type === 'onepage'
+          ? (item.title || entry.titleZh || entry.title || '未命名文章')
         : (entry.titleZh || entry.title || '未命名文章');
     const meta = type === 'likes' ? [
       sourceName(entry.sourceId || item.sourceId),
@@ -7598,7 +7976,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
   if (!id) return;
   const contributorAssetSort = normalizeContributorAssetSort(sort);
   const contributorAssetTab = normalizeUserAssetTab(tab);
-  state.contributor = { id, profile: null, translations: [], rewrites: [], annotations: [], comments: [], messages: [], likedEntries: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
+  state.contributor = { id, profile: null, translations: [], rewrites: [], onepages: [], annotations: [], comments: [], messages: [], likedEntries: [], tab: contributorAssetTab, sort: contributorAssetSort, loading: true };
   setWorkspacePage('contributor');
   renderContributorAssets();
   try {
@@ -7609,6 +7987,7 @@ async function openContributor(contributorId, { push = true, sort = state.contri
       profile: data.contributor || null,
       translations: data.translations || [],
       rewrites: data.rewrites || [],
+      onepages: data.onepages || [],
       annotations: data.annotations || [],
       comments: data.comments || [],
       messages: data.messages || [],
@@ -7672,7 +8051,7 @@ async function openContributorAsset(itemId) {
   const type = normalizeUserAssetTab(state.contributor.tab);
   const ok = type === 'likes'
     ? await openEntryById(entryId, { updateUrl: true, replaceUrl: false })
-    : type === 'translation' || type === 'rewrite'
+    : type === 'translation' || type === 'rewrite' || type === 'onepage'
     ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
     : type === 'annotations'
     ? await openEntryById(entryId, { focus: 'annotations', annotationId: itemId, updateUrl: true, replaceUrl: false })
@@ -8261,7 +8640,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   let content = e.content || contentCache.get(e.id);
   const detailPromise = content ? null : api(`/api/entry/${encodeURIComponent(e.id)}`);
   const requestedFocus = ASSET_FILTER_TYPES.includes(focus) ? focus : null;
-  const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite')
+  const requestedAssetId = (requestedFocus === 'translation' || requestedFocus === 'rewrite' || requestedFocus === 'onepage')
     ? String(aiAssetId || '').trim()
     : requestedFocus === 'annotations'
       ? String(annotationId || '').trim()
@@ -8270,6 +8649,8 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
     ? 'translation'
     : requestedFocus === 'rewrite'
       ? 'rewrite'
+      : requestedFocus === 'onepage'
+        ? 'onepage'
       : normalizeReaderOpenTab(tab);
   state.read.add(e.id);
   recordEntryView(e.id);
@@ -8305,6 +8686,10 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   state.rewriteLoading = false;
   state.rewriteGenerating = false;
   state.pendingRewriteGenerate = false;
+  state.onepage = null;
+  state.onepageLoading = false;
+  state.onepageGenerating = false;
+  state.onepagePublishing = false;
   state.readerFocus = requestedFocus;
   state.readerAssetId = requestedAssetId;
   state.readerAssetsExpanded = false;
@@ -8325,6 +8710,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   setReaderTab(requestedTab, { syncUrl: false });
   loadTranslation(e);
   loadRewrite(e);
+  loadOnepage(e);
   loadAnnotations(e);
   loadComments(e);
   loadAgentMessages(e);
@@ -9122,6 +9508,7 @@ function setAiProfileForPurpose(purpose, profileId) {
 }
 
 function aiAlertText() {
+  if (state.pendingAiAction === 'onepage') return '生成 Onepage 需要先保存一个可用的 AI 配置，保存后会继续当前文章。';
   if (state.aiConfigReason === 'translation') return '生成双语对照翻译需要先保存一个可用的 AI 配置。';
   if (state.aiConfigReason === 'rewrite') return '生成 Namoo 创作草稿需要先保存一个可用的 AI 配置，保存后会继续当前文章。';
   if (state.aiConfigReason === 'agent') return '文章对话需要先保存一个可用的 AI 配置，当前问题会保留。';
@@ -9265,6 +9652,7 @@ function runPendingAiAction() {
   state.pendingAgentText = '';
   if (action === 'translation') setTimeout(() => generateTranslation(), 0);
   if (action === 'rewrite') setTimeout(() => generateRewrite({ force: Boolean(state.rewrite) }), 0);
+  if (action === 'onepage') setTimeout(() => generateOnepage({ force: Boolean(state.onepage) }), 0);
   if (action === 'agent' && text) setTimeout(() => sendAgentMessage(text), 0);
 }
 
@@ -9477,6 +9865,7 @@ function setSidebarCollapsed(collapsed) {
   setElementIcon(toggle, collapsed ? 'panel-left-open' : 'panel-left-close');
   toggle.title = collapsed ? '展开左侧栏' : '收起左侧栏';
   toggle.setAttribute('aria-label', toggle.title);
+  toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   normalizeReaderWorkbenchLayout();
   updateSeparatorMetrics();
 }
@@ -9509,7 +9898,7 @@ function setLeftCollapsed(collapsed) {
 
 function readerWorkbenchWidthBudget({ includeContext = !state.agentCollapsed } = {}) {
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
-  const sidebarWidth = state.leftCollapsed ? 0 : (state.sidebarCollapsed ? 64 : 232);
+  const sidebarWidth = state.leftCollapsed ? 0 : (state.sidebarCollapsed ? 64 : 264);
   const entryWidth = state.leftCollapsed ? 0 : ENTRY_PANE_MIN_WIDTH;
   const listResizerWidth = state.leftCollapsed ? 0 : 4;
   const contextWidth = includeContext ? CONTEXT_PANE_MIN_WIDTH : 0;
@@ -9547,7 +9936,7 @@ function entryPaneWidthBounds() {
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
   let max = Math.min(ENTRY_PANE_MAX_WIDTH, Math.max(ENTRY_PANE_MIN_WIDTH, Math.floor(viewport * 0.45)));
   if (state.activeEntry && viewport > 980) {
-    const sidebarWidth = visibleElementWidth('#sidebar', state.sidebarCollapsed ? 64 : 232);
+    const sidebarWidth = visibleElementWidth('#sidebar', state.sidebarCollapsed ? 64 : 264);
     const agentWidth = state.agentCollapsed ? 0 : visibleElementWidth('#agent-pane', state.contextPaneWidth || CONTEXT_PANE_MIN_WIDTH);
     const listResizerWidth = visibleElementWidth('#list-resizer', 4);
     const contextResizerWidth = state.agentCollapsed ? 0 : visibleElementWidth('#context-resizer', 4);
@@ -9600,7 +9989,7 @@ function contextPaneWidthBounds() {
   const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
   let max = Math.min(CONTEXT_PANE_MAX_WIDTH, Math.max(CONTEXT_PANE_MIN_WIDTH, Math.floor(viewport * 0.36)));
   if (state.activeEntry && viewport > 980) {
-    const sidebarWidth = visibleElementWidth('#sidebar', state.sidebarCollapsed ? 64 : 232);
+    const sidebarWidth = visibleElementWidth('#sidebar', state.sidebarCollapsed ? 64 : 264);
     const entryWidth = visibleElementWidth('#entry-pane', state.entryPaneWidth || ENTRY_PANE_MIN_WIDTH);
     const listResizerWidth = visibleElementWidth('#list-resizer', 4);
     const contextResizerWidth = visibleElementWidth('#context-resizer', 4);
@@ -9937,6 +10326,7 @@ $('#reader-rail-annotation').onclick = () => {
   else scrollReaderTarget('#reader-annotations', { offset: 72 });
 };
 $('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
+$('#reader-rail-onepage').onclick = () => handleReaderTab('onepage');
 $('#reader-rail-translate').onclick = () => handleReaderTab('translation');
 const readerFetchOriginal = $('#reader-fetch-original');
 if (readerFetchOriginal) readerFetchOriginal.onclick = fetchOriginalContent;
@@ -9971,14 +10361,18 @@ $('#reader-asset-summary').onclick = (e) => {
 };
 $('#reader-bilingual').onclick = () => generateTranslation({ force: Boolean(state.translation) });
 $('#reader-rewrite').onclick = () => generateRewrite({ force: Boolean(state.rewrite) });
+$('#reader-onepage').onclick = () => generateOnepage({ force: Boolean(state.onepage) });
+$('#onepage-publish').onclick = publishOnepage;
 $('#translation-helpful').onclick = () => toggleEntryAssetHelpful('translation');
 $('#rewrite-helpful').onclick = () => toggleEntryAssetHelpful('rewrite');
+$('#onepage-helpful').onclick = () => toggleEntryAssetHelpful('onepage');
 $('#translation-view-toggle').onclick = () => {
   state.translationCompare = !state.translationCompare;
   renderTranslation(state.translation);
 };
 $('#translation-copy').onclick = copyTranslationText;
 $('#rewrite-copy').onclick = copyRewriteText;
+$('#onepage-copy').onclick = copyOnepageText;
 $$('.reader-tab').forEach(btn => {
   btn.onclick = () => handleReaderTab(btn.dataset.tab);
 });
@@ -10460,11 +10854,52 @@ $('#search').oninput = (e) => {
   }, 350);
 };
 
-$('#theme-toggle').onclick = () => {
-  const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
-  document.body.dataset.theme = next;
-  storage.setItem('fr_theme', next);
+$('#theme-toggle').onclick = (event) => {
+  const menu = $('#theme-menu');
+  setThemeMenuOpen(menu?.classList.contains('hidden'), { focusCurrent: event.detail === 0 });
 };
+$$('.theme-option[data-theme-mode]').forEach(option => {
+  option.onclick = () => {
+    applyThemeMode(option.dataset.themeMode);
+    setThemeMenuOpen(false, { restoreFocus: true });
+  };
+});
+$('#theme-menu').onkeydown = (e) => {
+  const options = $$('.theme-option[data-theme-mode]', e.currentTarget);
+  const currentIndex = Math.max(0, options.indexOf(document.activeElement));
+  let nextIndex = -1;
+  if (e.key === 'Tab') {
+    setThemeMenuOpen(false);
+    return;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    setThemeMenuOpen(false, { restoreFocus: true });
+    return;
+  }
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    e.stopPropagation();
+    document.activeElement?.click();
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % options.length;
+  if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + options.length) % options.length;
+  if (e.key === 'Home') nextIndex = 0;
+  if (e.key === 'End') nextIndex = options.length - 1;
+  if (nextIndex < 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  options.forEach((option, index) => { option.tabIndex = index === nextIndex ? 0 : -1; });
+  options[nextIndex]?.focus();
+};
+
+const handleSystemThemeChange = () => {
+  if (themeMode === 'system') applyThemeMode('system', { persist: false });
+};
+if (themePreferenceMedia?.addEventListener) themePreferenceMedia.addEventListener('change', handleSystemThemeChange);
+else if (themePreferenceMedia?.addListener) themePreferenceMedia.addListener(handleSystemThemeChange);
 
 window.addEventListener('error', (e) => {
   const list = $('#entry-list');
@@ -10476,6 +10911,7 @@ window.addEventListener('error', (e) => {
 document.addEventListener('click', (e) => {
   if (!e.target.closest('#article-link-menu')) hideArticleLinkMenu();
   if (!e.target.closest('#reader-preferences, #reader-prefs-toggle')) setReaderPrefsOpen(false);
+  if (!e.target.closest('#theme-control')) setThemeMenuOpen(false);
 });
 
 function isShortcutEditableTarget(target) {
@@ -10565,6 +11001,11 @@ function moveReaderVersion(delta) {
 document.addEventListener('keydown', (e) => {
   const editable = isShortcutEditableTarget(e.target);
   if (e.key === 'Escape') {
+    if (!$('#theme-menu')?.classList.contains('hidden')) {
+      e.preventDefault();
+      setThemeMenuOpen(false, { restoreFocus: true });
+      return;
+    }
     if (state.readerImmersive) setReaderImmersive(false);
     setReaderPrefsOpen(false);
     document.getElementById('app').classList.remove('reading');
@@ -10631,7 +11072,7 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
 
 /* ---------- Init ---------- */
 (async function init() {
-  document.body.dataset.theme = storage.getItem('fr_theme') || 'light';
+  applyThemeMode(storedThemeMode(), { persist: false });
   hydrateLucideIcons();
   loadAiProfilesForScope();
   renderAgentPrompts();

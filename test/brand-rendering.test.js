@@ -121,6 +121,40 @@ test('expanded desktop sidebar has enough room for the full brand title and cont
   assert.match(styles, /#app\.sidebar-collapsed\s*{[^}]*--sidebar-width:\s*64px/s);
 });
 
+test('sidebar uses the selected compact navigation hierarchy', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
+  const brand = html.slice(html.indexOf('<div class="brand">'), html.indexOf('<div class="views">'));
+  const views = html.slice(html.indexOf('<nav class="views"'), html.indexOf('<div id="asset-dashboard"'));
+  const account = html.slice(html.indexOf('<div class="account-strip">'), html.indexOf('</aside>'));
+
+  assert.match(brand, /id="brand-home"[\s\S]*id="submit-link-open"[\s\S]*id="sidebar-toggle"/);
+  assert.doesNotMatch(html, /class="sidebar-actions"/);
+  assert.match(views, /class="sidebar-primary-nav"[\s\S]*data-view="all"[\s\S]*data-view="unread"[\s\S]*data-view="hot"/);
+  assert.match(views, /class="sidebar-secondary-nav"[\s\S]*data-view="starred"[\s\S]*data-view="history"[\s\S]*data-view="contributors"/);
+  assert.match(account, /id="account-info"[\s\S]*id="theme-toggle"[\s\S]*id="theme-menu"/);
+  assert.match(styles, /\.sidebar-primary-nav\s*\{/);
+  assert.match(styles, /\.sidebar-secondary-nav\s*\{/);
+
+  const sidebarWidths = [...styles.matchAll(/--sidebar-width:\s*(\d+)px/g)].map(match => Number(match[1]));
+  assert.ok(sidebarWidths.length > 0);
+  assert.ok(sidebarWidths.every(width => width === 64 || width === 264));
+  assert.doesNotMatch(fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8'), /sidebarCollapsed \? 64 : 232/);
+});
+
+test('sidebar theme picker supports system, light, and dark modes', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+
+  assert.match(html, /id="theme-toggle"[^>]*aria-controls="theme-menu"/);
+  assert.match(html, /id="theme-menu"[^>]*role="menu"/);
+  assert.match(html, /data-theme-mode="light"[\s\S]*data-theme-mode="dark"[\s\S]*data-theme-mode="system"/);
+  assert.match(app, /function applyThemeMode\(/);
+  assert.match(app, /prefers-color-scheme:\s*dark/);
+  assert.match(app, /fr_theme_mode/);
+  assert.match(app, /aria-checked/);
+});
+
 test('sidebar exposes category tabs, total counts, and drag ordering without arrow controls', () => {
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
   const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
