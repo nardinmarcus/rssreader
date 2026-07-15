@@ -42,6 +42,7 @@ const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'user
 const ASSET_FOCUS_LABELS = { translation: '中文翻译', rewrite: '创作草稿', onepage: 'Onepage', annotations: '划线点评', comments: '人工点评', chat: '文章对话' };
 const ANNOTATION_SURFACE_LABELS = { original: '原文', rewrite: '创作草稿', translation: '中文翻译' };
 const ANNOTATION_SURFACES = Object.keys(ANNOTATION_SURFACE_LABELS);
+const ANNOTATION_DRAFT_HIGHLIGHT_NAME = 'annotation-draft';
 const ENTRY_PANE_MIN_WIDTH = 260;
 const ENTRY_PANE_MAX_WIDTH = 620;
 const CONTEXT_PANE_MIN_WIDTH = 260;
@@ -6578,10 +6579,34 @@ function selectionAnnotationContext() {
   const version = currentAnnotationVersion(surface);
   const rect = range.getBoundingClientRect();
   if (!rect || (!rect.width && !rect.height)) return null;
-  return { surface, quote, selectedText, prefix, suffix, assetId: version.assetId, contentHash: version.contentHash, rect };
+  return {
+    surface,
+    quote,
+    selectedText,
+    prefix,
+    suffix,
+    assetId: version.assetId,
+    contentHash: version.contentHash,
+    rect,
+    range: range.cloneRange(),
+  };
+}
+
+function clearAnnotationDraftHighlight() {
+  window.CSS?.highlights?.delete(ANNOTATION_DRAFT_HIGHLIGHT_NAME);
+}
+
+function showAnnotationDraftHighlight(range) {
+  clearAnnotationDraftHighlight();
+  const highlights = window.CSS?.highlights;
+  const HighlightCtor = window.Highlight;
+  if (!range || !highlights || typeof HighlightCtor !== 'function') return false;
+  highlights.set(ANNOTATION_DRAFT_HIGHLIGHT_NAME, new HighlightCtor(range));
+  return true;
 }
 
 function hideAnnotationPopover() {
+  clearAnnotationDraftHighlight();
   state.annotationDraft = null;
   $('#annotation-popover')?.classList.add('hidden');
 }
@@ -6598,6 +6623,7 @@ function showAnnotationPopover(context) {
     assetId: context.assetId || '',
     contentHash: context.contentHash || '',
   };
+  const highlightVisible = showAnnotationDraftHighlight(context.range);
   $('#annotation-popover-quote').textContent = `${ANNOTATION_SURFACE_LABELS[context.surface]}：${context.quote}`;
   const input = $('#annotation-popover-input');
   input.value = '';
@@ -6607,7 +6633,7 @@ function showAnnotationPopover(context) {
   popover.style.left = `${left}px`;
   popover.style.top = `${top}px`;
   popover.classList.remove('hidden');
-  setTimeout(() => input.focus(), 0);
+  if (highlightVisible) setTimeout(() => input.focus(), 0);
 }
 
 async function copyAnnotationSelection() {
@@ -9242,7 +9268,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   $('#comment-input').value = '';
   state.editingCommentId = '';
   state.annotations = [];
-  state.annotationDraft = null;
+  hideAnnotationPopover();
   state.activeAnnotationId = '';
   state.agentContext = null;
   if (!annotationId) state.activeAnnotationId = '';
@@ -9321,7 +9347,7 @@ function closeReaderFromRoute() {
   state.agentMessages = [];
   state.comments = [];
   state.annotations = [];
-  state.annotationDraft = null;
+  hideAnnotationPopover();
   state.translation = null;
   state.translationLoading = false;
   state.translationGenerating = false;
@@ -9471,7 +9497,7 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.agentMessages = [];
     state.comments = [];
     state.annotations = [];
-    state.annotationDraft = null;
+    hideAnnotationPopover();
     state.translation = null;
     state.translationLoading = false;
     state.translationGenerating = false;
