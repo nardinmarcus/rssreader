@@ -1,3 +1,32 @@
+# Onepage share link compatibility regression
+
+## Plan
+
+- [x] Trace the shared URL from `shareOnepage()` through the canonical article locator and reproduce the live percent-encoded path.
+- [x] Verify an ASCII-only article alias preserves the exact Onepage version and redirects to the canonical public page.
+- [x] Add a regression test that executes the real share-URL helper with a Chinese article title.
+- [x] Use the ASCII compatibility URL only for Onepage sharing and copy fallback; keep canonical URLs unchanged elsewhere.
+- [x] Refresh the application asset fingerprint and run focused/full/runtime verification.
+
+## Verification contract
+
+1. Linkifier compatibility -> verify: the shared URL contains only ASCII and has no percent-encoded Chinese slug.
+2. Version identity -> verify: the shared URL still contains the immutable Onepage ID and resolves to the same canonical page.
+3. Scope -> verify: article canonical URLs and all non-Onepage navigation remain unchanged.
+
+## Review
+
+- Root cause: `shareOnepage()` passed the canonical article URL, whose Chinese slug begins with percent-encoded bytes immediately after `/articles/`. All five live Onepage URLs had that shape, matching the receiver's exact link break point at the first `%`.
+- Added `readerAssetShareUrl()` so Onepage native sharing and copy fallback use the existing ASCII alias `/articles/article--<short-id>/onepage/<onepage-id>`. The server redirects that alias to the unchanged canonical page, preserving the immutable Onepage ID.
+- Regression guard executes the real browser helper against a Chinese title and fails unless the resulting URL is the exact ASCII alias with no `%` characters.
+- Focused Onepage and asset-identity tests pass 11/11; the full suite passes 328/328; JavaScript syntax and `git diff --check` pass.
+- Production browser proof captured the real `navigator.share` object and clipboard fallback. Both contained the complete ASCII URL; opening it reached the same canonical Onepage and browser errors were empty.
+- Sibling sweep found one `navigator.share` call, now fixed. Existing `readerAssetUrl()` callers remain canonical navigation or explicit link-copy surfaces for other asset types and were left unchanged to avoid broadening this Onepage regression fix.
+- Deployed image `sha256:ea333f97615849012177c7c1134fbcb127f037f8397bf890a9ea0a203438a44f`. Host, container, and public `app.js` match hash `ba1953239c6b`; internal/public probes return 200, SQLite reports `quick_check=ok`, recent error logs contain 0 matching lines, and the container has 0 restarts.
+- Backup: `/opt/rssreader-backups/onepage-share-link-20260715T104058Z`; rollback image: `rssreader-namoo-reader:rollback-onepage-share-link-20260715T104058Z`.
+
+---
+
 # Onepage sharing entry
 
 ## Plan

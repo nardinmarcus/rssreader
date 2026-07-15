@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const vm = require('node:vm');
 
 const projectDir = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
@@ -29,6 +30,32 @@ test('published Onepages expose native sharing with a copy-link fallback', () =>
   assert.match(app, /navigator\.share\(shareData\)/);
   assert.match(app, /copyText\(url, 'Onepage 链接已复制'\)/);
   assert.match(app, /\$\('#onepage-share'\)\.onclick = shareOnepage/);
+});
+
+test('Onepage sharing uses an ASCII-only article alias for Chinese titles', () => {
+  const helper = app.match(/function readerAssetShareUrl\([^]*?\n}\n/);
+  assert.ok(helper, 'expected a dedicated reader asset share URL helper');
+
+  const context = {
+    URL,
+    window: { location: { origin: 'https://rss.namooca.com' } },
+    state: { activeEntry: null },
+    ASSET_FILTER_TYPES: ['onepage'],
+    entryShortId: entry => String(entry && entry.id || '').slice(0, 12),
+    entry: {
+      id: 'cc623303b19c0827b18263ae60995f30',
+      titleZh: '谁在运行那些微小的 RPKI 服务器？',
+    },
+    assetId: 'ead072ec-e866-4968-95c0-33879e2fb81a',
+  };
+  vm.runInNewContext(`${helper[0]}\nresult = readerAssetShareUrl('onepage', entry, assetId);`, context);
+
+  assert.equal(
+    context.result,
+    'https://rss.namooca.com/articles/article--cc623303b19c/onepage/ead072ec-e866-4968-95c0-33879e2fb81a',
+  );
+  assert.doesNotMatch(context.result, /%/);
+  assert.match(app, /const url = readerAssetShareUrl\('onepage', entry, onepage\.id\)/);
 });
 
 test('Onepage stays beside the original and rewrite tabs in one equal-width row', () => {

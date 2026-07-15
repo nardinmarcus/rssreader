@@ -1023,6 +1023,16 @@ function readerAssetUrl(type, entry = state.activeEntry, assetId = '') {
   return readerUrlFor(entry, tab, type, assetId).href;
 }
 
+function readerAssetShareUrl(type, entry = state.activeEntry, assetId = '') {
+  if (!entry || !ASSET_FILTER_TYPES.includes(type)) return '';
+  const shortId = entryShortId(entry);
+  if (shortId.length < 6) return '';
+  const url = new URL(window.location.origin);
+  url.pathname = `/articles/article--${encodeURIComponent(shortId)}/${type}`;
+  if (assetId) url.pathname += `/${encodeURIComponent(assetId)}`;
+  return url.href;
+}
+
 function commentUrl(commentId, entry = state.activeEntry) {
   if (!entry || !commentId) return '';
   const url = readerUrlFor(entry, 'original', 'comments', commentId);
@@ -6087,7 +6097,7 @@ async function shareOnepage() {
   const entry = state.activeEntry;
   const onepage = state.onepage;
   if (!entry || !entryAssetHasContent('onepage', onepage) || onepage.visibility !== 'public') return;
-  const url = readerAssetUrl('onepage', entry, onepage.id);
+  const url = readerAssetShareUrl('onepage', entry, onepage.id);
   const shareData = {
     title: `${onepage.title || entry.titleZh || entry.title || 'Onepage'} · Onepage`,
     text: onepage.previewText || 'Onepage',
