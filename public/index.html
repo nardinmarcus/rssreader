@@ -24,7 +24,7 @@
     })();
   </script>
   <link rel="stylesheet" href="/vendor/persona/widget.css?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=00799cbfb522" />
+  <link rel="stylesheet" href="/styles.css?v=2858cc1f9070" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
   <meta property="og:site_name" content="Namoo Reader" />
@@ -54,10 +54,11 @@
       </div>
 
       <nav class="views" aria-label="内容视图">
-        <div class="sidebar-primary-nav" role="group" aria-label="阅读视图">
-          <button class="view-btn active" type="button" data-view="all" aria-label="全部"><span class="view-ico" data-qm-icon="newspaper"></span><span class="view-label">全部</span><span class="count" id="count-all"></span></button>
-          <button class="view-btn" type="button" data-view="unread" aria-label="未读"><span class="view-ico" data-qm-icon="circle-dot"></span><span class="view-label">未读</span><span class="count" id="count-unread"></span></button>
-          <button class="view-btn" type="button" data-view="hot" aria-label="热门"><span class="view-ico" data-qm-icon="flame"></span><span class="view-label">热门</span><span class="count" id="count-hot"></span></button>
+        <div class="sidebar-type-nav" role="tablist" aria-label="订阅类型">
+          <button class="sidebar-type-btn active" type="button" data-sidebar-category="all" role="tab" aria-selected="true" aria-label="全部订阅源"><span class="sidebar-type-icon" data-qm-icon="rss"></span><span class="sidebar-type-meta"><span class="sidebar-type-label">全部</span><span class="sidebar-type-count" id="count-type-all"></span></span></button>
+          <button class="sidebar-type-btn" type="button" data-sidebar-category="article" role="tab" aria-selected="false" aria-label="文章订阅源"><span class="sidebar-type-icon" data-qm-icon="file-text"></span><span class="sidebar-type-meta"><span class="sidebar-type-label">文章</span><span class="sidebar-type-count" id="count-type-article"></span></span></button>
+          <button class="sidebar-type-btn" type="button" data-sidebar-category="news" role="tab" aria-selected="false" aria-label="资讯订阅源"><span class="sidebar-type-icon" data-qm-icon="newspaper"></span><span class="sidebar-type-meta"><span class="sidebar-type-label">资讯</span><span class="sidebar-type-count" id="count-type-news"></span></span></button>
+          <button class="sidebar-type-btn" type="button" data-sidebar-category="podcast" role="tab" aria-selected="false" aria-label="播客订阅源"><span class="sidebar-type-icon" data-qm-icon="podcast"></span><span class="sidebar-type-meta"><span class="sidebar-type-label">播客</span><span class="sidebar-type-count" id="count-type-podcast"></span></span></button>
         </div>
         <div class="sidebar-secondary-nav" role="group" aria-label="个人视图">
           <button class="view-btn" type="button" data-view="starred" aria-label="收藏"><span class="view-ico" data-qm-icon="star"></span><span class="view-label">收藏</span><span class="count" id="count-starred"></span></button>
@@ -123,18 +124,23 @@
     <!-- ===== Entry list ===== -->
     <section id="entry-pane">
       <header class="pane-header">
-        <div class="pane-title" id="list-title">全部</div>
+        <div class="pane-heading">
+          <div class="pane-title" id="list-title">全部</div>
+          <span class="pane-count" id="list-count" aria-live="polite"></span>
+        </div>
         <div class="pane-actions">
-          <button id="source-refresh-btn" class="icon-btn source-refresh-btn hidden" type="button" title="检查当前信息源更新" aria-label="检查当前信息源更新"><span data-qm-icon="refresh-cw"></span></button>
-          <span id="source-refresh-status" class="source-refresh-status hidden" role="status" aria-live="polite"></span>
-          <input id="search" type="search" placeholder="搜索文章…" />
-          <button id="mark-read-btn" class="icon-btn" title="全部标为已读" aria-label="全部标为已读"><span data-qm-icon="check-check"></span></button>
+          <button id="source-refresh-btn" class="icon-btn source-refresh-btn" type="button" title="重新加载当前列表" aria-label="重新加载当前列表"><span data-qm-icon="refresh-cw"></span></button>
+          <button id="unread-only-btn" class="icon-btn" type="button" title="仅显示未读文章" aria-label="仅显示未读文章" aria-pressed="false"><span data-qm-icon="circle-dot"></span></button>
+          <button id="mark-read-btn" class="icon-btn" type="button" title="将当前列表标为已读" aria-label="将当前列表标为已读"><span data-qm-icon="check-check"></span></button>
         </div>
       </header>
-      <div id="list-scope-bar" class="list-scope-bar" role="tablist" aria-label="文章列表模式">
-        <button class="list-scope-btn active" type="button" data-list-scope="latest">最新</button>
-        <button class="list-scope-btn" type="button" data-list-scope="hot">热门</button>
-        <button class="list-scope-btn" type="button" data-list-scope="unread">未读</button>
+      <div class="list-search-row">
+        <input id="search" type="search" placeholder="搜索文章…" />
+        <div class="list-sort-toggle" role="group" aria-label="文章排序">
+          <button class="list-sort-btn active" type="button" data-list-sort="latest" aria-pressed="true">最新</button>
+          <button class="list-sort-btn" type="button" data-list-sort="hot" aria-pressed="false">热门</button>
+        </div>
+        <span id="source-refresh-status" class="source-refresh-status hidden" role="status" aria-live="polite"></span>
       </div>
       <div id="entry-pane-tabs" class="entry-pane-tabs hidden" role="tablist" aria-label="全部视图">
         <button class="entry-pane-tab active" type="button" data-home-tab="entries">文章列表 <span id="home-entry-count">0</span></button>
@@ -827,7 +833,7 @@
 
   <script src="/purify.min.js"></script>
   <script src="/vendor/persona/index.global.js?v=1"></script>
-  <script src="/lucide-icons.js?v=318d9847ee35"></script>
-  <script src="/app.js?v=613eb2ea0373"></script>
+  <script src="/lucide-icons.js?v=cb5472ff6d82"></script>
+  <script src="/app.js?v=9d2330ebd756"></script>
 </body>
 </html>

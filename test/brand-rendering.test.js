@@ -121,7 +121,7 @@ test('expanded desktop sidebar has enough room for the full brand title and cont
   assert.match(styles, /#app\.sidebar-collapsed\s*{[^}]*--sidebar-width:\s*64px/s);
 });
 
-test('sidebar uses the selected compact navigation hierarchy', () => {
+test('sidebar uses subscription types as its primary navigation hierarchy', () => {
   const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
   const brand = html.slice(html.indexOf('<div class="brand">'), html.indexOf('<div class="views">'));
@@ -130,16 +130,41 @@ test('sidebar uses the selected compact navigation hierarchy', () => {
 
   assert.match(brand, /id="brand-home"[\s\S]*id="submit-link-open"[\s\S]*id="sidebar-toggle"/);
   assert.doesNotMatch(html, /class="sidebar-actions"/);
-  assert.match(views, /class="sidebar-primary-nav"[\s\S]*data-view="all"[\s\S]*data-view="unread"[\s\S]*data-view="hot"/);
+  assert.match(views, /class="sidebar-type-nav"[\s\S]*data-sidebar-category="all"[\s\S]*data-sidebar-category="article"[\s\S]*data-sidebar-category="news"[\s\S]*data-sidebar-category="podcast"/);
+  assert.doesNotMatch(views, /data-view="(?:all|unread|hot)"/);
   assert.match(views, /class="sidebar-secondary-nav"[\s\S]*data-view="starred"[\s\S]*data-view="history"[\s\S]*data-view="contributors"/);
   assert.match(account, /id="account-info"[\s\S]*id="theme-toggle"[\s\S]*id="theme-menu"/);
-  assert.match(styles, /\.sidebar-primary-nav\s*\{/);
+  assert.match(styles, /\.sidebar-type-nav\s*\{/);
   assert.match(styles, /\.sidebar-secondary-nav\s*\{/);
 
   const sidebarWidths = [...styles.matchAll(/--sidebar-width:\s*(\d+)px/g)].map(match => Number(match[1]));
   assert.ok(sidebarWidths.length > 0);
   assert.ok(sidebarWidths.every(width => width === 64 || width === 264));
   assert.doesNotMatch(fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8'), /sidebarCollapsed \? 64 : 232/);
+});
+
+test('article list separates ordering, unread filtering, and contextual actions', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+
+  assert.match(html, /id="list-title"[\s\S]*class="list-sort-toggle"[\s\S]*data-list-sort="latest"[\s\S]*data-list-sort="hot"/);
+  assert.match(html, /id="source-refresh-btn"[\s\S]*id="unread-only-btn"[^>]*aria-pressed="false"[\s\S]*id="mark-read-btn"/);
+  assert.doesNotMatch(html, /data-list-scope="unread"/);
+  assert.match(app, /listSort:\s*'latest'/);
+  assert.match(app, /unreadOnly:\s*false/);
+  assert.match(app, /function selectListSort\(/);
+  assert.match(app, /function toggleUnreadOnly\(/);
+  assert.match(app, /function refreshCurrentScope\(/);
+  assert.match(app, /sidebarCategory:\s*'all'/);
+  assert.doesNotMatch(app, /qm_sidebar_type/);
+
+  const selectSort = app.slice(app.indexOf('function selectListSort('), app.indexOf('function toggleUnreadOnly('));
+  assert.doesNotMatch(selectSort, /filterSource\s*=|filterCategory\s*=/);
+  const toggleUnread = app.slice(app.indexOf('function toggleUnreadOnly('), app.indexOf('function assetActivityItemHtml('));
+  assert.doesNotMatch(toggleUnread, /filterSource\s*=|filterCategory\s*=/);
+  const markRead = app.slice(app.indexOf("$('#mark-read-btn').onclick"), app.indexOf("$('#reader-star').onclick"));
+  assert.match(markRead, /currentEntryScopeLabel\(\)/);
+  assert.match(markRead, /visibleEntries\(\)\.map\(e => e\.id\)/);
 });
 
 test('sidebar theme picker supports system, light, and dark modes', () => {
@@ -155,11 +180,13 @@ test('sidebar theme picker supports system, light, and dark modes', () => {
   assert.match(app, /aria-checked/);
 });
 
-test('sidebar exposes category tabs, total counts, and drag ordering without arrow controls', () => {
+test('sidebar exposes static type filters, source totals, and drag ordering without arrow controls', () => {
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
   const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
 
-  assert.match(app, /sidebar-category-tabs/);
+  assert.match(html, /id="count-type-all"[\s\S]*id="count-type-article"[\s\S]*id="count-type-news"[\s\S]*id="count-type-podcast"/);
+  assert.doesNotMatch(app, /sidebar-category-tabs/);
   assert.match(app, /row\.draggable = true/);
   assert.match(app, /dragstart/);
   assert.match(app, /dragover/);

@@ -49,6 +49,7 @@ const ICONS = [
   ['panel-right-open', 'PanelRightOpen'],
   ['pencil', 'Pencil'],
   ['plus', 'Plus'],
+  ['podcast', 'Podcast'],
   ['quote', 'Quote'],
   ['refresh-cw', 'RefreshCw'],
   ['rss', 'Rss'],

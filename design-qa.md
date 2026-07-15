@@ -70,3 +70,52 @@ The source is a standalone, enlarged component board while the implementation is
 - [x] Versioned frontend asset hashes match shipped files.
 
 final result: passed
+
+---
+
+# Folo-inspired subscription types — design QA
+
+- Reference: `/var/folders/x5/j6n5wjqx05l52f329d8y_s2w0000gn/T/codex-clipboard-76e752f5-6043-4d6d-a635-8516e528a192.png`
+- Local implementation: `http://127.0.0.1:4173/`
+- Desktop capture: `/Users/dapeng/.codex/visualizations/2026/07/15/019f6401-63fb-7300-8fb3-ca1d033e2960/rssreader-folo-desktop.png`
+- Compact capture: `/Users/dapeng/.codex/visualizations/2026/07/15/019f6401-63fb-7300-8fb3-ca1d033e2960/rssreader-folo-compact.png`
+
+The reference and implementation were compared in one visual pass. This is a structural adaptation: the reference establishes ownership of subscription types and list actions, while Namoo Reader intentionally retains its neutral-green tokens, real feeds, 264px desktop sidebar, and three-pane workspace.
+
+## Findings
+
+- No actionable P0, P1, or P2 issue remains.
+- P3 / intentional clarification: type counts are rendered as `52源 / 44源 / 6源 / 2源` rather than bare numbers. The suffix makes clear that these count subscription sources, not unread articles.
+- P3 / intentional product difference: feed content, right-side AI pane, typography density, and neutral palette follow the existing Namoo Reader product rather than copying Folo content or color tokens.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the existing system UI stack is retained. The type labels, source counts, current scope title, result count, and `最新 / 热门` control form a clear descending hierarchy without wrapping at 264px.
+- Spacing and layout: the left top area is a four-column type selector; source rows begin below a secondary `订阅源` heading. The list header owns three equally spaced 32px actions, while search and ordering live on a separate 49px row.
+- Viewport resilience: measured at 1440×900, 900×800, and 390×844. Expanded/collapsed sidebar widths are 264px/64px, header controls do not overlap, search and sort do not collide, and document horizontal overflow is zero.
+- Colors and tokens: selected type and unread-only states reuse the existing low-opacity semantic green; other actions remain neutral. Borders and shadows stay within the current product token system.
+- Image quality and assets: the real Namoo logo, live favicons, article imagery, and the generated Lucide bundle are used. No placeholder illustration, CSS art, emoji substitute, or custom SVG was introduced.
+- Copy and content: `全部 / 文章 / 资讯 / 播客` names the subscription dimension. `最新 / 热门` names ordering. Contextual labels such as `重新加载资讯列表`, `仅显示资讯中的未读文章`, and `将资讯中的可见文章标为已读` state the affected scope.
+- Icons: RSS, file, newspaper, podcast, refresh, circle-dot, and check-check all come from one Lucide family with consistent stroke and alignment.
+- States and interactions: selected type uses `aria-selected`; ordering and unread-only use independent `aria-pressed` states; loading/success refresh states update in place; compact layouts intentionally hide labels while preserving accessible names.
+- Accessibility: controls are semantic buttons/tabs with contextual names, visible focus treatment, 32–44px targets, and no reliance on color alone. The compact rail keeps labels available to assistive technology.
+
+## Interaction evidence
+
+- Selected `资讯`: six source rows and 49 entries loaded, title changed to `资讯`, and the type tab reported selected.
+- Switched to `热门`: `资讯` remained selected and the title remained `资讯`; only ordering changed.
+- Enabled unread-only: both `资讯` and `热门` remained selected while the unread control changed to pressed.
+- Refreshed the current type: status reached `已是最新` without clearing type, ordering, or unread state.
+- Manual collapse/expand measured 64px/264px and retained the active `资讯` type.
+- Current asset version produced no browser console errors or warnings.
+
+## Production acceptance
+
+- Final desktop capture: `/Users/dapeng/.codex/visualizations/2026/07/15/019f6401-63fb-7300-8fb3-ca1d033e2960/rssreader-folo-production-desktop-final.png`.
+- Final mobile capture: `/Users/dapeng/.codex/visualizations/2026/07/15/019f6401-63fb-7300-8fb3-ca1d033e2960/rssreader-folo-production-mobile-final.png`.
+- At 1456px the sidebar/list boundaries measured `0–264px` and `264–604px`; at 980px and 390px the sidebar measured 64px. All checked viewports had zero document-level horizontal overflow and no visible-pane overlap.
+- The production data path loaded 50 total sources and 100 initial entries. Selecting `资讯` produced 4 source rows; `热门` and unread-only retained that scope and their independent pressed states.
+- A release-only reload check exposed a mismatch between the persisted type label and the non-persisted query scope. Type selection is now session navigation, like a selected source: after a full reload the active type, title, source list, ordering, and unread state atomically resolve to `全部 / 全部 / 50 / 最新 / false`.
+- The corrected production asset version has no console entries, and the final page was restored to the default `全部` state.
+
+final result: passed

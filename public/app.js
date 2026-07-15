@@ -687,7 +687,9 @@ const state = {
   entries: [],
   contributors: [],
   entryLimit: ENTRY_PAGE_SIZE,
-  view: 'all',            // all | hot | unread | starred | history | assets | contributors
+  view: 'all',            // all | starred | history | assets | contributors
+  listSort: 'latest',     // latest | hot
+  unreadOnly: false,
   filterSource: null,
   filterCategory: null,
   assetFilter: null,
@@ -696,6 +698,7 @@ const state = {
   homeTab: storage.getItem('qm_home_tab') === 'assets' ? 'assets' : 'entries',
   q: '',
   refreshing: false,
+  scopeReloading: false,
   refreshProgress: { done: 0, total: 0 },
   sourceManageFilters: { label: '', priority: '', enabled: 'all', status: 'all' },
   sourceRefreshStatusTimer: null,
@@ -787,7 +790,7 @@ const state = {
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
   leftCollapsed: storage.getItem('qm_left_collapsed') === '1',
   sidebarMoreOpen: storage.getItem('qm_sidebar_more_open') === '1',
-  sidebarCategory: normalizeSidebarCategory(storage.getItem('qm_sidebar_category')),
+  sidebarCategory: 'all',
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
   contextPaneWidth: readStoredNumber('qm_context_pane_width'),
   me: null,
@@ -2146,12 +2149,11 @@ function entryCountForSource(source) {
 }
 
 function normalizeSidebarCategory(category) {
-  return Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category) ? category : 'article';
+  return category === 'all' || Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category) ? category : 'all';
 }
 
 function setSidebarCategory(category) {
   state.sidebarCategory = normalizeSidebarCategory(category);
-  storage.setItem('qm_sidebar_category', state.sidebarCategory);
 }
 
 function clearSidebarDragIndicators(wrap = $('#feed-groups')) {
@@ -2165,14 +2167,9 @@ function renderSidebar() {
   const groups = { article: [], news: [], podcast: [] };
   for (const s of state.sources) if (s.enabled) groups[s.category]?.push(s);
 
-  if (state.filterSource) {
-    const selected = state.sources.find(source => source.id === state.filterSource);
-    if (selected) setSidebarCategory(selected.category);
-  } else if (state.filterCategory) {
-    setSidebarCategory(state.filterCategory);
-  }
   const activeCategory = normalizeSidebarCategory(state.sidebarCategory);
-  const list = groups[activeCategory];
+  const allSources = state.sources.filter(source => source.enabled && groups[source.category]);
+  const list = activeCategory === 'all' ? allSources : groups[activeCategory];
 
   const wrap = $('#feed-groups');
   wrap.innerHTML = '';
@@ -2181,35 +2178,17 @@ function renderSidebar() {
   sourceTools.className = 'sidebar-source-tools';
   const sourceHeading = document.createElement('div');
   sourceHeading.className = 'sidebar-source-heading';
-  sourceHeading.innerHTML = `<strong>订阅源</strong><span>${list.length}</span>`;
+  const sourceHeadingLabel = activeCategory === 'all' ? '订阅源' : `${CATEGORY_LABELS[activeCategory]}订阅`;
+  sourceHeading.innerHTML = `<strong>${escapeHtml(sourceHeadingLabel)}</strong><span>${list.length}</span>`;
   sourceTools.appendChild(sourceHeading);
-
-  const categoryTabs = document.createElement('div');
-  categoryTabs.className = 'sidebar-category-tabs';
-  categoryTabs.setAttribute('role', 'tablist');
-  categoryTabs.setAttribute('aria-label', '信息源分类');
-  for (const [category, label] of Object.entries(CATEGORY_LABELS)) {
-    const tab = document.createElement('button');
-    tab.type = 'button';
-    tab.className = 'sidebar-category-tab' + (category === activeCategory ? ' active' : '');
-    tab.dataset.sidebarCategory = category;
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-selected', category === activeCategory ? 'true' : 'false');
-    tab.title = `查看${label}信息源`;
-    tab.innerHTML = `
-      <span class="sidebar-category-label">${escapeHtml(label)}</span>
-      <span class="sidebar-category-count">${groups[category].length}</span>
-      <span class="sidebar-category-short" aria-hidden="true">${escapeHtml(label.slice(0, 1))}</span>`;
-    tab.onclick = () => selectCategory(category);
-    categoryTabs.appendChild(tab);
-  }
-  sourceTools.appendChild(categoryTabs);
   wrap.appendChild(sourceTools);
 
   if (!list.length) {
     const empty = document.createElement('div');
     empty.className = 'sidebar-category-empty';
-    empty.textContent = `${CATEGORY_LABELS[activeCategory]}分类暂无已启用信息源`;
+    empty.textContent = activeCategory === 'all'
+      ? '暂无已启用订阅源'
+      : `${CATEGORY_LABELS[activeCategory]}分类暂无已启用订阅源`;
     wrap.appendChild(empty);
   }
 
@@ -2217,7 +2196,7 @@ function renderSidebar() {
     const row = document.createElement('div');
     row.className = 'feed-row';
     row.dataset.sourceId = s.id;
-    row.dataset.category = activeCategory;
+    row.dataset.category = s.category;
 
     if (isAdmin()) {
       row.draggable = true;
@@ -2242,7 +2221,7 @@ function renderSidebar() {
       });
       row.addEventListener('dragover', event => {
         const dragged = state.sources.find(source => source.id === sidebarDragSourceId);
-        if (!dragged || dragged.id === s.id || dragged.category !== activeCategory) return;
+        if (!dragged || dragged.id === s.id || dragged.category !== s.category) return;
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
         clearSidebarDragIndicators(wrap);
@@ -2276,9 +2255,24 @@ function renderSidebar() {
     wrap.appendChild(row);
   }
 
-  $('#count-all').textContent = state.entries.length || '';
-  $('#count-hot').textContent = hotEntryCount() || '';
-  $('#count-unread').textContent = unreadCountFor(() => true) || '';
+  const typeCounts = {
+    all: allSources.length,
+    article: groups.article.length,
+    news: groups.news.length,
+    podcast: groups.podcast.length,
+  };
+  $$('.sidebar-type-btn[data-sidebar-category]').forEach(btn => {
+    const category = normalizeSidebarCategory(btn.dataset.sidebarCategory);
+    const active = category === activeCategory;
+    const count = typeCounts[category] || 0;
+    const label = category === 'all' ? '全部' : CATEGORY_LABELS[category];
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    btn.setAttribute('aria-label', `${label}，${count} 个订阅源`);
+    btn.title = `${label} · ${count} 个订阅源`;
+    const countEl = $(`#count-type-${category}`);
+    if (countEl) countEl.textContent = `${count}源`;
+  });
   $('#count-starred').textContent = state.starred.size || '';
   $('#count-history').textContent = state.history.size || '';
   $('#count-contributors').textContent = state.contributors.length || '';
@@ -2457,16 +2451,6 @@ function visibleContributors() {
 
 function visibleEntries() {
   let list = state.entries;
-  if (state.view === 'hot') {
-    list = list
-      .slice()
-      .sort((a, b) => {
-        const scoreDelta = entryQualityScore(b) - entryQualityScore(a);
-        return scoreDelta || (Number(b.publishedTs) || 0) - (Number(a.publishedTs) || 0);
-      })
-      .slice(0, 80);
-  }
-  if (state.view === 'unread') list = list.filter(e => !state.read.has(e.id));
   if (state.view === 'starred') list = list.filter(e => state.starred.has(e.id));
   if (state.view === 'history') {
     list = list
@@ -2481,6 +2465,18 @@ function visibleEntries() {
       .filter(entry => entryMatchesSearch(entry, { includeAssets: true }))
       .slice()
       .sort(compareAssetEntries);
+  }
+  if (state.unreadOnly && state.view !== 'assets') {
+    list = list.filter(e => !state.read.has(e.id));
+  }
+  if (state.listSort === 'hot' && state.view === 'all') {
+    list = list
+      .slice()
+      .sort((a, b) => {
+        const scoreDelta = entryQualityScore(b) - entryQualityScore(a);
+        return scoreDelta || (Number(b.publishedTs) || 0) - (Number(a.publishedTs) || 0);
+      })
+      .slice(0, 80);
   }
   return list;
 }
@@ -2695,7 +2691,7 @@ function entryHistoryLabel(entry) {
 }
 
 function hotEntryLabel(entry) {
-  if (state.view !== 'hot') return '';
+  if (state.view !== 'all' || state.listSort !== 'hot') return '';
   const q = qScoreParts(entry);
   const stats = entryStats(entry);
   const parts = [
@@ -2885,7 +2881,12 @@ function latestAssetActivity(limit = 4) {
 }
 
 function isHomeScope() {
-  return state.view === 'all' && !state.filterSource && !state.filterCategory && !state.q;
+  return state.view === 'all'
+    && state.listSort === 'latest'
+    && !state.unreadOnly
+    && !state.filterSource
+    && !state.filterCategory
+    && !state.q;
 }
 
 function homeAssetActivityItems(limit = 24) {
@@ -2909,46 +2910,69 @@ function renderEntryPaneTabs() {
   });
 }
 
-function currentListScope() {
-  if (state.view === 'hot') return 'hot';
-  if (state.view === 'unread') return 'unread';
-  return 'latest';
+function currentEntryScopeLabel() {
+  if (state.filterSource) return sourceById(state.filterSource)?.name || '当前订阅源';
+  if (state.filterCategory) return CATEGORY_LABELS[state.filterCategory] || '当前类型';
+  if (state.view === 'starred') return '收藏';
+  if (state.view === 'history') return '浏览记录';
+  if (state.view === 'assets') return state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
+  if (state.view === 'contributors') return '贡献榜';
+  return '全部';
 }
 
-function renderListScopeBar() {
-  const bar = $('#list-scope-bar');
-  if (!bar) return;
-  const hidden = state.view === 'contributors';
-  bar.classList.toggle('hidden', hidden);
-  if (hidden) return;
-  const active = currentListScope();
-  $$('#list-scope-bar [data-list-scope]').forEach(btn => {
-    const isActive = btn.dataset.listScope === active;
-    btn.classList.toggle('active', isActive);
-    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+function renderListControls() {
+  const homeAssets = isHomeScope() && state.homeTab === 'assets';
+  const entryListVisible = state.view !== 'assets' && state.view !== 'contributors' && !homeAssets;
+  const sortVisible = state.view === 'all' && !homeAssets;
+  const scope = currentEntryScopeLabel();
+
+  const sort = $('.list-sort-toggle');
+  if (sort) sort.classList.toggle('hidden', !sortVisible);
+  $$('[data-list-sort]').forEach(btn => {
+    const active = btn.dataset.listSort === state.listSort;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
   });
+
+  const unread = $('#unread-only-btn');
+  if (unread) {
+    unread.classList.toggle('hidden', !entryListVisible);
+    unread.classList.toggle('active', state.unreadOnly);
+    unread.setAttribute('aria-pressed', state.unreadOnly ? 'true' : 'false');
+    unread.title = state.unreadOnly ? `显示${scope}中的全部文章` : `仅显示${scope}中的未读文章`;
+    unread.setAttribute('aria-label', unread.title);
+  }
+
+  const markRead = $('#mark-read-btn');
+  if (markRead) {
+    markRead.classList.toggle('hidden', !entryListVisible);
+    markRead.title = `将${scope}中的可见文章标为已读`;
+    markRead.setAttribute('aria-label', markRead.title);
+  }
+
+  const count = $('#list-count');
+  if (count) {
+    const amount = state.view === 'contributors' ? visibleContributors().length : visibleEntries().length;
+    count.textContent = `${amount}`;
+    count.setAttribute('aria-label', state.view === 'contributors' ? `${amount} 位贡献者` : `${amount} 篇文章`);
+  }
+  renderSourceRefreshButton();
 }
 
-function selectListScope(scope = 'latest') {
-  const next = ['latest', 'hot', 'unread'].includes(scope) ? scope : 'latest';
-  if (next === 'latest') {
-    state.view = 'all';
-    state.assetFilter = null;
-    state.assetSort = 'latest';
-  } else {
-    state.view = next;
-    state.assetFilter = null;
-    state.assetSort = 'latest';
-  }
-  state.contributorSort = 'latest';
-  state.readerFocus = null;
-  state.readerAssetId = '';
-  if ((state.view === 'assets' || state.view === 'contributors') && !state.filterSource && !state.filterCategory) {
-    syncListUrl();
-    reload({ clearUrl: false });
-    return;
-  }
-  reload();
+function selectListSort(sort = 'latest') {
+  state.listSort = sort === 'hot' ? 'hot' : 'latest';
+  state.entryLimit = ENTRY_PAGE_SIZE;
+  state.homeTab = 'entries';
+  updateListTitle();
+  renderList();
+}
+
+function toggleUnreadOnly() {
+  state.unreadOnly = !state.unreadOnly;
+  state.entryLimit = ENTRY_PAGE_SIZE;
+  state.homeTab = 'entries';
+  updateListTitle();
+  renderList();
 }
 
 function assetActivityItemHtml({ entry, type, labels, preview, previewMeta }, { large = false } = {}) {
@@ -3011,11 +3035,6 @@ function renderAssetActivityStrip() {
   const el = $('#asset-activity-strip');
   if (!el) return;
   el.classList.remove('asset-filter-strip', 'qscore-strip');
-  if (state.view === 'hot') {
-    el.classList.add('hidden');
-    el.innerHTML = '';
-    return;
-  }
   if (state.view === 'assets') {
     const { entries, latest, counts, totalAssets } = assetDashboardStats();
     const total = entries.length;
@@ -3796,9 +3815,8 @@ function renderList() {
   $('#app').classList.toggle('view-assets', state.view === 'assets');
   $('#app').classList.toggle('view-contributors', state.view === 'contributors');
   $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
-  renderListScopeBar();
   renderEntryPaneTabs();
-  $('#mark-read-btn').classList.toggle('hidden', state.view === 'contributors' || (isHomeScope() && state.homeTab === 'assets'));
+  renderListControls();
   if (state.view === 'contributors') {
     renderContributorDirectory();
     return;
@@ -3822,7 +3840,7 @@ function renderList() {
       ? '还没有沉淀资产<br/>先翻译、生成创作草稿、点评或对话一篇文章'
       : state.view === 'history'
       ? '还没有浏览记录<br/>打开几篇文章后会出现在这里'
-      : state.view === 'hot'
+      : state.view === 'all' && state.listSort === 'hot'
       ? '还没有足够反馈<br/>提交链接、点赞或收藏后会逐步形成热门列表'
       : '这里空空如也<br/>试试刷新或切换视图';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
@@ -3931,20 +3949,19 @@ function renderList() {
 }
 
 function updateListTitle() {
-  let title = '全部';
-  if (state.filterSource) title = sourceById(state.filterSource)?.name || state.filterSource;
-  else if (state.filterCategory) title = CATEGORY_LABELS[state.filterCategory];
-  else if (state.view === 'hot') title = '热门';
-  else if (state.view === 'unread') title = '未读';
-  else if (state.view === 'starred') title = '收藏';
-  else if (state.view === 'history') title = '浏览记录';
-  else if (state.view === 'assets') {
+  let title = currentEntryScopeLabel();
+  if (state.view === 'assets') {
     const prefix = state.assetSort === 'helpful' ? '有用 · ' : '';
     title = `${prefix}${state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产'}`;
   }
-  else if (state.view === 'contributors') title = '贡献榜';
   if (state.q) title += ` · “${state.q}”`;
   $('#list-title').textContent = title;
+  const count = $('#list-count');
+  if (count) {
+    const amount = state.view === 'contributors' ? visibleContributors().length : visibleEntries().length;
+    count.textContent = `${amount}`;
+    count.setAttribute('aria-label', state.view === 'contributors' ? `${amount} 位贡献者` : `${amount} 篇文章`);
+  }
   updateSearchPlaceholder();
   renderSourceRefreshButton();
 }
@@ -3960,21 +3977,24 @@ function renderSourceRefreshButton() {
   const btn = $('#source-refresh-btn');
   if (!btn) return;
   const source = state.filterSource ? sourceById(state.filterSource) : null;
-  const sourceRefreshing = Boolean(
-    source
-      && state.refreshing
-      && (!state.refreshProgress.sourceId || state.refreshProgress.sourceId === source.id)
-  );
-  btn.classList.toggle('hidden', !source);
-  btn.classList.toggle('refreshing', sourceRefreshing);
-  btn.disabled = sourceRefreshing;
-  setElementIcon(btn, sourceRefreshing ? 'loader-circle' : 'refresh-cw', {
-    className: sourceRefreshing ? 'app-icon app-icon-spin' : 'app-icon',
+  const homeAssets = isHomeScope() && state.homeTab === 'assets';
+  const visible = state.view !== 'assets' && state.view !== 'contributors' && !homeAssets;
+  const refreshing = source
+    ? Boolean(state.refreshing && (!state.refreshProgress.sourceId || state.refreshProgress.sourceId === source.id))
+    : state.scopeReloading;
+  btn.classList.toggle('hidden', !visible);
+  btn.classList.toggle('refreshing', refreshing);
+  btn.disabled = refreshing;
+  setElementIcon(btn, refreshing ? 'loader-circle' : 'refresh-cw', {
+    className: refreshing ? 'app-icon app-icon-spin' : 'app-icon',
   });
   if (source) {
-    btn.title = `${sourceRefreshing ? '正在检查' : '检查'} ${source.name} 更新`;
-    btn.setAttribute('aria-label', btn.title);
+    btn.title = `${refreshing ? '正在检查' : '检查'} ${source.name} 更新`;
+  } else {
+    const scope = currentEntryScopeLabel();
+    btn.title = `${refreshing ? '正在重新加载' : '重新加载'}${scope}列表`;
   }
+  btn.setAttribute('aria-label', btn.title);
 }
 
 function setSourceRefreshStatus(message = '', kind = '', { timeout = 0 } = {}) {
@@ -8930,7 +8950,7 @@ async function selectSource(id) {
   state.view = 'all';
   const nextSource = state.filterSource === id ? null : id;
   state.filterSource = nextSource;
-  state.filterCategory = null;
+  state.filterCategory = nextSource || state.sidebarCategory === 'all' ? null : state.sidebarCategory;
   state.assetFilter = null;
   state.assetSort = 'latest';
   state.contributorSort = 'latest';
@@ -8943,7 +8963,7 @@ function selectCategory(cat) {
   state.entryLimit = ENTRY_PAGE_SIZE;
   setSidebarCategory(cat);
   state.view = 'all';
-  state.filterCategory = normalizeSidebarCategory(cat);
+  state.filterCategory = state.sidebarCategory === 'all' ? null : state.sidebarCategory;
   state.filterSource = null;
   state.assetFilter = null;
   state.assetSort = 'latest';
@@ -8955,6 +8975,7 @@ function selectCategory(cat) {
 function selectView(v) {
   state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = v;
+  setSidebarCategory('all');
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = null;
@@ -8973,6 +8994,9 @@ function selectView(v) {
 function goHomeAll() {
   state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = 'all';
+  state.listSort = 'latest';
+  state.unreadOnly = false;
+  setSidebarCategory('all');
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = null;
@@ -8990,6 +9014,7 @@ function goHomeAll() {
 function selectAssetFilter(type = null) {
   state.entryLimit = ENTRY_PAGE_SIZE;
   state.view = 'assets';
+  setSidebarCategory('all');
   state.filterSource = null;
   state.filterCategory = null;
   state.assetFilter = type && ASSET_FILTERS[type] ? type : null;
@@ -9002,6 +9027,7 @@ function selectAssetFilter(type = null) {
 
 function selectAssetSort(sort = 'latest') {
   state.view = 'assets';
+  setSidebarCategory('all');
   state.assetSort = sort === 'helpful' ? 'helpful' : 'latest';
   state.filterSource = null;
   state.filterCategory = null;
@@ -9014,6 +9040,7 @@ function selectAssetSort(sort = 'latest') {
 
 function selectContributorSort(sort = 'latest') {
   state.view = 'contributors';
+  setSidebarCategory('all');
   state.contributorSort = normalizeContributorSort(sort);
   state.assetSort = 'latest';
   state.filterSource = null;
@@ -9026,6 +9053,27 @@ function selectContributorSort(sort = 'latest') {
 }
 
 /* ---------- Refresh ---------- */
+async function refreshCurrentScope() {
+  const source = state.filterSource ? sourceById(state.filterSource) : null;
+  if (source) return refreshCurrentSource();
+
+  const scope = currentEntryScopeLabel();
+  state.scopeReloading = true;
+  renderSourceRefreshButton();
+  setSourceRefreshStatus('正在重新加载', 'loading');
+  try {
+    await reload({ keepReader: true });
+    setSourceRefreshStatus('已是最新', 'success', { timeout: 3200 });
+    toast(`${scope}列表已重新加载`);
+  } catch (error) {
+    setSourceRefreshStatus('加载失败', 'error', { timeout: 5200 });
+    toast('重新加载失败: ' + error.message, 5000);
+  } finally {
+    state.scopeReloading = false;
+    renderSourceRefreshButton();
+  }
+}
+
 async function refreshCurrentSource() {
   const source = state.filterSource ? sourceById(state.filterSource) : null;
   if (!source) return;
@@ -10126,6 +10174,9 @@ function setupContextResizer() {
 
 /* ---------- Events ---------- */
 $('#brand-home').onclick = goHomeAll;
+$$('.sidebar-type-btn[data-sidebar-category]').forEach(btn => {
+  btn.onclick = () => selectCategory(btn.dataset.sidebarCategory);
+});
 $$('.view-btn[data-view]').forEach(b => b.onclick = () => selectView(b.dataset.view));
 const navMoreToggle = $('#nav-more-toggle');
 if (navMoreToggle) navMoreToggle.onclick = () => {
@@ -10193,11 +10244,10 @@ $('#entry-pane-tabs').onclick = (e) => {
   storage.setItem('qm_home_tab', state.homeTab);
   renderList();
 };
-$('#list-scope-bar').onclick = (e) => {
-  const btn = e.target.closest('[data-list-scope]');
-  if (!btn) return;
-  selectListScope(btn.dataset.listScope);
-};
+$$('[data-list-sort]').forEach(btn => {
+  btn.onclick = () => selectListSort(btn.dataset.listSort);
+});
+$('#unread-only-btn').onclick = toggleUnreadOnly;
 $('#entry-list').onclick = async (e) => {
   const all = e.target.closest('[data-asset-open-all]');
   if (all) {
@@ -10208,7 +10258,7 @@ $('#entry-list').onclick = async (e) => {
   if (!btn) return;
   await openAssetActivityButton(btn);
 };
-$('#source-refresh-btn').onclick = refreshCurrentSource;
+$('#source-refresh-btn').onclick = refreshCurrentScope;
 $('#reader-pane').addEventListener('pointerdown', (e) => {
   if (articleContentLinkFromTarget(e.target)) suppressAnnotationPopoverForLink();
 }, true);
@@ -10224,9 +10274,11 @@ $('#reader-pane').addEventListener('click', (e) => {
 $('#article-link-open').onclick = openArticleLinkInWindow;
 $('#article-link-submit').onclick = submitArticleLinkToSite;
 $('#mark-read-btn').onclick = async () => {
+  const scope = currentEntryScopeLabel();
   const ids = visibleEntries().map(e => e.id);
   ids.forEach(id => state.read.add(id));
   persist();
+  updateListTitle();
   renderEntryStateUi();
   if (state.me && ids.length) {
     try {
@@ -10240,7 +10292,7 @@ $('#mark-read-btn').onclick = async () => {
       return;
     }
   }
-  toast('已全部标为已读');
+  toast(ids.length ? `${scope}中的可见文章已标为已读` : '当前没有需要标记的文章');
 };
 $('#reader-star').onclick = () => {
   const e = state.activeEntry;

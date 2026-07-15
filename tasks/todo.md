@@ -23,6 +23,64 @@
 
 ---
 
+# Folo-inspired subscription-type navigation
+
+## Plan
+
+- [x] Add regression coverage for type-only sidebar navigation and contextual list actions.
+- [x] Replace the duplicated all/unread/hot sidebar block with all/article/news/podcast type navigation.
+- [x] Separate latest/hot ordering from the unread-only filter and keep both scoped to the selected type/source.
+- [x] Move refresh, unread-only, and mark-read controls into the list header with explicit scope-aware labels.
+- [x] Verify focused/full tests, syntax and diff checks, then compare desktop and compact browser captures with the Folo reference.
+
+## Verification contract
+
+1. Navigation semantics -> verify: the left primary row contains only subscription types; selecting a type filters both sources and entries without duplicating list modes.
+2. Context preservation -> verify: latest/hot and unread-only never clear the selected type or source.
+3. Scoped actions -> verify: refresh and mark-read labels name the current scope, and mark-read affects only visible entries.
+4. Responsive behavior -> verify: the 264px sidebar and 64px compact rail remain usable without clipping or horizontal overflow.
+5. Visual fidelity -> verify: the rendered hierarchy follows the selected Folo reference while retaining Namoo Reader tokens and `design-qa.md` ends with `final result: passed`.
+
+## Review
+
+- Replaced the duplicated reading-mode card with `全部 / 文章 / 资讯 / 播客`; counts now use an explicit `源` suffix and the selected type controls both the source list and entry query.
+- Split list state into `listSort` and `unreadOnly`. Browser proof shows `资讯 -> 热门 -> 仅未读 -> 刷新` retains the `资讯` scope and each independent pressed state.
+- The list header now shows the current scope and visible count, with scope-aware refresh, unread-only, and mark-read actions; search and `最新 / 热门` ordering occupy a separate row.
+- Browser checks pass at 1440×900, 900×800, and 390×844. Expanded/collapsed widths are 264px/64px, no control overlaps, horizontal overflow is zero, and the current asset version has no console errors.
+- Focused UI/performance tests pass 16/16; the full suite passes 312/312; JavaScript syntax, content hashes, and `git diff --check` pass. The Folo comparison and accessibility review are recorded in `design-qa.md` with `final result: passed`.
+
+## Production deployment
+
+- [x] Confirm `/opt/rssreader`, current container/image, public readiness, and remote file hashes before mutation.
+- [x] Create a mode-safe backup of the five synchronized files, Compose/env configuration, and a verified SQLite snapshot.
+- [x] Sync only the four runtime assets plus the Lucide generator source, rebuild, and recreate `namoo-reader`.
+- [x] Verify live/backup SQLite integrity, container health/logs, internal and public HTTP, exact file hashes, and HTML asset versions.
+- [x] Verify the live Folo-inspired hierarchy and scope-preserving interactions in a real browser, then record rollback evidence.
+
+### Deployment verification contract
+
+1. Scope -> verify: production changes are limited to `public/index.html`, `public/app.js`, `public/styles.css`, `public/lucide-icons.js`, and `scripts/generate-lucide-icons.js`.
+2. Durability -> verify: pre-deploy assets, Compose/env, and a consistent SQLite snapshot are recoverable with restrictive permissions.
+3. Identity -> verify: the rebuilt container contains byte-identical deployed files and live HTML references the tested content-hash URLs.
+4. Runtime -> verify: `/api/me`, internal HTTP, public HTTPS, container health/logs, and SQLite `quick_check` are healthy after recreation.
+5. Behavior -> verify: production preserves type -> sort -> unread scope, 264px/64px layouts, zero horizontal overflow, and a clean current-version console.
+
+### Deployment review
+
+- Deployed production image `sha256:2d737f3ce5de587275f847bdf1b22fe2f6600332a1b3f3d1617c5735fdea867d`. The pre-change image remains tagged as `rssreader-namoo-reader:rollback-folo-nav-20260715T053605Z`.
+- Preserved the five synchronized sources, Compose/env configuration, and a mode-600, 225,132,544-byte SQLite snapshot at `/opt/rssreader-backups/folo-nav-20260715T053605Z`; the backup root is mode 700 and the snapshot returns `PRAGMA quick_check=ok`.
+- The running container is stable with zero restarts. Live SQLite returns `quick_check=ok` and `journal_mode=wal`; internal/public `/` and `/api/me` all return HTTP 200; current logs contain one normal startup and zero error-level lines.
+- Container hashes match the tested files exactly: `index.html=82afa1d4c61e`, `app.js=9d2330ebd756`, `styles.css=2858cc1f9070`, `lucide-icons.js=cb5472ff6d82`, and `generate-lucide-icons.js=9b5341cb2967`. The public HTML references the same three immutable asset versions.
+- Production browser verification passed at 1456px, 980px, and 390px with 264px/64px sidebar widths, four visible type controls, zero horizontal overflow, and an empty current-version console. `资讯 -> 热门 -> 仅未读` preserved all three states; a full-page reload then atomically returned to `全部 -> 最新 -> 全部文章`, preventing a persisted type label from disagreeing with the query scope.
+- Final production captures: `/Users/dapeng/.codex/visualizations/2026/07/15/019f6401-63fb-7300-8fb3-ca1d033e2960/rssreader-folo-production-desktop-final.png` and `/Users/dapeng/.codex/visualizations/2026/07/15/019f6401-63fb-7300-8fb3-ca1d033e2960/rssreader-folo-production-mobile-final.png`.
+- Rollback command:
+
+  ```bash
+  ssh myvps 'set -eu; cd /opt/rssreader; b=/opt/rssreader-backups/folo-nav-20260715T053605Z; cp -a "$b/public/." public/; cp -a "$b/scripts/generate-lucide-icons.js" scripts/; docker image tag rssreader-namoo-reader:rollback-folo-nav-20260715T053605Z rssreader-namoo-reader:latest; docker compose up -d --no-deps --force-recreate --no-build namoo-reader'
+  ```
+
+---
+
 # Sidebar redesign — selected direction 2
 
 ## Plan
