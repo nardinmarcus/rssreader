@@ -27,6 +27,28 @@
 
 ---
 
+# Preserve selected-text highlight while annotation popover is open
+
+## Plan
+
+- [ ] Reproduce the live selection lifecycle and identify why the source highlight disappears.
+- [ ] Add a regression guard for a focus-independent draft highlight and its cleanup lifecycle.
+- [ ] Keep the selected source range visibly highlighted while the annotation popover owns focus.
+- [ ] Verify cleanup on dismiss, submit, navigation, and unsupported-browser fallback behavior.
+- [ ] Run focused/full tests, syntax and diff checks, then verify the rendered interaction in Chrome.
+
+## Verification contract
+
+1. Open state -> verify: after the annotation textarea receives focus, the popover is visible and the source text still has a dedicated rendered highlight.
+2. Cleanup -> verify: dismissing, copying, sending, submitting, changing article, or closing the reader removes the draft highlight.
+3. Compatibility -> verify: browsers without the CSS Custom Highlight API keep the native selection by skipping automatic focus.
+
+## Review
+
+- Pending.
+
+---
+
 # Reader-submitted RSS classification diagnosis
 
 ## Plan
