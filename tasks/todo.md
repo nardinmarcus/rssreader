@@ -1,3 +1,35 @@
+# Reduce initial page latency and refresh-time stalls
+
+## Plan
+
+- [x] Add failing public-seam regression tests for startup polling, disabled Persona assets, anonymous entry-list caching, cache invalidation, and timing visibility.
+- [x] Render the first SQLite-backed list immediately; while a background refresh is running, poll only source status and reload entries once after completion.
+- [x] Stop shipping the disabled Persona widget CSS and JavaScript from the application shell.
+- [x] Add a rebuildable anonymous `/api/entries` projection cache with bounded TTL and explicit invalidation after entry mutations or worker refresh completion.
+- [x] Expose `/api/entries` application time through `Server-Timing` without changing the response contract.
+- [x] Run focused/full tests, syntax checks, asset fingerprint checks, local HTTP measurements, and a real browser network/render verification.
+
+## Verification contract
+
+1. Startup polling -> verify: cached entries render after the initial request; a running refresh causes status-only polls and at most one later entries reload.
+2. Asset delivery -> verify: the HTML shell no longer requests disabled Persona CSS or JavaScript, while shipped asset fingerprints still match file contents.
+3. Entry-list cache -> verify: identical public requests reuse a rebuildable projection; authenticated requests reuse that projection and overlay fresh viewer-specific stats.
+4. Invalidation -> verify: refresh completion and list-visible mutations clear the projection before the next anonymous request.
+5. Observability -> verify: `/api/entries` emits a valid `Server-Timing` duration for both cache misses and hits.
+6. Scope -> verify: SQLite remains authoritative; no runtime cache is used as durable truth, and no production configuration or deployment is changed.
+
+## Review
+
+- Startup now renders the first SQLite-backed list before waiting for a background refresh. Refresh polling calls only `/api/sources`, then performs one list reload after the worker is fully complete.
+- The disabled Persona CSS and JavaScript were removed from the shell. A real isolated browser loaded one `/api/entries?limit=100` request, no Persona assets, and reported no browser errors; the application asset fingerprint matches the shipped JavaScript.
+- `/api/entries` now keeps at most 128 serialized public projections for five minutes, keyed by normalized source/category/query/limit values. Logged-in requests reuse the public projection and overlay fresh viewer stats; list-visible writes and completed workers invalidate both list and asset projections while SQLite remains authoritative.
+- Background title scans omit article bodies, asset summaries, and stats; automatic rewrite scans retain content but omit list-only metadata. Refresh completion now reloads the disk projection only once instead of twice.
+- The invalid-limit-first regression exposed and fixed a cache-key collision that could temporarily replace the default list with an empty projection. The new fetcher contract test also proves that disabled projection fields are actually absent, not merely requested as flags.
+- Verification passes: focused performance/background suite 14/14, full suite 347/347, all JavaScript syntax checks, `git diff --check`, immutable asset identity, and `npm audit --omit=dev` with zero vulnerabilities.
+- Isolated HTTP measurement for `/api/entries?limit=100`: cold miss `27.7 ms` application / `31.2 ms` total; five warm hits `2.0-2.7 ms` total. Structural compact-read-model/index work, lazy article-asset hydration, and production HTTP/2 changes remain intentionally deferred to a separate rollout.
+
+---
+
 # Search and enabled-first ordering for managed sources
 
 ## Plan

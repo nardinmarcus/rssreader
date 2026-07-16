@@ -75,6 +75,8 @@ const ENTRY_CONTENT_RESPONSE_MAX_CHARS = 500000;
 const INDEX_TEMPLATE = fs.readFileSync(INDEX_PATH, 'utf8');
 const PUBLIC_PROJECTION_TTL_MS = 5 * MINUTE_MS;
 const publicProjectionCache = new Map();
+const publicEntryListCache = new Map();
+const PUBLIC_ENTRY_LIST_CACHE_MAX = 128;
 const ASSET_DIRECTORY_META = {
   translation: {
     label: '中文翻译',
@@ -122,6 +124,27 @@ app.use((req, res, next) => {
     return res.status(403).json({ error: '请求来源无效' });
   }
   return next();
+});
+function requestMutatesPublicProjection(req) {
+  const requestPath = String(req.path || '');
+  if (requestPath === '/api/me/profile') return true;
+  if (requestPath === '/api/me/entry-state') return typeof (req.body && req.body.starred) === 'boolean';
+  if (requestPath.startsWith('/api/admin/')) return true;
+  if (requestPath.startsWith('/api/onepages/')) return true;
+  if (requestPath.startsWith('/api/entry/')) return !requestPath.endsWith('/view');
+  if (requestPath === '/api/translate-titles') return true;
+  if (requestPath === '/api/sources') return true;
+  if (requestPath.startsWith('/api/sources/')) return !requestPath.endsWith('/refresh-hint');
+  return false;
+}
+
+app.use((req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && requestMutatesPublicProjection(req)) {
+    res.once('finish', () => {
+      if (res.statusCode >= 200 && res.statusCode < 400) clearPublicProjectionCaches();
+    });
+  }
+  next();
 });
 app.use((req, res, next) => {
   try {
@@ -715,6 +738,33 @@ function publicAssetEntries({ assetItemLimit = 3 } = {}) {
   const entries = fetcher.getEntries({ limit: 1000, includeContent: false, assetItemLimit });
   publicProjectionCache.set(key, { createdAt: Date.now(), entries });
   return entries;
+}
+
+function clearPublicProjectionCaches() {
+  publicProjectionCache.clear();
+  publicEntryListCache.clear();
+}
+
+function publicEntryListResponse(options) {
+  const key = JSON.stringify([
+    options.sourceId || '',
+    options.category || '',
+    options.q || '',
+    options.limit || '',
+  ]);
+  const cached = publicEntryListCache.get(key);
+  if (cached && Date.now() - cached.createdAt < PUBLIC_PROJECTION_TTL_MS) {
+    return { entries: cached.entries, body: cached.body, cacheStatus: 'hit' };
+  }
+  if (cached) publicEntryListCache.delete(key);
+
+  const entries = fetcher.getEntries(options).map(({ content, ...entry }) => entry);
+  const body = JSON.stringify({ entries });
+  if (!publicEntryListCache.has(key) && publicEntryListCache.size >= PUBLIC_ENTRY_LIST_CACHE_MAX) {
+    publicEntryListCache.delete(publicEntryListCache.keys().next().value);
+  }
+  publicEntryListCache.set(key, { createdAt: Date.now(), entries, body });
+  return { entries, body, cacheStatus: 'miss' };
 }
 
 function assetDirectoryStats(type = '', q = '', providedEntries = null) {
@@ -2389,7 +2439,12 @@ function onepageResponse(onepage, viewer = null) {
 
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
-  const entries = fetcher.getEntries({ limit: 1000, includeContent: false })
+  const entries = fetcher.getEntries({
+    limit: 1000,
+    includeContent: false,
+    includeAssetSummaries: false,
+    includeStats: false,
+  })
     .filter(entry => deepseek.isLikelyEnglish(entry.title) && !entry.titleZh)
     .slice(0, limit);
   let translated = 0;
@@ -2518,6 +2573,8 @@ function reloadFetcherAfterWorker() {
     fetcher.loadDisk({ upsert: false });
   } catch (error) {
     console.warn('Reload refreshed cache skipped:', error.message || error);
+  } finally {
+    clearPublicProjectionCaches();
   }
 }
 
@@ -2652,13 +2709,9 @@ function startFetchJob(job = {}) {
       return;
     }
     if (message.type === 'fetchDone') {
-      if (refreshing) {
-        if (refreshProgress.total && refreshProgress.done < refreshProgress.total) {
-          refreshProgress.done = refreshProgress.total;
-        }
-        refreshing = false;
+      if (refreshProgress.total && refreshProgress.done < refreshProgress.total) {
+        refreshProgress.done = refreshProgress.total;
       }
-      reloadFetcherAfterWorker();
       refreshLast = {
         kind: 'refresh',
         sourceId: refreshJob && refreshJob.sourceId || '',
@@ -3364,16 +3417,32 @@ app.post('/api/ai/test', requireLogin, async (req, res) => {
 
 // List endpoint omits full content to keep the payload small; fetch it per-entry on open.
 app.get('/api/entries', (req, res) => {
+  const startedAt = process.hrtime.bigint();
   const { source, category, q, limit } = req.query;
-  const entries = fetcher.getEntries({
+  const parsedLimit = Number.parseInt(limit, 10);
+  const options = {
     sourceId: source || undefined,
     category: category || undefined,
     q: q || undefined,
-    limit: limit ? parseInt(limit, 10) : undefined,
+    limit: Number.isFinite(parsedLimit) ? Math.max(1, Math.min(5000, parsedLimit)) : undefined,
     viewer: req.user,
     includeContent: false,
-  }).map(({ content, ...entry }) => entry);
-  res.json({ entries });
+  };
+  const result = publicEntryListResponse({ ...options, viewer: null });
+  if (!req.user) {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    res.setHeader('Server-Timing', `entries;dur=${durationMs.toFixed(1)};desc="${result.cacheStatus}"`);
+    return res.type('application/json').send(result.body);
+  }
+
+  const stats = store.getEntryStats(result.entries.map(entry => entry.id), req.user);
+  const entries = result.entries.map(entry => ({
+    ...entry,
+    stats: stats[entry.id] || entry.stats || null,
+  }));
+  const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+  res.setHeader('Server-Timing', `entries;dur=${durationMs.toFixed(1)};desc="${result.cacheStatus}-overlay"`);
+  return res.json({ entries });
 });
 
 app.get('/api/entry/:id', (req, res) => {
@@ -3646,7 +3715,7 @@ app.post('/api/entry/:id/onepage', requireLogin, requireOnepageAccess, onepageDa
 app.post('/api/onepages/:onepageId/publish', requireLogin, requireOnepageAccess, (req, res) => {
   try {
     const onepage = onepageService.publishOnepage(req.params.onepageId, { viewer: req.user });
-    publicProjectionCache.clear();
+    clearPublicProjectionCaches();
     return res.json({ onepage: onepageResponse(onepage, req.user) });
   } catch (error) {
     return sendError(res, error, 'onepage publication failed');

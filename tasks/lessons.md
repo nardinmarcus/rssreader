@@ -1,5 +1,6 @@
 # Deployment lessons
 
+- Build cache keys from the same normalized query values used to execute the request. A raw invalid or out-of-range `limit` must not produce one result shape while colliding with the default-list cache key; prove the invalid-first then valid-request order in a regression test.
 - Before running the full suite in a fresh worktree, check for `node_modules` and install from the lockfile with `npm ci` when absent; a missing runtime package such as `express` is an environment failure, not evidence of a code regression.
 - When streaming a deployment script through `ssh host 'bash -s'`, detach stdin for child commands such as `docker compose exec -T ... </dev/null` or run them in a separate SSH call; otherwise the child can consume the remaining script and suppress later verification steps.
 - Derive a container health probe's internal port from the live `PORT` environment or exposed-port metadata; assuming a framework default can report `ECONNREFUSED` against an otherwise healthy production container.

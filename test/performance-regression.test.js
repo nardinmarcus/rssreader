@@ -10,6 +10,7 @@ const { createTempDataDir } = require('./helpers/temp-data-dir');
 const dataDir = createTempDataDir('namoo-reader-performance-');
 process.env.NAMOO_READER_DATA_DIR = dataDir;
 const store = require('../lib/store');
+const fetcher = require('../lib/fetcher');
 const projectDir = path.join(__dirname, '..');
 
 test('versioned frontend asset URLs match the shipped content hashes', () => {
@@ -26,6 +27,26 @@ test('versioned frontend asset URLs match the shipped content hashes', () => {
     assert.ok(version, `index.html must load a versioned ${filename}`);
     assert.equal(version[1], crypto.createHash('sha256').update(content).digest('hex').slice(0, 12));
   }
+});
+
+test('application shell does not download the unavailable Persona widget', () => {
+  const html = fs.readFileSync(path.join(projectDir, 'public', 'index.html'), 'utf8');
+
+  assert.doesNotMatch(html, /\/vendor\/persona\/widget\.css/);
+  assert.doesNotMatch(html, /\/vendor\/persona\/index\.global\.js/);
+});
+
+test('startup renders cached entries while refresh polling stays status-only', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const init = app.match(/\/\* ---------- Init ---------- \*\/[\s\S]+?\n\}\)\(\);/)[0];
+  const refreshLoop = init.match(/if \(data\.refreshing[^]*?\n\s*\}/)[0];
+  const postInitialRender = init.slice(init.indexOf('await openEntryFromUrl({ entriesLoaded: true });'));
+
+  assert.match(init, /renderAgent\(\);\s*await openEntryFromUrl\(\{ entriesLoaded: true \}\);/);
+  assert.match(refreshLoop, /const d = await loadSources\(\);/);
+  assert.match(refreshLoop, /if \(!d\.refreshing\) \{\s*await reload\(\{ keepReader: true, clearUrl: false \}\);\s*break;\s*\}/);
+  assert.doesNotMatch(postInitialRender, /loadEntries\(\)|renderList\(\)|renderSidebar\(\)|updateListTitle\(\)/);
+  assert.doesNotMatch(init, /state\.entries\.length === 0/);
 });
 
 test('YouTube podcast players are hydrated from validated ids without weakening sanitization', () => {
@@ -64,6 +85,7 @@ async function startServer() {
       NAMOO_READER_DATA_DIR: dataDir,
       STARTUP_REFRESH_DELAY_MS: '-1',
       FRESHNESS_SWEEP_INTERVAL_MS: '-1',
+      SOURCE_INTERACTION_REFRESH_COOLDOWN_MS: String(Number.MAX_SAFE_INTEGER),
       UMAMI_SRC: '',
       UMAMI_WEBSITE_ID: '',
     },
@@ -108,14 +130,76 @@ test('entry lists use a slim database projection while detail keeps bounded cont
   assert.equal(slim[0].content, '');
   assert.equal(full[0].content, content);
 
+  const leanProjection = fetcher.getEntries({
+    sourceId: 'openai',
+    limit: 10,
+    includeContent: false,
+    includeAssetSummaries: false,
+    includeStats: false,
+  }).find(entry => entry.id === 'performance-entry');
+  const defaultProjection = fetcher.getEntries({ sourceId: 'openai', limit: 10 })
+    .find(entry => entry.id === 'performance-entry');
+  assert.equal(leanProjection.content, '');
+  assert.equal(Object.prototype.hasOwnProperty.call(leanProjection, 'assets'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(leanProjection, 'stats'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(defaultProjection, 'assets'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(defaultProjection, 'stats'), true);
+
   let server = null;
   try {
     server = await startServer();
-    const listResponse = await fetch(`${server.baseUrl}/api/entries?source=openai`);
+    const listUrl = `${server.baseUrl}/api/entries?source=openai`;
+    const invalidLimitResponse = await fetch(`${listUrl}&limit=not-a-number`);
+    const invalidLimitList = await invalidLimitResponse.json();
+    assert.equal(invalidLimitResponse.status, 200);
+    assert.ok(invalidLimitList.entries.some(entry => entry.id === 'performance-entry'));
+    assert.match(invalidLimitResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="miss"/);
+
+    const listResponse = await fetch(listUrl);
     const list = await listResponse.json();
     const listed = list.entries.find(entry => entry.id === 'performance-entry');
     assert.equal(listResponse.status, 200);
+    assert.match(listResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="hit"/);
+    assert.deepEqual(list, invalidLimitList);
     assert.equal(Object.prototype.hasOwnProperty.call(listed, 'content'), false);
+
+    const cachedListResponse = await fetch(listUrl);
+    const cachedList = await cachedListResponse.json();
+    assert.match(cachedListResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="hit"/);
+    assert.deepEqual(cachedList, list);
+
+    const viewResponse = await fetch(`${server.baseUrl}/api/entry/performance-entry/view`, { method: 'POST' });
+    assert.equal(viewResponse.status, 200);
+    const postViewListResponse = await fetch(listUrl);
+    assert.match(postViewListResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="hit"/);
+
+    const registerResponse = await fetch(`${server.baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'performance-cache-user@example.com',
+        password: 'performance-cache-password',
+        displayName: 'Performance Cache User',
+      }),
+    });
+    assert.equal(registerResponse.status, 200);
+    const sessionCookie = String(registerResponse.headers.get('set-cookie') || '').split(';', 1)[0];
+    assert.ok(sessionCookie);
+    const publicWarmResponse = await fetch(listUrl);
+    assert.match(publicWarmResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="hit"/);
+    const viewerListResponse = await fetch(listUrl, { headers: { Cookie: sessionCookie } });
+    assert.match(viewerListResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="hit-overlay"/);
+
+    const reactionResponse = await fetch(`${server.baseUrl}/api/entry/performance-entry/reaction`, {
+      method: 'POST',
+      headers: { Cookie: sessionCookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reaction: 'like' }),
+    });
+    assert.equal(reactionResponse.status, 200);
+    const reactedListResponse = await fetch(listUrl, { headers: { Cookie: sessionCookie } });
+    const reactedList = await reactedListResponse.json();
+    assert.match(reactedListResponse.headers.get('server-timing') || '', /entries;dur=\d+(?:\.\d+)?;desc="miss-overlay"/);
+    assert.equal(reactedList.entries.find(entry => entry.id === 'performance-entry').stats.reactionByMe, 'like');
 
     const detailResponse = await fetch(`${server.baseUrl}/api/entry/performance-entry`);
     const detail = await detailResponse.json();
@@ -149,12 +233,24 @@ test('browser startup and entry opening keep critical requests off the old slow 
   assert.match(app, /class="favicon"[\s\S]{0,160}loading="lazy" fetchpriority="low"/);
   assert.match(app, /class="entry-thumb"[\s\S]{0,160}loading="lazy" fetchpriority="low"/);
   const assetFeedPreviews = server.match(/function assetFeedPreviews[\s\S]+?\n}\n\nfunction entryShareDescription/)[0];
+  const titleTranslationScan = server.match(/async function translateMissingTitles[\s\S]+?\n}/)[0];
   assert.doesNotMatch(assetFeedPreviews, /store\./);
   assert.match(server, /fetcher\.getEntries\(\{ limit: 1000, includeContent: false, assetItemLimit \}\)/);
   assert.match(server, /publicAssetEntries\(\{ assetItemLimit: 500 \}\)/);
   assert.match(server, /PUBLIC_PROJECTION_TTL_MS = 5 \* MINUTE_MS/);
   assert.match(server, /function publicAssetEntries\(\{ assetItemLimit = 3 \} = \{\}\)/);
   assert.match(storeSource, /safeItemLimit = Math\.max\(1, Math\.min\(500,/);
+  assert.match(titleTranslationScan, /includeContent: false,[\s\S]*includeAssetSummaries: false,[\s\S]*includeStats: false/);
+});
+
+test('refresh completion reloads the main-process projection only once', () => {
+  const server = fs.readFileSync(path.join(projectDir, 'server.js'), 'utf8');
+  const fetchDoneHandler = server.match(/if \(message\.type === 'fetchDone'\) \{[\s\S]+?\n\s*\}\n\s*if \(message\.type === 'done'\)/)[0];
+  const finishFetchJob = server.match(/function finishFetchJob\([\s\S]+?\n\}/)[0];
+
+  assert.doesNotMatch(fetchDoneHandler, /reloadFetcherAfterWorker\(\)/);
+  assert.doesNotMatch(fetchDoneHandler, /refreshing = false/);
+  assert.equal((finishFetchJob.match(/reloadFetcherAfterWorker\(\)/g) || []).length, 1);
 });
 
 test('versioned translation jobs poll with progress and reject late entry, asset, job, or request responses', () => {

@@ -11875,17 +11875,18 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
       loadContributors(),
     ]);
     renderAgent();
-    // first boot: server may still be fetching — poll a few times
-    if (data.refreshing || state.entries.length === 0) {
+    await openEntryFromUrl({ entriesLoaded: true });
+    // 首屏先使用 SQLite 中已有内容；后台刷新期间只轮询轻量状态，完成后再更新列表一次。
+    if (data.refreshing) {
       for (let i = 0; i < 40; i++) {
         await new Promise(r => setTimeout(r, 2000));
         const d = await loadSources();
-        await loadEntries();
-        renderList(); renderSidebar(); updateListTitle();
-        if (!d.refreshing && state.entries.length) break;
+        if (!d.refreshing) {
+          await reload({ keepReader: true, clearUrl: false });
+          break;
+        }
       }
     }
-    await openEntryFromUrl({ entriesLoaded: true });
   } catch (e) {
     toast('加载失败: ' + e.message, 5000);
     $('#entry-list').innerHTML = `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;

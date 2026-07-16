@@ -8,6 +8,7 @@ const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'namoo-reader-backgrou
 process.env.NAMOO_READER_DATA_DIR = testDataDir;
 
 const fetcher = require('../lib/fetcher');
+const deepseek = require('../lib/deepseek');
 const jobs = require('../lib/background-jobs');
 
 after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
@@ -119,5 +120,62 @@ test('short Product Hunt official context never falls back to an RSS rewrite sou
     assert.match(prepared.error, /官网正文不足/);
   } finally {
     restore();
+  }
+});
+
+test('title translation candidates skip article bodies, asset summaries, and stats', async () => {
+  let requestedOptions = null;
+  const restoreFetcher = stub(fetcher, {
+    getEntries: options => {
+      requestedOptions = options;
+      return [{ id: 'english-title', sourceId: 'one', title: 'An English title', titleZh: null }];
+    },
+  });
+  const restoreDeepseek = stub(deepseek, {
+    getConfig: () => ({ configured: true }),
+    isLikelyEnglish: () => true,
+    translateTitleBatch: async () => ({ translations: [] }),
+  });
+  try {
+    await jobs.translateMissingTitles(1, ['one']);
+    assert.deepEqual(requestedOptions, {
+      limit: 1000,
+      includeContent: false,
+      includeAssetSummaries: false,
+      includeStats: false,
+    });
+  } finally {
+    restoreDeepseek();
+    restoreFetcher();
+  }
+});
+
+test('auto rewrite candidates keep article bodies but skip list-only metadata', async () => {
+  let requestedOptions = null;
+  const candidate = {
+    id: 'rewrite-candidate',
+    sourceId: 'one',
+    title: 'Rewrite candidate',
+    content: '<p>Enough source content for a rewrite candidate.</p>',
+  };
+  const restoreFetcher = stub(fetcher, {
+    getEntries: options => {
+      requestedOptions = options;
+      return [candidate];
+    },
+    getEntryById: () => { throw new Error('existing candidate objects must not be reloaded'); },
+  });
+  const restoreDeepseek = stub(deepseek, { getConfig: () => ({ configured: false }) });
+  try {
+    const result = await jobs.autoRewriteSources(new Set(['one']));
+    assert.equal(requestedOptions.sourceId, 'one');
+    assert.notEqual(requestedOptions.includeContent, false);
+    assert.equal(requestedOptions.includeAssetSummaries, false);
+    assert.equal(requestedOptions.includeStats, false);
+    assert.equal(result.changed, 1);
+    assert.equal(result.skipped, 'AI not configured');
+  } finally {
+    restoreDeepseek();
+    restoreFetcher();
   }
 });
