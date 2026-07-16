@@ -701,7 +701,7 @@ const state = {
   refreshing: false,
   scopeReloading: false,
   refreshProgress: { done: 0, total: 0 },
-  sourceManageFilters: { label: '', priority: '', enabled: 'all', status: 'all' },
+  sourceManageFilters: { query: '', label: '', priority: '', enabled: 'all', status: 'all' },
   sourceRefreshStatusTimer: null,
   autoRewrite: { running: false, last: null },
   activeEntry: null,
@@ -9840,6 +9840,7 @@ async function runAutoRewriteFromManage() {
 }
 
 const EDITORIAL_PRIORITY_LABELS = { high: '高优先', normal: '普通', low: '低优先' };
+const MANAGED_SOURCE_PRIORITY_RANK = { high: 0, normal: 1, low: 2 };
 
 function sourceManageFilterTarget(listTarget) {
   return listTarget === '#workspace-manage-list' ? '#workspace-source-filters' : '#workspace-source-filters';
@@ -9851,6 +9852,9 @@ function renderSourceManageFilters(listTarget, statusTarget) {
   const filters = state.sourceManageFilters;
   const labels = [...new Set(state.sources.flatMap(source => source.labels || []))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
   container.innerHTML = `
+    <label class="source-manage-search">
+      <input type="search" data-source-search value="${escapeHtml(filters.query)}" placeholder="搜索订阅源" aria-label="搜索订阅源" autocomplete="off" />
+    </label>
     <select data-source-filter="label" aria-label="按标签筛选">
       <option value="">全部标签</option>
       ${labels.map(label => `<option value="${escapeHtml(label)}" ${filters.label === label ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
@@ -9876,10 +9880,22 @@ function renderSourceManageFilters(listTarget, statusTarget) {
       renderManage(listTarget, statusTarget);
     };
   });
+  const search = container.querySelector('[data-source-search]');
+  search.oninput = () => {
+    state.sourceManageFilters.query = search.value;
+    renderManagedSourceList(listTarget);
+  };
 }
 
 function sourceMatchesManageFilters(source) {
   const filters = state.sourceManageFilters;
+  const query = String(filters.query || '').trim().toLocaleLowerCase('zh-CN');
+  if (query) {
+    const searchable = [source.name, source.note, source.description, ...(source.labels || [])]
+      .map(value => String(value || '').toLocaleLowerCase('zh-CN'))
+      .join('\n');
+    if (!searchable.includes(query)) return false;
+  }
   if (filters.label && !(source.labels || []).includes(filters.label)) return false;
   if (filters.priority && source.editorialPriority !== filters.priority) return false;
   if (filters.enabled === 'enabled' && !source.enabled) return false;
@@ -10017,14 +10033,26 @@ async function archiveCustomSource(source) {
   }
 }
 
-function renderManage(target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
-  renderManageStatus(statusTarget);
-  renderSourceManageFilters(target, statusTarget);
+function compareManagedSources(a, b) {
+  const aEnabled = Boolean(a.enabled);
+  const bEnabled = Boolean(b.enabled);
+  if (aEnabled !== bEnabled) return aEnabled ? -1 : 1;
+  if (aEnabled) {
+    const priorityDiff = (MANAGED_SOURCE_PRIORITY_RANK[a.editorialPriority] ?? MANAGED_SOURCE_PRIORITY_RANK.normal)
+      - (MANAGED_SOURCE_PRIORITY_RANK[b.editorialPriority] ?? MANAGED_SOURCE_PRIORITY_RANK.normal);
+    if (priorityDiff) return priorityDiff;
+  }
+  const aOrder = Number.isFinite(Number(a.displayOrder)) ? Number(a.displayOrder) : Number.MAX_SAFE_INTEGER;
+  const bOrder = Number.isFinite(Number(b.displayOrder)) ? Number(b.displayOrder) : Number.MAX_SAFE_INTEGER;
+  return (aOrder - bOrder) || String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
+}
+
+function renderManagedSourceList(target, statusTarget = '#workspace-source-status') {
   const el = $(target);
   if (!el) return;
   el.innerHTML = '';
   const sorted = [...state.sources]
-    .sort((a, b) => (a.displayOrder - b.displayOrder) || a.name.localeCompare(b.name))
+    .sort(compareManagedSources)
     .filter(sourceMatchesManageFilters);
   if (!sorted.length) {
     el.innerHTML = '<div class="manage-empty">没有符合当前筛选条件的信息源</div>';
@@ -10069,6 +10097,12 @@ function renderManage(target = '#workspace-manage-list', statusTarget = '#worksp
     row.querySelector('[data-source-archive]')?.addEventListener('click', () => archiveCustomSource(s));
     el.appendChild(row);
   }
+}
+
+function renderManage(target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
+  renderManageStatus(statusTarget);
+  renderSourceManageFilters(target, statusTarget);
+  renderManagedSourceList(target, statusTarget);
 }
 
 async function openAdminPage({ push = true } = {}) {

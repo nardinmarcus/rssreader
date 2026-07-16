@@ -1,3 +1,31 @@
+# Search and enabled-first ordering for managed sources
+
+## Plan
+
+- [x] Add a focused regression suite for source search composition and enabled/priority/order sorting.
+- [x] Add an accessible keyword search field to the existing source filter row and combine it with every current filter.
+- [x] Sort managed sources by enabled state, editorial priority, then persisted display order without changing SQLite preference semantics.
+- [x] Refresh frontend asset fingerprints and run focused/full tests, syntax checks, diff checks, and a rendered desktop/mobile verification.
+
+## Verification contract
+
+1. Search -> verify: partial, case-insensitive text matches source name, description/note, or labels and composes with existing filters.
+2. Ordering -> verify: all enabled sources precede disabled sources; enabled sources are grouped high, normal, then low priority; ties retain persisted display order.
+3. Interaction -> verify: changing priority or enabled state immediately re-renders in the correct group, while manual order remains the tie-breaker.
+4. Layout -> verify: the search control aligns with the filter row on desktop and wraps without horizontal overflow on mobile.
+5. Scope -> verify: SQLite remains authoritative for enabled, priority, and display order; no persistence or API contract changes are introduced.
+
+## Review
+
+- Added an accessible `type="search"` control that performs trimmed, case-insensitive substring matching across source name, note/description, and labels; it composes with the existing label, priority, enabled-state, and fetch-state filters while re-rendering only the list so input focus is preserved.
+- Managed sources now render enabled before disabled. Enabled sources are ordered high, normal, then low priority; persisted `displayOrder` remains the tie-breaker, and disabled sources retain their persisted order. No SQLite schema, stored preference, or API contract changed.
+- Regression proof: the focused source-management/preferences/performance suite passes 15/15 and the full suite passes 341/341. Server, library, script, browser, and test syntax checks pass; asset fingerprints match the shipped files and `git diff --check` is clean.
+- Rendered proof: local authenticated desktop and 390px mobile views have no horizontal overflow; search focus is retained while typing. Production Chrome shows 77 rows with all 54 enabled rows before the 23 disabled rows, enabled priorities are monotonic, `Anthropic` returns two matches, and combining it with the `研究` label returns only `Anthropic Research`. Browser errors: 0.
+- Production proof: deployed image `sha256:eb6f31780b7d598607f7687f81f559961a147f65095a6211dfe02556437d87eb`; `/`, `/api/me`, exact public asset hashes, SQLite `quick_check`, foreign-key checks, recent logs, restart count, and authenticated UI behavior are healthy.
+- Safety: backup `/opt/rssreader-backups/source-manage-search-20260715T170913Z` contains the previous frontend assets, environment file, and a consistent SQLite snapshot; rollback image `rssreader-namoo-reader:rollback-source-manage-search-20260715T170913Z` is retained.
+
+---
+
 # Recover complete Lilian Weng article bodies
 
 ## Plan
