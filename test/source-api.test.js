@@ -206,6 +206,21 @@ test('source management API enforces visibility, validation, ordering, and persi
     assert.equal(moved.body.moved, true);
     assert.equal(moved.body.neighborId, 'anthropic-research');
 
+    const boundaryIndex = moved.body.sources.findIndex((source, index, sources) => (
+      index > 0 && source.category !== sources[index - 1].category
+    ));
+    assert.ok(boundaryIndex > 0);
+    const boundarySource = moved.body.sources[boundaryIndex];
+    const boundaryNeighbor = moved.body.sources[boundaryIndex - 1];
+    const movedAcrossCategory = await jsonRequest(server.baseUrl, `/api/sources/${boundarySource.id}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ direction: 'up', scope: 'all' }),
+    });
+    assert.equal(movedAcrossCategory.response.status, 200, JSON.stringify(movedAcrossCategory.body));
+    assert.equal(movedAcrossCategory.body.moved, true);
+    assert.equal(movedAcrossCategory.body.neighborId, boundaryNeighbor.id);
+
     const noFeed = await jsonRequest(server.baseUrl, '/api/sources/meta-ai', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },

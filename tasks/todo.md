@@ -26,6 +26,31 @@
 
 ---
 
+# Sidebar drag ordering regression
+
+## Plan
+
+- [x] Reproduce the drag path in an isolated authenticated browser and separate same-category from cross-category behavior.
+- [x] Trace the production asset and introducing commit to a specific root cause.
+- [x] Add regression coverage for global ordering in the “全部” source view.
+- [x] Preserve category-scoped ordering in the article, news, and podcast views.
+- [x] Run focused tests, the full suite, syntax checks, and an authenticated browser drag/reload check.
+
+## Verification contract
+
+1. All-sources ordering -> verify: dragging across a category boundary emits an authenticated move request, changes the visible order, and survives reload.
+2. Category ordering -> verify: dragging inside a type tab still skips sources from other categories.
+3. Asset delivery -> verify: `public/index.html` references the SHA-256 prefix of the changed `public/app.js`.
+
+## Review
+
+- Root cause: the July 15 sidebar redesign made the mixed-type “全部” list the default while the drag target guard and move API still rejected every cross-category target, so a valid-looking vertical drop could end before any request was sent.
+- The browser now sends an explicit `all` or `category` ordering scope. Global ordering swaps across category boundaries; article, news, and podcast views retain their existing category-only behavior and backward-compatible API default.
+- Regression proof: the two focused tests failed before the implementation, the focused suite passes 27/27, and the full suite passes 342/342. JavaScript syntax checks, `git diff --check`, the static asset hash check, and `npm audit --omit=dev` all pass.
+- Authenticated browser proof: a cross-category drop in “全部” emitted two adjacent move requests, changed the DOM order, and survived reload; a scoped news drop completed `dragstart -> dragover -> drop -> dragend`, emitted one move request, and kept every visible row in the news category.
+- Production proof: image `sha256:64baa31fbdb5826e1c8f9857a14b9aafdf198d9b57b6f3c9f46412a8c6f8b990` serves `app.js?v=6446705f9709`; public `/` and `/api/me` return 200, the live script hash matches, SQLite reports `quick_check=ok`, the container-side global/category smoke test passes, and recent error lines are zero.
+- Safety: backup `/opt/rssreader-backups/sidebar-drag-20260716T044451Z` contains the previous runtime files and a consistent SQLite snapshot; rollback image `rssreader-namoo-reader:rollback-sidebar-drag-20260716T044451Z` is retained.
+
 # Recover complete Lilian Weng article bodies
 
 ## Plan

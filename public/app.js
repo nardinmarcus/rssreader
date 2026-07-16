@@ -2214,6 +2214,7 @@ function renderSidebar() {
   for (const s of state.sources) if (s.enabled) groups[s.category]?.push(s);
 
   const activeCategory = normalizeSidebarCategory(state.sidebarCategory);
+  const reorderScope = activeCategory === 'all' ? 'all' : 'category';
   const allSources = state.sources.filter(source => source.enabled && groups[source.category]);
   const list = activeCategory === 'all' ? allSources : groups[activeCategory];
 
@@ -2267,7 +2268,7 @@ function renderSidebar() {
       });
       row.addEventListener('dragover', event => {
         const dragged = state.sources.find(source => source.id === sidebarDragSourceId);
-        if (!dragged || dragged.id === s.id || dragged.category !== s.category) return;
+        if (!dragged || dragged.id === s.id || (reorderScope === 'category' && dragged.category !== s.category)) return;
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
         clearSidebarDragIndicators(wrap);
@@ -2280,7 +2281,7 @@ function renderSidebar() {
         const placement = row.classList.contains('drag-after') ? 'after' : 'before';
         clearSidebarDragIndicators(wrap);
         sidebarDragSourceId = '';
-        reorderSidebarSource(sourceId, s.id, placement);
+        reorderSidebarSource(sourceId, s.id, placement, reorderScope);
       });
       row.addEventListener('dragend', () => {
         sidebarDragSourceId = '';
@@ -2333,13 +2334,14 @@ function renderSidebar() {
   });
 }
 
-async function reorderSidebarSource(sourceId, targetId, placement = 'before') {
+async function reorderSidebarSource(sourceId, targetId, placement = 'before', reorderScope = 'category') {
   if (!isAdmin() || sidebarReordering) return;
   const source = state.sources.find(item => item.id === sourceId && item.enabled);
   const target = state.sources.find(item => item.id === targetId && item.enabled);
-  if (!source || !target || source.id === target.id || source.category !== target.category) return;
+  if (!source || !target || source.id === target.id || (reorderScope === 'category' && source.category !== target.category)) return;
 
-  const initial = state.sources.filter(item => item.enabled && item.category === source.category);
+  const visibleInScope = item => item.enabled && (reorderScope === 'all' || item.category === source.category);
+  const initial = state.sources.filter(visibleInScope);
   const sourceIndex = initial.findIndex(item => item.id === source.id);
   const targetIndex = initial.findIndex(item => item.id === target.id);
   let desiredIndex = targetIndex + (placement === 'after' ? 1 : 0);
@@ -2350,21 +2352,21 @@ async function reorderSidebarSource(sourceId, targetId, placement = 'before') {
   try {
     let moved = false;
     for (let attempt = 0; attempt <= state.sources.length; attempt += 1) {
-      const visible = state.sources.filter(item => item.enabled && item.category === source.category);
+      const visible = state.sources.filter(visibleInScope);
       const currentIndex = visible.findIndex(item => item.id === source.id);
       if (currentIndex === desiredIndex) break;
       const direction = currentIndex < desiredIndex ? 'down' : 'up';
       const data = await api(`/api/sources/${encodeURIComponent(source.id)}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ direction }),
+        body: JSON.stringify({ direction, scope: reorderScope }),
       });
       if (Array.isArray(data.sources)) state.sources = data.sources;
       if (!data.moved) throw new Error('已经到达当前分类边界');
       moved = true;
     }
 
-    const final = state.sources.filter(item => item.enabled && item.category === source.category);
+    const final = state.sources.filter(visibleInScope);
     if (final.findIndex(item => item.id === source.id) !== desiredIndex) {
       throw new Error('未能保存目标顺序');
     }

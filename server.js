@@ -4085,7 +4085,11 @@ app.delete('/api/sources/:id', requireAdmin, (req, res) => {
 
 app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
   try {
-    const result = fetcher.moveSource(req.params.id, req.body && req.body.direction);
+    const result = fetcher.moveSource(
+      req.params.id,
+      req.body && req.body.direction,
+      req.body && req.body.scope,
+    );
     res.json({
       moved: result.moved,
       neighborId: result.neighborId || '',

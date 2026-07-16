@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   assertEditorialPriority,
   mergeSourcesWithPreferences,
+  moveSourceInOrder,
   moveSourceWithinCategory,
 } = require('../lib/source-preferences');
 
@@ -56,6 +57,13 @@ test('move swaps adjacent sources only inside the same category', () => {
   const edge = moveSourceWithinCategory(down.sources, 'a', 'down');
   assert.equal(edge.moved, false);
   assert.deepEqual(edge.sources.map(source => source.id), ['b', 'a', 'c']);
+});
+
+test('global move swaps across category boundaries for the all-sources view', () => {
+  const up = moveSourceInOrder(catalog, 'c', 'up');
+  assert.equal(up.moved, true);
+  assert.equal(up.neighborId, 'b');
+  assert.deepEqual(up.sources.map(source => source.id), ['a', 'c', 'b']);
 });
 
 test('move validates direction and source id', () => {

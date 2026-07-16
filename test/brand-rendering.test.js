@@ -191,6 +191,8 @@ test('sidebar exposes static type filters, source totals, and drag ordering with
   assert.match(app, /dragstart/);
   assert.match(app, /dragover/);
   assert.match(app, /drop/);
+  assert.match(app, /const reorderScope = activeCategory === 'all' \? 'all' : 'category'/);
+  assert.match(app, /body: JSON\.stringify\(\{ direction, scope: reorderScope \}\)/);
   assert.match(app, /entryCountForSource/);
   assert.doesNotMatch(app, /data-source-move=/);
   assert.match(styles, /\.feed-item \.fcount[^}]*flex:\s*none/s);
