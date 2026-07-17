@@ -10,7 +10,7 @@ const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
 const styles = fs.readFileSync(path.join(projectDir, 'public', 'styles.css'), 'utf8');
 
 test('Onepage reader UI keeps preview and publication as separate actions', () => {
-  assert.match(html, /data-tab="onepage">Onepage/);
+  assert.match(html, /data-tab="onepage"[^>]*>Onepage/);
   assert.match(html, /id="reader-onepage"[^>]*>生成</);
   assert.match(html, /id="onepage-publish"[^>]*>发布</);
   assert.match(app, /Onepage 已生成，仅自己可见/);
@@ -58,14 +58,15 @@ test('Onepage sharing uses an ASCII-only article alias for Chinese titles', () =
   assert.match(app, /const url = readerAssetShareUrl\('onepage', entry, onepage\.id\)/);
 });
 
-test('Onepage stays beside the original and rewrite tabs in one equal-width row', () => {
+test('Onepage stays beside the other reading modes in one equal-width row', () => {
   const compactReaderTabs = [...styles.matchAll(/#app\.reading \.reader-tabs\s*\{([^}]*)\}/g)]
     .map(match => match[1])
-    .find(rule => /display:\s*grid/.test(rule));
+    .filter(rule => /display:\s*grid/.test(rule))
+    .at(-1);
 
   assert.ok(compactReaderTabs, 'expected the compact desktop reader-tab grid');
-  assert.match(compactReaderTabs, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
-  assert.doesNotMatch(styles, /\.reader-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
+  assert.match(compactReaderTabs, /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  assert.doesNotMatch(styles, /\.reader-tabs\s*\{[^}]*grid-template-columns:\s*repeat\([23],/s);
 });
 
 test('Onepage rendering fails closed and excludes images', () => {

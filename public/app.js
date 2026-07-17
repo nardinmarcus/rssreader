@@ -33,9 +33,8 @@ const themePreferenceMedia = typeof window.matchMedia === 'function'
   : null;
 let themeMode = 'system';
 const READER_TABS = ['original', 'rewrite', 'onepage', 'translation'];
-const READER_NAV_TABS = ['original', 'rewrite'];
-const DEFAULT_READER_OPEN_TAB = 'rewrite';
-const READER_OPEN_TABS = ['rewrite', 'original'];
+const DEFAULT_READER_OPEN_TAB = 'original';
+const READER_OPEN_TABS = ['original', 'rewrite'];
 const ASSET_FILTER_TYPES = ['translation', 'rewrite', 'onepage', 'annotations', 'comments', 'chat'];
 const PROFILE_TAB_TYPES = [...ASSET_FILTER_TYPES, 'likes'];
 const DASHBOARD_TABS = ['profile', 'reading', 'contributions', 'security', 'users', 'moderation', 'sources'];
@@ -525,7 +524,6 @@ function rewriteUiCopy(entry = state.activeEntry) {
       cached: '已显示缓存草稿',
       fetched: '已获取论文页面并保存创作草稿',
       failedPrefix: '草稿生成失败: ',
-      railIcon: 'file-search',
     };
   }
   return {
@@ -546,7 +544,6 @@ function rewriteUiCopy(entry = state.activeEntry) {
     cached: '已显示缓存草稿',
     fetched: '已获取原文并保存创作草稿',
     failedPrefix: '草稿生成失败: ',
-    railIcon: 'sparkles',
   };
 }
 
@@ -562,13 +559,6 @@ function updateRewriteUiLabels(entry = state.activeEntry) {
   if (copyBtn) {
     copyBtn.title = copy.copyTitle;
     copyBtn.setAttribute('aria-label', copy.copyTitle);
-  }
-  const rail = $('#reader-rail-rewrite');
-  if (rail) {
-    rail.title = copy.section;
-    rail.setAttribute('aria-label', copy.section);
-    const icon = rail.querySelector('.reader-signal-icon');
-    if (icon) setElementIcon(icon, copy.railIcon);
   }
 }
 
@@ -721,7 +711,6 @@ const state = {
   annotationOnlyDiscussed: storage.getItem('qm_annotation_only_discussed') === '1',
   pendingAnnotationId: '',
   agentContext: null,
-  readerNavBusy: false,
   contextPanel: 'agent',
   myTranslations: [],
   myRewrites: [],
@@ -807,10 +796,15 @@ const state = {
   personaAgentEntryId: '',
   personaAgentMessageKey: '',
   personaAgentReady: false,
-  agentCollapsed: storage.getItem('qm_agent_collapsed') === '1',
+  agentPreferenceCollapsed: storage.getItem('qm_agent_collapsed') === '1',
+  agentCollapsed: true,
   agentAutoCollapsed: false,
+  agentSessionExpanded: false,
   sidebarCollapsed: storage.getItem('qm_sidebar_collapsed') === '1',
+  leftPreferenceCollapsed: storage.getItem('qm_left_collapsed') === '1',
   leftCollapsed: storage.getItem('qm_left_collapsed') === '1',
+  leftAutoCollapsed: false,
+  readerLayoutBand: '',
   sidebarMoreOpen: storage.getItem('qm_sidebar_more_open') === '1',
   sidebarCategory: 'all',
   entryPaneWidth: readStoredNumber('qm_entry_pane_width'),
@@ -1251,10 +1245,11 @@ function persist() {
 
 function toast(msg, ms = 2200) {
   const t = $('#toast');
+  if (!t) return;
   t.textContent = msg;
-  t.classList.remove('hidden');
+  t.classList.add('visible');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.add('hidden'), ms);
+  t._timer = setTimeout(() => t.classList.remove('visible'), ms);
 }
 
 function delay(ms = 0) {
@@ -1284,18 +1279,18 @@ function showConfirmDialog({
     const close = value => {
       if (settled) return;
       settled = true;
-      modal.classList.add('hidden');
+      if (modal.open) modal.close(value ? 'confirm' : 'cancel');
       modal.classList.remove('danger');
       okBtn.onclick = null;
       cancelBtn.onclick = null;
       modal.onclick = null;
-      document.removeEventListener('keydown', onKeydown);
+      modal.removeEventListener('cancel', onCancel);
       if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
       resolve(value);
     };
-    const onKeydown = event => {
-      if (event.key === 'Escape') close(false);
-      if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey) close(true);
+    const onCancel = event => {
+      event.preventDefault();
+      close(false);
     };
     titleEl.textContent = title;
     messageEl.textContent = message;
@@ -1303,14 +1298,14 @@ function showConfirmDialog({
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
     modal.classList.toggle('danger', Boolean(danger));
-    modal.classList.remove('hidden');
     okBtn.onclick = () => close(true);
     cancelBtn.onclick = () => close(false);
     modal.onclick = event => {
       if (event.target === modal) close(false);
     };
-    document.addEventListener('keydown', onKeydown);
-    setTimeout(() => okBtn.focus(), 20);
+    modal.addEventListener('cancel', onCancel);
+    modal.showModal();
+    setTimeout(() => (danger ? cancelBtn : okBtn).focus(), 0);
   });
 }
 
@@ -2098,28 +2093,6 @@ function renderReaderStatsUi() {
     likeBtn.innerHTML = readerActionPillHtml('thumbs-up', formatCompactCount(stats.likeCount) || '0', '赞');
     likeBtn.title = state.me ? '认可这篇文章' : '登录后可以点赞';
   }
-  const railLike = $('#reader-rail-like');
-  const railStar = $('#reader-rail-star');
-  const railComment = $('#reader-rail-comment');
-  const railAnnotation = $('#reader-rail-annotation');
-  const railRewrite = $('#reader-rail-rewrite');
-  const railOnepage = $('#reader-rail-onepage');
-  const railTranslate = $('#reader-rail-translate');
-  if (railLike) {
-    railLike.classList.toggle('active', stats.reactionByMe === 'like');
-    railLike.setAttribute('aria-pressed', stats.reactionByMe === 'like' ? 'true' : 'false');
-    $('#reader-rail-like-count').textContent = formatCompactCount(stats.likeCount) || '0';
-  }
-  if (railStar) {
-    railStar.classList.toggle('active', starred);
-    railStar.setAttribute('aria-pressed', starred ? 'true' : 'false');
-    $('#reader-rail-star-count').textContent = favoriteText || '0';
-  }
-  if (railComment) $('#reader-rail-comment-count').textContent = formatCompactCount((state.comments || []).length) || '0';
-  if (railAnnotation) $('#reader-rail-annotation-count').textContent = formatCompactCount((state.annotations || []).length) || '0';
-  if (railRewrite) railRewrite.classList.toggle('active', Boolean(state.rewrite));
-  if (railOnepage) railOnepage.classList.toggle('active', Boolean(state.onepage));
-  if (railTranslate) railTranslate.classList.toggle('active', Boolean(state.translation));
   const viewCount = $('#reader-view-count');
   if (viewCount) viewCount.textContent = `访问 ${formatCompactCount(stats.viewCount) || 0}`;
   renderArticleInfoPanel();
@@ -2427,6 +2400,37 @@ function isCompactViewport() {
   return window.matchMedia && window.matchMedia('(max-width: 860px)').matches;
 }
 
+function viewportWidth() {
+  return window.innerWidth || document.documentElement.clientWidth || 1280;
+}
+
+function responsiveLayoutBand(width = viewportWidth()) {
+  if (width > 1180) return 'desktop';
+  if (width > 980) return 'compact';
+  if (width > 860) return 'tablet';
+  return 'mobile';
+}
+
+function contextPreferenceAppliesAtCurrentViewport() {
+  return ['desktop', 'compact'].includes(responsiveLayoutBand());
+}
+
+function readerContextTarget({
+  band,
+  hasEntry,
+  immersive = false,
+  preserveExpanded = false,
+  preferenceCollapsed = false,
+  insufficient = false,
+} = {}) {
+  if (!hasEntry) return { collapsed: true, auto: true };
+  if (immersive) return null;
+  if (preserveExpanded) return { collapsed: false, auto: false };
+  if (band === 'tablet' || band === 'mobile') return { collapsed: true, auto: true };
+  if (band === 'desktop' && !preferenceCollapsed && insufficient) return { collapsed: true, auto: true };
+  return { collapsed: Boolean(preferenceCollapsed), auto: false };
+}
+
 function sourceNameForEntry(entry) {
   return sourceById(entry && entry.sourceId)?.name || (entry && entry.sourceId) || '';
 }
@@ -2536,6 +2540,7 @@ function entryAssetItems(entry) {
   const items = [];
   if (assets.translation) items.push({ type: 'translation', label: '中文翻译', count: 0, title: '查看中文翻译' });
   if (assets.rewrite) items.push({ type: 'rewrite', label: '创作草稿', count: 0, title: '查看创作草稿' });
+  if (assetCountForType(entry, 'onepage')) items.push({ type: 'onepage', label: 'Onepage', count: 0, title: '查看 Onepage' });
   if (assets.annotations) items.push({ type: 'annotations', label: '划线点评', count: Number(assets.annotations) || 0, title: '查看划线点评' });
   if (assets.comments) items.push({ type: 'comments', label: '人工点评', count: Number(assets.comments) || 0, title: '查看人工点评' });
   if (assets.chatMessages) items.push({ type: 'chat', label: '文章对话', count: Number(assets.chatMessages) || 0, title: '查看文章对话' });
@@ -2545,10 +2550,23 @@ function entryAssetItems(entry) {
 const ASSET_ICON_NAMES = {
   translation: 'languages',
   rewrite: 'sparkles',
+  onepage: 'file-text',
   annotations: 'highlighter',
   comments: 'message-square-text',
   chat: 'bot',
 };
+
+function assetOpenOptions(type, itemId = '') {
+  const focus = ASSET_FILTER_TYPES.includes(type) ? type : null;
+  const id = String(itemId || '').trim();
+  return {
+    focus,
+    aiAssetId: ['translation', 'rewrite', 'onepage'].includes(focus) ? id : '',
+    annotationId: focus === 'annotations' ? id : '',
+    commentId: focus === 'comments' ? id : '',
+    chatMessageId: focus === 'chat' ? id : '',
+  };
+}
 
 function assetBadgeContent(item) {
   const icon = ASSET_ICON_NAMES[item.type] || 'boxes';
@@ -2803,6 +2821,13 @@ function assetPreviewForEntry(entry) {
   }
   if (
     state.assetSort === 'helpful'
+    && state.assetFilter === 'onepage'
+    && entry?.assets?.topHelpfulOnepage
+  ) {
+    return entry.assets.topHelpfulOnepage;
+  }
+  if (
+    state.assetSort === 'helpful'
     && state.assetFilter === 'annotations'
     && entry?.assets?.topHelpfulAnnotation
   ) {
@@ -2892,8 +2917,10 @@ function assetItemListHtml(entry) {
       ? assets.topHelpfulChat
       : state.assetFilter === 'translation'
         ? assets.topHelpfulTranslation
-        : state.assetFilter === 'rewrite'
-          ? assets.topHelpfulRewrite
+      : state.assetFilter === 'rewrite'
+        ? assets.topHelpfulRewrite
+        : state.assetFilter === 'onepage'
+          ? assets.topHelpfulOnepage
           : state.assetFilter === 'annotations'
             ? assets.topHelpfulAnnotation
             : assets.topHelpfulComment;
@@ -3098,12 +3125,7 @@ async function openAssetActivityButton(btn) {
   if (!entry) return;
   const focus = btn.dataset.assetFocus;
   const itemId = btn.dataset.assetItemId || '';
-  await openEntry(entry, {
-    focus,
-    aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
-    commentId: focus === 'comments' ? itemId : '',
-    chatMessageId: focus === 'chat' ? itemId : '',
-  });
+  await openEntry(entry, assetOpenOptions(focus, itemId));
 }
 
 function renderAssetActivityStrip() {
@@ -3513,7 +3535,7 @@ function performArticleAssetJump(type, { syncUrl = true, replaceUrl = false } = 
   if (!state.activeEntry) return;
   if (type === 'translation') {
     state.readerFocus = 'translation';
-    handleReaderTab('translation', { preserveFocus: true, replaceUrl });
+    handleReaderTab('translation', { preserveFocus: true, syncUrl, replaceUrl });
     scrollReaderTarget('#reader-translation');
     return;
   }
@@ -3649,7 +3671,6 @@ function renderAuthState() {
   }
   renderAdminEntryControls();
   updateAgentControls();
-  updateOnepageVisibility();
   if (state.activeEntry) renderOnepage(state.onepage);
 }
 
@@ -3991,13 +4012,7 @@ function renderList() {
         event.stopPropagation();
         const itemId = asset.dataset.assetItemId || '';
         const focus = asset.dataset.asset;
-        openEntry(e, {
-          focus,
-          aiAssetId: focus === 'translation' || focus === 'rewrite' ? itemId : '',
-          commentId: focus === 'comments' ? itemId : '',
-          annotationId: focus === 'annotations' ? itemId : '',
-          chatMessageId: focus === 'chat' ? itemId : '',
-        });
+        openEntry(e, assetOpenOptions(focus, itemId));
         return;
       }
       openEntry(e);
@@ -5373,11 +5388,23 @@ function alignOnepagePanelToReaderTabs() {
 function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   const next = normalizeReaderTab(tab);
   state.readerTab = next;
-  $$('.reader-tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === next));
-  $('#reader-original-panel').classList.toggle('hidden', next !== 'original');
-  $('#reader-translation').classList.toggle('hidden', next !== 'translation');
-  $('#reader-rewrite-panel').classList.toggle('hidden', next !== 'rewrite');
-  $('#reader-onepage-panel').classList.toggle('hidden', next !== 'onepage');
+  $$('.reader-tab').forEach(btn => {
+    const active = btn.dataset.tab === next;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    btn.tabIndex = active ? 0 : -1;
+  });
+  const panels = {
+    original: $('#reader-original-panel'),
+    rewrite: $('#reader-rewrite-panel'),
+    onepage: $('#reader-onepage-panel'),
+    translation: $('#reader-translation'),
+  };
+  Object.entries(panels).forEach(([panelTab, panel]) => {
+    const active = panelTab === next;
+    panel?.classList.toggle('hidden', !active);
+    panel?.setAttribute('aria-hidden', active ? 'false' : 'true');
+  });
   if (next === 'onepage') alignOnepagePanelToReaderTabs();
   updateReaderTocVisibility(next);
   updateReaderLanguageProfile();
@@ -5385,12 +5412,29 @@ function setReaderTab(tab, { syncUrl = true, replaceUrl = true } = {}) {
   if (syncUrl) syncReaderUrl({ replace: replaceUrl });
 }
 
-function handleReaderTab(tab, { preserveFocus = false, replaceUrl = true } = {}) {
+function handleReaderTab(tab, { preserveFocus = false, syncUrl = true, replaceUrl = true } = {}) {
   if (!preserveFocus) {
     state.readerFocus = null;
     state.readerAssetId = '';
   }
-  setReaderTab(tab, { replaceUrl });
+  setReaderTab(tab, { syncUrl, replaceUrl });
+}
+
+function handleReaderTabKeydown(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = $$('.reader-tab', event.currentTarget).filter(tab => !tab.disabled);
+  if (!tabs.length) return;
+  const currentIndex = Math.max(0, tabs.indexOf(document.activeElement));
+  const nextIndex = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? tabs.length - 1
+      : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  event.stopPropagation();
+  const next = tabs[nextIndex];
+  next.focus();
+  handleReaderTab(next.dataset.tab);
 }
 
 function maybeGenerateRewriteAfterLoad() {
@@ -5954,14 +5998,6 @@ function onepageCanGenerate() {
   return Boolean(state.me && state.siteAi && state.siteAi.onepageEnabled);
 }
 
-function updateOnepageVisibility(entry = state.activeEntry) {
-  const available = Boolean(state.onepage || onepageCanGenerate() || assetCountForType(entry, 'onepage'));
-  const tab = $('.reader-tab[data-tab="onepage"]');
-  const rail = $('#reader-rail-onepage');
-  if (tab) tab.classList.toggle('hidden', !available);
-  if (rail) rail.classList.toggle('hidden', !available);
-}
-
 function onepageMetaText(onepage) {
   if (!onepage) return '';
   return [
@@ -5983,7 +6019,6 @@ function renderOnepage(onepage) {
   const action = $('#reader-onepage');
   const hasContent = entryAssetHasContent('onepage', state.onepage);
   const canGenerate = onepageCanGenerate();
-  updateOnepageVisibility();
   content.innerHTML = '';
   copy.classList.toggle('hidden', !hasContent);
   copy.disabled = !hasContent;
@@ -6893,8 +6928,6 @@ function renderAnnotations() {
   if (!list) return;
   const annotations = state.annotations || [];
   $('#annotations-count').textContent = annotations.length ? `${annotations.length} 条` : '暂无';
-  const rail = $('#reader-rail-annotation-count');
-  if (rail) rail.textContent = formatCompactCount(annotations.length) || '0';
   const filter = ANNOTATION_SURFACES.includes(state.annotationFilter) ? state.annotationFilter : 'all';
   const select = $('#annotation-surface-filter');
   if (select) select.value = filter;
@@ -7141,8 +7174,6 @@ function renderComments() {
   const sortedComments = sortComments(comments);
   const canWrite = Boolean(state.me);
   $('#comments-count').textContent = comments.length ? `${comments.length} 条` : '暂无';
-  const railCommentCount = $('#reader-rail-comment-count');
-  if (railCommentCount) railCommentCount.textContent = formatCompactCount(comments.length) || '0';
   $$('.comment-sort-btn').forEach(btn => {
     const active = btn.dataset.commentSort === state.commentSort;
     btn.classList.toggle('active', active);
@@ -8333,15 +8364,13 @@ async function openMyAsset(itemId) {
     toast('找不到这条资产对应的文章');
     return;
   }
-  closeMyCommentsModal();
+  closeMyCommentsModal({ clearUrl: false });
   const type = normalizeUserAssetTab(state.myAssetTab);
-  const ok = type === 'translation' || type === 'rewrite' || type === 'onepage'
-    ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
-    : type === 'annotations'
-    ? await openEntryById(entryId, { focus: 'annotations', annotationId: itemId, updateUrl: true, replaceUrl: false })
-    : type === 'chat'
-    ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
-    : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
+  const ok = await openEntryById(entryId, {
+    ...assetOpenOptions(type, item.id),
+    updateUrl: true,
+    replaceUrl: false,
+  });
   if (!ok) toast('找不到这篇文章');
 }
 
@@ -8662,15 +8691,11 @@ async function openContributorAsset(itemId) {
   }
   closeContributorModal({ clearUrl: false });
   const type = normalizeUserAssetTab(state.contributor.tab);
-  const ok = type === 'likes'
-    ? await openEntryById(entryId, { updateUrl: true, replaceUrl: false })
-    : type === 'translation' || type === 'rewrite' || type === 'onepage'
-    ? await openEntryById(entryId, { focus: type, aiAssetId: item.id, updateUrl: true, replaceUrl: false })
-    : type === 'annotations'
-    ? await openEntryById(entryId, { focus: 'annotations', annotationId: itemId, updateUrl: true, replaceUrl: false })
-    : type === 'chat'
-    ? await openEntryById(entryId, { focus: 'chat', chatMessageId: itemId, updateUrl: true, replaceUrl: false })
-    : await openEntryById(entryId, { focus: 'comments', commentId: itemId, updateUrl: true, replaceUrl: false });
+  const ok = await openEntryById(entryId, {
+    ...assetOpenOptions(type, item.id),
+    updateUrl: true,
+    replaceUrl: false,
+  });
   if (!ok) toast('找不到这篇文章');
 }
 
@@ -9124,7 +9149,8 @@ function highlightAgentMessageFromRoute() {
   const target = document.getElementById(`chat-${messageId}`);
   if (!target) return false;
   state.pendingChatMessageId = '';
-  setAgentCollapsed(false);
+  state.agentSessionExpanded = true;
+  setAgentCollapsed(false, { persist: false });
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
   target.classList.add('agent-msg-target');
   setTimeout(() => target.classList.remove('agent-msg-target'), 2400);
@@ -9311,11 +9337,10 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   state.pendingCommentId = commentId || '';
   state.pendingAnnotationId = annotationId || '';
   state.pendingChatMessageId = chatMessageId || '';
+  state.agentSessionExpanded = requestedFocus === 'chat';
   renderReaderStatsUi();
   if (requestedFocus === 'chat') {
-    setContextPanel('agent', { expand: true });
-  } else if (isCompactViewport()) {
-    setAgentCollapsed(true);
+    setContextPanel('agent', { persist: false, expand: false });
   }
   renderReaderAssets(e);
   renderReaderAssetSummary(e);
@@ -9332,7 +9357,7 @@ async function openEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   $('#reader-audio').innerHTML = e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '';
   $('#reader-pane').scrollTop = 0;
   document.getElementById('app').classList.add('reading');
-  normalizeReaderWorkbenchLayout();
+  normalizeReaderWorkbenchLayout({ force: true, preserveExpanded: requestedFocus === 'chat' });
   if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
   applyReaderPrefs();
@@ -9383,11 +9408,13 @@ function closeReaderFromRoute() {
   state.pendingCommentId = '';
   state.pendingAnnotationId = '';
   state.pendingChatMessageId = '';
+  state.agentSessionExpanded = false;
   state.readerTab = 'original';
   $('#reader').classList.add('hidden');
   $('#reader-empty').classList.remove('hidden');
   renderAdminEntryControls();
   document.getElementById('app').classList.remove('reading');
+  normalizeReaderWorkbenchLayout({ force: true });
   applyReaderPrefs();
   document.title = 'Namoo Reader · RSS 阅读器';
   renderList();
@@ -9531,10 +9558,12 @@ async function reload({ keepReader = false, clearUrl = true } = {}) {
     state.readerTocAvailable = false;
     state.pendingAssetJump = null;
     state.pendingAnnotationId = '';
+    state.agentSessionExpanded = false;
     state.readerTab = 'original';
     $('#reader').classList.add('hidden');
     $('#reader-empty').classList.remove('hidden');
     document.getElementById('app').classList.remove('reading');
+    normalizeReaderWorkbenchLayout({ force: true });
     if (clearUrl) clearReaderUrl({ replace: true });
     renderAgent();
   }
@@ -10507,24 +10536,36 @@ function setContextPanel(panel = 'agent', { persist = true, expand = false } = {
   $('#annotation-side-panel')?.classList.toggle('hidden', isAgent);
   $('#app')?.classList.toggle('context-agent-active', isAgent);
   $('#app')?.classList.toggle('context-annotations-active', !isAgent);
-  if (expand) setAgentCollapsed(false);
+  if (expand) {
+    state.agentSessionExpanded = true;
+    setAgentCollapsed(false, { persist: contextPreferenceAppliesAtCurrentViewport() });
+  }
   renderAnnotations();
   renderAgentContextStrip();
 }
 
 function setAgentCollapsed(collapsed, { persist: shouldPersist = true, auto = false } = {}) {
-  if (!collapsed && state.readerImmersive) setReaderImmersive(false);
-  if (!collapsed && shouldCollapseLeftForContext()) setLeftCollapsed(true);
-  state.agentCollapsed = collapsed;
-  state.agentAutoCollapsed = Boolean(collapsed && auto);
-  if (shouldPersist) storage.setItem('qm_agent_collapsed', collapsed ? '1' : '0');
-  $('#app').classList.toggle('agent-collapsed', collapsed);
-  if (collapsed) $('#app').style.removeProperty('--agent-width');
+  const next = Boolean(collapsed);
+  if (!next && state.readerImmersive) setReaderImmersive(false);
+  if (shouldPersist) {
+    state.agentPreferenceCollapsed = next;
+    storage.setItem('qm_agent_collapsed', next ? '1' : '0');
+  }
+  state.agentCollapsed = next;
+  state.agentAutoCollapsed = Boolean(next && auto);
+  if (!next && shouldCollapseLeftForContext()) {
+    setLeftCollapsed(true, { persist: false, auto: true, normalize: false });
+  } else if (next && state.leftAutoCollapsed) {
+    setLeftCollapsed(state.leftPreferenceCollapsed, { persist: false, normalize: false });
+  }
+  $('#app').classList.toggle('agent-collapsed', next);
+  if (next) $('#app').style.removeProperty('--agent-width');
+  const hasEntry = Boolean(state.activeEntry);
   const rail = $('#context-open-rail');
-  if (rail) rail.classList.toggle('hidden', !collapsed);
+  if (rail) rail.classList.toggle('hidden', !next || !hasEntry);
   const opener = $('#agent-open');
   if (opener) {
-    opener.classList.toggle('hidden', !collapsed);
+    opener.classList.toggle('hidden', !next || !hasEntry);
     setElementIcon(opener, 'panel-right-open');
     opener.title = '展开文章侧栏';
     opener.setAttribute('aria-label', '展开文章侧栏');
@@ -10535,7 +10576,7 @@ function setAgentCollapsed(collapsed, { persist: shouldPersist = true, auto = fa
     closer.title = '收起右侧栏';
     closer.setAttribute('aria-label', '收起右侧栏');
   }
-  if (!collapsed && state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
+  if (!next && state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
   updateSeparatorMetrics();
 }
 
@@ -10548,7 +10589,7 @@ function setSidebarCollapsed(collapsed) {
   toggle.title = collapsed ? '展开左侧栏' : '收起左侧栏';
   toggle.setAttribute('aria-label', toggle.title);
   toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-  normalizeReaderWorkbenchLayout();
+  normalizeReaderWorkbenchLayout({ force: true });
   updateSeparatorMetrics();
 }
 
@@ -10562,16 +10603,20 @@ function renderLeftCollapseToggle() {
   toggle.setAttribute('aria-pressed', effectivelyCollapsed ? 'true' : 'false');
 }
 
-function setLeftCollapsed(collapsed) {
+function setLeftCollapsed(collapsed, { persist: shouldPersist = true, auto = false, normalize = true } = {}) {
   if (!collapsed && state.readerImmersive) setReaderImmersive(false);
   state.leftCollapsed = Boolean(collapsed);
-  storage.setItem('qm_left_collapsed', state.leftCollapsed ? '1' : '0');
+  state.leftAutoCollapsed = Boolean(state.leftCollapsed && auto);
+  if (shouldPersist) {
+    state.leftPreferenceCollapsed = state.leftCollapsed;
+    storage.setItem('qm_left_collapsed', state.leftCollapsed ? '1' : '0');
+  }
   $('#app').classList.toggle('left-collapsed', state.leftCollapsed);
   renderLeftCollapseToggle();
   if (!state.leftCollapsed) {
     const storedEntryWidth = readStoredNumber('qm_entry_pane_width');
     if (storedEntryWidth) state.entryPaneWidth = storedEntryWidth;
-    normalizeReaderWorkbenchLayout();
+    if (normalize) normalizeReaderWorkbenchLayout({ force: true });
     if (state.entryPaneWidth) setEntryPaneWidth(state.entryPaneWidth, { persist: false });
     if (state.contextPaneWidth) setContextPaneWidth(state.contextPaneWidth, { persist: false });
   }
@@ -10579,7 +10624,6 @@ function setLeftCollapsed(collapsed) {
 }
 
 function readerWorkbenchWidthBudget({ includeContext = !state.agentCollapsed } = {}) {
-  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
   const sidebarWidth = state.leftCollapsed ? 0 : (state.sidebarCollapsed ? 64 : 264);
   const entryWidth = state.leftCollapsed ? 0 : ENTRY_PANE_MIN_WIDTH;
   const listResizerWidth = state.leftCollapsed ? 0 : 4;
@@ -10589,28 +10633,38 @@ function readerWorkbenchWidthBudget({ includeContext = !state.agentCollapsed } =
 }
 
 function shouldAutoCollapseContext() {
-  if (!state.activeEntry || state.readerImmersive || state.leftCollapsed || state.agentCollapsed) return false;
-  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
-  if (viewport <= 980) return false;
-  return viewport < readerWorkbenchWidthBudget({ includeContext: true });
+  if (!state.activeEntry || state.readerImmersive || state.leftCollapsed || state.agentPreferenceCollapsed) return false;
+  if (responsiveLayoutBand() !== 'desktop') return false;
+  return viewportWidth() < readerWorkbenchWidthBudget({ includeContext: true });
 }
 
 function shouldCollapseLeftForContext() {
   if (!state.activeEntry || state.readerImmersive || state.leftCollapsed) return false;
-  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
-  if (viewport <= 980) return false;
-  return viewport < readerWorkbenchWidthBudget({ includeContext: true });
+  if (responsiveLayoutBand() !== 'desktop') return false;
+  return viewportWidth() < readerWorkbenchWidthBudget({ includeContext: true });
 }
 
-function normalizeReaderWorkbenchLayout() {
-  if (!state.activeEntry || state.readerImmersive) return;
-  if (shouldAutoCollapseContext()) {
-    setAgentCollapsed(true, { persist: false, auto: true });
-    return;
+function normalizeReaderWorkbenchLayout({ force = false, preserveExpanded = false } = {}) {
+  const band = responsiveLayoutBand();
+  const bandChanged = state.readerLayoutBand !== band;
+  state.readerLayoutBand = band;
+  if (state.leftAutoCollapsed && band !== 'desktop') {
+    setLeftCollapsed(state.leftPreferenceCollapsed, { persist: false, normalize: false });
   }
-  if (state.agentAutoCollapsed && storage.getItem('qm_agent_collapsed') !== '1' && !shouldCollapseLeftForContext()) {
-    setAgentCollapsed(false, { persist: false });
+  const target = readerContextTarget({
+    band,
+    hasEntry: Boolean(state.activeEntry),
+    immersive: state.readerImmersive,
+    preserveExpanded: preserveExpanded || state.agentSessionExpanded,
+    preferenceCollapsed: state.agentPreferenceCollapsed,
+    insufficient: shouldAutoCollapseContext(),
+  });
+  if (!target) return;
+  if (!force && !bandChanged) {
+    if (band !== 'desktop') return;
+    if (target.collapsed === state.agentCollapsed && target.auto === state.agentAutoCollapsed) return;
   }
+  setAgentCollapsed(target.collapsed, { persist: false, auto: target.auto });
 }
 
 function entryPaneWidthBounds() {
@@ -10660,7 +10714,7 @@ function visibleElementWidth(selector, fallback = 0) {
 }
 
 function minimumReaderPaneWidth() {
-  const viewport = window.innerWidth || document.documentElement.clientWidth || 1280;
+  const viewport = viewportWidth();
   if (viewport <= 980) return 0;
   if (viewport <= 1280) return 640;
   if (viewport <= 1500) return 700;
@@ -11002,18 +11056,6 @@ async function deleteCurrentEntry() {
 }
 
 $('#reader-like').onclick = () => setReaderReaction('like');
-const readerRailLike = $('#reader-rail-like');
-if (readerRailLike) readerRailLike.onclick = () => setReaderReaction('like');
-$('#reader-rail-star').onclick = () => $('#reader-star').click();
-$('#reader-rail-comment').onclick = () => scrollReaderTarget('#reader-comments', { offset: 72 });
-$('#reader-rail-annotation').onclick = () => {
-  const visible = visibleAnnotationsForReader();
-  if (visible.length) jumpToAnnotation(visible[0].id);
-  else scrollReaderTarget('#reader-annotations', { offset: 72 });
-};
-$('#reader-rail-rewrite').onclick = () => handleReaderTab('rewrite');
-$('#reader-rail-onepage').onclick = () => handleReaderTab('onepage');
-$('#reader-rail-translate').onclick = () => handleReaderTab('translation');
 const readerFetchOriginal = $('#reader-fetch-original');
 if (readerFetchOriginal) readerFetchOriginal.onclick = fetchOriginalContent;
 $('#reader-delete').onclick = deleteCurrentEntry;
@@ -11063,6 +11105,7 @@ $('#onepage-copy').onclick = copyOnepageText;
 $$('.reader-tab').forEach(btn => {
   btn.onclick = () => handleReaderTab(btn.dataset.tab);
 });
+$('.reader-tabs').onkeydown = handleReaderTabKeydown;
 document.addEventListener('mouseup', (e) => {
   if (e.target.closest('#annotation-popover, #article-link-menu, #agent-pane, #my-dashboard-page, #contributor-page')) return;
   if (articleContentLinkFromTarget(e.target)) {
@@ -11102,7 +11145,10 @@ $('#annotation-surface-filter').onchange = (e) => {
 $$('[data-context-panel]').forEach(btn => {
   btn.onclick = () => setContextPanel(btn.dataset.contextPanel, { expand: true });
 });
-$('#context-close').onclick = () => setAgentCollapsed(true);
+$('#context-close').onclick = () => {
+  state.agentSessionExpanded = false;
+  setAgentCollapsed(true, { persist: contextPreferenceAppliesAtCurrentViewport() });
+};
 const articleInfoBody = $('#article-info-body');
 if (articleInfoBody) {
   articleInfoBody.onclick = (e) => {
@@ -11317,7 +11363,10 @@ $('#agent-input').onkeydown = (e) => {
   }
 };
 const agentClose = $('#agent-close');
-if (agentClose) agentClose.onclick = () => setAgentCollapsed(true);
+if (agentClose) agentClose.onclick = () => {
+  state.agentSessionExpanded = false;
+  setAgentCollapsed(true, { persist: contextPreferenceAppliesAtCurrentViewport() });
+};
 $('#agent-open').onclick = () => setContextPanel(state.contextPanel, { expand: true });
 const agentCopyThread = $('#agent-copy-thread');
 if (agentCopyThread) agentCopyThread.onclick = copyAgentThread;
@@ -11690,51 +11739,17 @@ document.addEventListener('click', (e) => {
 function isShortcutEditableTarget(target) {
   const el = target && target.nodeType === Node.ELEMENT_NODE ? target : target?.parentElement;
   if (!el) return false;
-  return Boolean(el.closest('input, textarea, select, [contenteditable="true"]'));
-}
-
-function readerNavClass(direction, phase) {
-  const dir = direction > 0 ? 'next' : 'prev';
-  return `reader-nav-${phase}-${dir}`;
-}
-
-function clearReaderNavClasses(reader = $('#reader')) {
-  if (!reader) return;
-  reader.classList.remove(
-    'reader-nav-exit-next',
-    'reader-nav-exit-prev',
-    'reader-nav-enter-next',
-    'reader-nav-enter-prev',
-    'reader-nav-edge-next',
-    'reader-nav-edge-prev',
-  );
-}
-
-function pulseReaderNavEdge(direction) {
-  const reader = $('#reader');
-  if (!reader) return;
-  const cls = readerNavClass(direction, 'edge');
-  clearReaderNavClasses(reader);
-  reader.classList.add(cls);
-  setTimeout(() => reader.classList.remove(cls), 260);
-}
-
-async function openVisibleEntryWithMotion(entry, direction) {
-  if (!entry || state.readerNavBusy) return;
-  state.readerNavBusy = true;
-  const reader = $('#reader');
-  clearReaderNavClasses(reader);
-  reader?.classList.add(readerNavClass(direction, 'exit'));
-  try {
-    await delay(120);
-    await openEntry(entry);
-    const nextReader = $('#reader');
-    clearReaderNavClasses(nextReader);
-    nextReader?.classList.add(readerNavClass(direction, 'enter'));
-    setTimeout(() => clearReaderNavClasses(nextReader), 280);
-  } finally {
-    state.readerNavBusy = false;
-  }
+  return Boolean(el.closest([
+    'input',
+    'textarea',
+    'select',
+    '[contenteditable="true"]',
+    'button',
+    'a[href]',
+    '[role="button"]',
+    '[role="tab"]',
+    '[role="radio"]',
+  ].join(', ')));
 }
 
 function moveVisibleEntry(delta, { notifyEdge = false } = {}) {
@@ -11752,26 +11767,18 @@ function moveVisibleEntry(delta, { notifyEdge = false } = {}) {
   const nextIndex = idx < 0 ? fallback : idx + delta;
   if (nextIndex < 0 || nextIndex >= list.length) {
     if (notifyEdge) toast(delta > 0 ? '已是当前列表最后一篇' : '已是当前列表第一篇');
-    pulseReaderNavEdge(delta);
     return;
   }
   const next = list[nextIndex];
   if (!next || next.id === state.activeEntry?.id) {
     if (notifyEdge) toast(delta > 0 ? '已是当前列表最后一篇' : '已是当前列表第一篇');
-    pulseReaderNavEdge(delta);
     return;
   }
-  openVisibleEntryWithMotion(next, delta);
-}
-
-function moveReaderVersion(delta) {
-  if (!state.activeEntry) return;
-  const idx = READER_NAV_TABS.indexOf(state.readerTab);
-  const next = READER_NAV_TABS[((idx < 0 ? 0 : idx) + delta + READER_NAV_TABS.length) % READER_NAV_TABS.length];
-  handleReaderTab(next);
+  openEntry(next);
 }
 
 document.addEventListener('keydown', (e) => {
+  if ($('#confirm-modal')?.open) return;
   const editable = isShortcutEditableTarget(e.target);
   if (e.key === 'Escape') {
     if ($('#user-management-dialog')?.open) {
@@ -11859,12 +11866,12 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
   renderAiSettings();
   renderAuthState();
   setSidebarCollapsed(state.sidebarCollapsed);
-  setLeftCollapsed(state.leftCollapsed);
+  setLeftCollapsed(state.leftCollapsed, { persist: false });
   setEntryPaneWidth(state.entryPaneWidth, { persist: false });
   setupListResizer();
   setContextPaneWidth(state.contextPaneWidth, { persist: false });
   setupContextResizer();
-  setAgentCollapsed(state.agentCollapsed);
+  normalizeReaderWorkbenchLayout({ force: true });
   setContextPanel(state.contextPanel, { persist: false, expand: false });
   $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
   try {

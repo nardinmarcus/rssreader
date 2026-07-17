@@ -1,3 +1,67 @@
+# Consolidate the reader UI states and interactions
+
+## Plan
+
+- [x] Add focused regressions for new-user defaults, four reader modes, dialog safety, direct keyboard navigation, responsive state, and toast semantics.
+- [x] Make original content the guest/new-user default while preserving every existing saved user preference and public deep-link contract.
+- [x] Replace conditional reader-mode navigation with four stable accessible tabs and remove the permanently hidden duplicate signal rail.
+- [x] Make dialogs and keyboard article navigation deterministic without document-level Enter confirmation or artificial input delays.
+- [x] Separate persisted AI-panel preference from viewport-derived collapse behavior and repair the 981-1180px cascade.
+- [x] Simplify non-functional motion, improve live feedback semantics, and refresh exact frontend asset fingerprints.
+- [x] Run focused/full tests, syntax checks, audit, diff checks, and isolated browser geometry/keyboard verification.
+
+## Verification contract
+
+1. Defaults -> verify: guests and newly created users open original content, while an existing saved rewrite preference remains unchanged.
+2. Navigation -> verify: four reader tabs remain stable, deep links retain exact asset IDs, and switching modes clears stale asset focus without generating content.
+3. Interaction -> verify: Escape/cancel/confirm are explicit, document-level Enter cannot confirm a destructive action, and rapid article shortcuts do not drop input.
+4. Responsive state -> verify: viewport-derived collapse never overwrites the saved desktop preference; 1440, 1180, 1024, 900, 860, and 390px have no horizontal overflow or clipped primary panel.
+5. Accessibility and motion -> verify: tab semantics, focus restoration, toast live-region behavior, reduced motion, and 44px mobile targets work in the rendered UI.
+6. Safety -> verify: tests use an isolated `NAMOO_READER_DATA_DIR`; SQLite/runtime caches and unrelated dirty worktree files remain untouched.
+
+## Review
+
+- Defaults: guests and newly created accounts now enter the original article; explicit existing `original` and `rewrite` preferences remain unchanged, including databases with the legacy column default.
+- Navigation: the reader exposes four persistent ARIA tabs (`原文 / 创作草稿 / Onepage / 中文翻译`), preserves exact asset/item IDs, fixes My Assets history, and keeps an unavailable Onepage as a read-only empty state.
+- Interaction: confirmation uses a native dialog with cancel-first danger focus and focus restoration; reader shortcuts navigate immediately; toast feedback is a persistent polite live region.
+- Responsive state: saved panel preferences are distinct from automatic and article-session state. The 1181+, 981-1180, 861-980, and <=860 layouts have explicit ownership; mobile tabs are 44px and the bottom context panel is capped at 38vh.
+- Verification: the full suite passes 367/367, related regressions pass, syntax/diff checks pass, and `npm audit --omit=dev` reports zero vulnerabilities. Isolated browser checks at 1440, 1180, 1024, 900, 860, and 390px show no horizontal overflow; tab keyboard routing, rapid article navigation, dialog focus/Escape, dark mode, reduced motion, and zero console errors were verified.
+- Safety: browser fixtures used `/tmp/rssreader-ui-019f6edb`; repository and production SQLite, raw snapshots, and runtime caches were untouched during implementation. Existing unrelated dirty files remain outside this change set.
+
+---
+
+# Extract the public Namoo Reader design system
+
+## Plan
+
+- [x] Fix the public production scope, locale, theme, authentication state, representative pages, and viewport matrix.
+- [x] Capture stabilized screenshots, computed-style evidence, one primary-control state, and one responsive-navigation state under `.design-extract/`.
+- [x] Summarize and normalize repeated rendered values before naming semantic tokens.
+- [x] Write schema-compliant `DESIGN.md` without changing existing product behavior or runtime data.
+- [x] Validate the document and visually cross-check the primary surface/CTA, typography hierarchy, and signature workspace layout.
+- [x] Convert `DESIGN.md` from an extraction report into a current, repository-facing design system for long-term maintenance.
+
+## Verification contract
+
+1. Scope -> verify: the manifest records exact production URLs, access time, locale, light theme, unauthenticated state, viewports, states, and collection limitations.
+2. Evidence -> verify: every exact frontmatter token is traceable to computed styles, readable CSS rules, DOM geometry, or repeated normalized evidence.
+3. Document -> verify: `validate_design_md.py` reports no errors and every token reference resolves.
+4. Visual fidelity -> verify: the primary action/surface, type hierarchy, and responsive three-pane workspace rules match the captured screenshots.
+5. Safety -> verify: SQLite, raw snapshots, caches, production configuration, and unrelated dirty worktree files remain untouched.
+
+## Review
+
+- Scope: analyzed the unauthenticated light-theme public application across feed-list, article/rewrite reader, and public-asset states at 390x844, 1024x768, and 1440x900. The SPA asset state shares the root URL; protected workspace/admin states remain explicit gaps.
+- Evidence: retained 10 PNG captures, 10 schema-v2 computed-style evidence files, a manifest, responsive CSSOM rules, and a cross-capture summary under ignored `.design-extract/`.
+- Output: added `DESIGN.md` with the required eight frontmatter namespaces and eleven canonical prose sections. Exact frontmatter values come from stable CSS variables, computed styles, or repeated geometry; interpretation and recommendations remain in prose.
+- Cross-check: the canvas/primary action matches the home and article captures; the 24px heading and 16.5px/1.93 reader body match the article capture; the 263px/340px desktop structure and 64px/326px mobile structure match rendered geometry.
+- Known runtime finding: the 1024px viewport renders a 1072px-wide document because the `max-width: 1100px` grid still retains the agent column. The document records this as a current gap, not a design target.
+- Verification: `validate_design_md.py` passes, Ruby parses the YAML with the exact required top-level key order, all evidence JSON files report collector schema v2, all screenshots have PNG signatures, the 10-entry manifest validates, and `git diff --check` passes.
+- Safety: no application code, SQLite, raw source snapshots, caches, environment files, or production state changed. Existing unrelated worktree edits were preserved.
+- Handoff cleanup: removed capture provenance, temporary page measurements, collection limits, missing-state inventory, and runtime bug notes from `DESIGN.md`; aligned the retained system with the current light/dark theme variables, reader settings, responsive modes, focus treatment, reduced-motion behavior, and Onepage surface in source.
+
+---
+
 # Repair invalid optional Onepage frameworks
 
 ## Plan

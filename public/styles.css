@@ -425,9 +425,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .entry-asset-preview-copy .app-icon {
   --icon-size: 15px;
 }
-.reader-signal-icon .app-icon {
-  --icon-size: 15px;
-}
 .reader-action-symbol {
   --icon-size: 14px;
 }
@@ -526,8 +523,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   text-align: left;
 }
 .brand-home:hover .brand-logo {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px var(--shadow);
+  box-shadow: 0 1px 3px var(--shadow);
 }
 .brand-logo {
   width: 30px; height: 30px; border-radius: 9px;
@@ -536,7 +532,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: flex; align-items: center; justify-content: center;
   border: 1px solid color-mix(in srgb, var(--brand-logo-fg) 16%, transparent);
   box-shadow: 0 1px 2px var(--shadow);
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
+  transition: box-shadow 0.16s ease;
   flex: none;
   object-fit: cover;
 }
@@ -1532,7 +1528,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .contributor-card:hover {
   background: var(--surface);
   border-color: var(--text-2);
-  transform: translateY(-1px);
 }
 .contributor-rank {
   min-width: 34px;
@@ -1882,7 +1877,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .asset-jump:hover {
   background: var(--bg-3);
-  transform: translateY(-1px);
 }
 .asset-jump:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
@@ -2149,42 +2143,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   color: var(--text-1);
   font-weight: 700;
 }
-.reader-signal-rail { display: none; }
-.reader-signal-btn {
-  min-width: 48px;
-  min-height: 48px;
-  display: grid;
-  place-items: center;
-  gap: 1px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-1) 94%, transparent);
-  color: var(--text-2);
-  box-shadow: 0 2px 8px var(--shadow);
-  backdrop-filter: blur(10px);
-}
-.reader-signal-btn:hover {
-  color: var(--text-0);
-  border-color: var(--text-2);
-}
-.reader-signal-btn.active {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: var(--accent-soft);
-}
-.reader-signal-icon {
-  font-size: 14px;
-  line-height: 1;
-  font-weight: 850;
-}
-.reader-signal-count {
-  min-height: 12px;
-  color: currentColor;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
 .reader-source {
   display: inline-flex; align-items: center; gap: 7px;
   font-size: 12.5px; color: var(--accent); font-weight: 600;
@@ -2356,14 +2314,14 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   position: sticky;
   top: 0;
   z-index: 5;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   margin: 14px 0 18px;
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-0) 92%, transparent);
-  backdrop-filter: blur(12px);
+  background: var(--surface);
 }
 .reader-tab {
   flex: 1 1 0;
@@ -3831,12 +3789,26 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   position: fixed;
   inset: 0;
   z-index: 80;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
   padding: 22px;
   background: color-mix(in srgb, #000 34%, transparent);
+  color: inherit;
   backdrop-filter: blur(10px);
+}
+.confirm-modal:not([open]) {
+  display: none;
+}
+.confirm-modal::backdrop {
+  background: transparent;
 }
 .confirm-card {
   width: min(420px, calc(100vw - 32px));
@@ -4914,11 +4886,18 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 
 /* ============ Toast ============ */
 .toast {
-  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 26px; left: 50%; transform: translate(-50%, 6px);
   background: var(--bg-3); color: var(--text-0);
   border: 1px solid var(--border); border-radius: 10px;
   padding: 9px 18px; font-size: 13px; z-index: 99;
+  opacity: 0;
+  pointer-events: none;
   box-shadow: 0 8px 24px var(--shadow);
+  transition: opacity 160ms var(--ease-out-strong), transform 160ms var(--ease-out-strong);
+}
+.toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 /* ============ Scrollbars ============ */
@@ -5046,8 +5025,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .submit-link-open:hover,
 .ghost-btn.primary:hover {
   filter: none;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 22px var(--shadow-soft);
+  box-shadow: 0 2px 6px var(--shadow-soft);
 }
 .sidebar-submit-link {
   height: 36px;
@@ -5266,7 +5244,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .entry-card.active {
   background: var(--surface);
   border-color: var(--border-subtle);
-  box-shadow: 0 6px 18px var(--shadow);
+  box-shadow: 0 1px 3px var(--shadow-soft);
 }
 .entry-top {
   gap: 5px;
@@ -5432,8 +5410,8 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   padding: 4px;
   border-color: var(--border-subtle);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  box-shadow: 0 1px 2px var(--shadow);
+  background: var(--surface);
+  box-shadow: none;
 }
 .reader-tab {
   min-height: 36px;
@@ -5741,8 +5719,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 
 .modal-box,
 .confirm-card,
-.article-link-menu,
-.toast {
+.article-link-menu {
   border-color: var(--border-subtle);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--surface) 96%, transparent);
@@ -6254,9 +6231,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .reader-toolbar-main #reader-copy-link {
   margin-right: 2px;
-}
-.reader-signal-rail {
-  display: none !important;
 }
 .context-workbench-head {
   padding-block: 10px 8px;
@@ -6855,9 +6829,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reading .reader {
     max-width: calc(var(--reader-measure) + 112px);
   }
-  #app.reading .reader-signal-rail {
-    display: none;
-  }
 }
 
 /* ============ Responsive ============ */
@@ -7331,7 +7302,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   color: currentColor;
 }
 .reader-tabs {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .reader-section-actions {
   gap: 6px;
@@ -7465,14 +7436,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 
 :where(button, .entry-card, .reader-action-pill, .reader-tab, .asset-stat):active:not(:disabled) {
   transform: scale(0.98);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .entry-card:hover,
-  .comment-item:hover,
-  .annotation-item:hover {
-    transform: translateY(-1px);
-  }
 }
 
 #agent-pane .agent-only-tabs {
@@ -7814,11 +7777,12 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     scroll-behavior: auto !important;
     transition-duration: 1ms !important;
   }
-  :where(button, .entry-card, .reader-action-pill, .reader-tab, .asset-stat):active:not(:disabled),
-  .entry-card:hover,
-  .comment-item:hover,
-  .annotation-item:hover {
+  :where(button, .entry-card, .reader-action-pill, .reader-tab, .asset-stat):active:not(:disabled) {
     transform: none;
+  }
+  .toast,
+  .toast.visible {
+    transform: translateX(-50%);
   }
 }
 
@@ -8147,7 +8111,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
 }
 
-@media (max-width: 1180px) and (min-width: 861px) {
+@media (max-width: 1180px) and (min-width: 981px) {
   #app.reading:not(.reader-immersive) {
     --sidebar-width: 64px;
     --agent-width: 260px;
@@ -8160,6 +8124,11 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reading #reader-pane {
     display: block;
     grid-column: 4;
+  }
+
+  #app.reading.agent-collapsed:not(.reader-immersive) {
+    --context-resizer-width: 0;
+    grid-template-columns: var(--sidebar-width) 0 0 minmax(0, 1fr) 0 0;
   }
 }
 
@@ -9861,16 +9830,15 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 
   #app.reading .reader-tabs {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2px;
     min-height: 34px;
     margin: 7px 0 14px;
     padding: 3px;
     border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
     border-radius: 999px;
-    background: color-mix(in srgb, var(--surface) 88%, transparent);
-    box-shadow: 0 1px 2px var(--shadow-soft);
-    backdrop-filter: blur(12px);
+    background: var(--surface);
+    box-shadow: none;
   }
 
   #app.reading .reader-tab {
@@ -9891,7 +9859,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reading .reader-tab.active {
     background: var(--bg-1);
     color: var(--text-0);
-    box-shadow: 0 1px 3px var(--shadow-soft), inset 0 0 0 1px var(--border-subtle);
+    box-shadow: inset 0 0 0 1px var(--border-subtle);
   }
 }
 
@@ -9933,59 +9901,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reader-immersive > #reader-pane {
     grid-column: 1 / -1;
   }
-}
-
-/* ============ Reader navigation and AI context refinements ============ */
-.reader-nav-exit-next {
-  animation: readerNavExitNext 130ms ease-in forwards;
-}
-
-.reader-nav-enter-next {
-  animation: readerNavEnterNext 240ms cubic-bezier(.2, .8, .2, 1) both;
-}
-
-.reader-nav-exit-prev {
-  animation: readerNavExitPrev 130ms ease-in forwards;
-}
-
-.reader-nav-enter-prev {
-  animation: readerNavEnterPrev 240ms cubic-bezier(.2, .8, .2, 1) both;
-}
-
-.reader-nav-edge-next {
-  animation: readerNavEdgeNext 240ms ease-out;
-}
-
-.reader-nav-edge-prev {
-  animation: readerNavEdgePrev 240ms ease-out;
-}
-
-@keyframes readerNavExitNext {
-  to { opacity: 0; transform: translateX(-18px); }
-}
-
-@keyframes readerNavEnterNext {
-  from { opacity: 0; transform: translateX(22px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes readerNavExitPrev {
-  to { opacity: 0; transform: translateX(18px); }
-}
-
-@keyframes readerNavEnterPrev {
-  from { opacity: 0; transform: translateX(-22px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes readerNavEdgeNext {
-  0%, 100% { transform: translateX(0); }
-  45% { transform: translateX(-8px); }
-}
-
-@keyframes readerNavEdgePrev {
-  0%, 100% { transform: translateX(0); }
-  45% { transform: translateX(8px); }
 }
 
 .annotation-item.annotation-active {
@@ -10053,6 +9968,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 
 @media (max-width: 860px) {
+  #app.reading .reader-tab {
+    min-height: 44px;
+  }
+
   .context-open-rail {
     top: 12px;
     right: 12px;
@@ -10325,7 +10244,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 
 /* Explicit desktop reader expansion must beat compact reading breakpoints. */
-@media (min-width: 981px) {
+@media (min-width: 1181px) {
   #app.reading:not(.left-collapsed):not(.reader-immersive) {
     --entry-width: minmax(260px, 320px);
     grid-template-columns:
@@ -10424,22 +10343,62 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   }
 }
 
-/* Tablet reader keeps the article primary while allowing the right context pane. */
-@media (max-width: 980px) and (min-width: 861px) {
+/* Compact desktop switches between browsing and reading work modes. */
+@media (max-width: 1180px) and (min-width: 981px) {
+  #app:not(.reading):not(.workspace-page-open) {
+    --context-resizer-width: 0;
+    --agent-width: 0;
+    grid-template-columns: var(--sidebar-width) var(--entry-width) 6px minmax(0, 1fr) 0 0;
+  }
+
+  #app:not(.reading):not(.workspace-page-open) #context-resizer,
+  #app:not(.reading):not(.workspace-page-open) #agent-pane {
+    display: none;
+  }
+
   #app.reading:not(.reader-immersive) {
+    --sidebar-width: 64px;
+    --entry-width: 0;
     --context-resizer-width: 4px;
-    --agent-width: minmax(260px, 304px);
-    grid-template-columns: minmax(0, 1fr) var(--context-resizer-width) var(--agent-width) !important;
+    --agent-width: 260px;
+    grid-template-columns: var(--sidebar-width) 0 0 minmax(0, 1fr) var(--context-resizer-width) var(--agent-width) !important;
+  }
+
+  #app.reading.left-collapsed:not(.reader-immersive) {
+    --sidebar-width: 0;
   }
 
   #app.reading.agent-collapsed:not(.reader-immersive) {
     --context-resizer-width: 0;
+    --agent-width: 0;
+    grid-template-columns: var(--sidebar-width) 0 0 minmax(0, 1fr) 0 0 !important;
+  }
+
+  #app.reading #entry-pane,
+  #app.reading #list-resizer {
+    display: none !important;
+  }
+
+  #app.reading #reader-pane {
+    display: block !important;
+    grid-column: 4 !important;
+    min-width: 0;
+  }
+}
+
+/* Tablet reading is single-column; context opens as an explicit overlay. */
+@media (max-width: 980px) and (min-width: 861px) {
+  #app.reading:not(.reader-immersive) {
+    --context-resizer-width: 0;
+    --agent-width: 0;
     grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr);
   }
 
   #app.reading #sidebar,
   #app.reading #entry-pane,
-  #app.reading #list-resizer {
+  #app.reading #list-resizer,
+  #app.reading #context-resizer {
     display: none !important;
   }
 
@@ -10450,17 +10409,17 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     max-width: 100vw;
   }
 
-  #app.reading:not(.agent-collapsed):not(.reader-immersive) #context-resizer {
-    display: block !important;
-    grid-column: 2 !important;
-  }
-
   #app.reading:not(.agent-collapsed):not(.reader-immersive) #agent-pane {
     display: flex !important;
-    grid-column: 3 !important;
+    position: fixed;
+    inset: 0 0 0 auto;
+    z-index: 80;
+    width: min(304px, calc(100vw - 64px));
+    max-width: 100vw;
+    border-left: 1px solid var(--border);
+    box-shadow: -12px 0 32px color-mix(in srgb, var(--shadow) 64%, transparent);
   }
 
-  #app.reading.agent-collapsed #context-resizer,
   #app.reading.agent-collapsed #agent-pane {
     display: none !important;
   }
@@ -10480,10 +10439,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   #app.reading .reader-translation,
   #app.reading #reader-rewrite-panel {
     padding: 12px 14px 14px;
-  }
-
-  #app.reading.agent-collapsed:not(.reader-immersive) #reader-pane {
-    grid-column: 4 / -1 !important;
   }
 
   #app.reading.agent-collapsed:not(.reader-immersive) .reader,

@@ -23,7 +23,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=bd3de4f44cfe" />
+  <link rel="stylesheet" href="/styles.css?v=d7cd5b568af3" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
   <meta property="og:site_name" content="Namoo Reader" />
@@ -161,33 +161,6 @@
         <p>选择一篇文章开始阅读</p>
       </div>
       <article id="reader" class="reader hidden">
-        <nav id="reader-signal-rail" class="reader-signal-rail" aria-label="文章反馈">
-          <button id="reader-rail-like" class="reader-signal-btn" type="button" title="点赞这篇文章" aria-label="点赞这篇文章">
-            <span class="reader-signal-icon" data-qm-icon="thumbs-up"></span>
-            <span id="reader-rail-like-count" class="reader-signal-count">0</span>
-          </button>
-          <button id="reader-rail-star" class="reader-signal-btn" type="button" title="收藏这篇文章" aria-label="收藏这篇文章">
-            <span class="reader-signal-icon" data-qm-icon="star"></span>
-            <span id="reader-rail-star-count" class="reader-signal-count">0</span>
-          </button>
-          <button id="reader-rail-comment" class="reader-signal-btn" type="button" title="查看点评" aria-label="查看点评">
-            <span class="reader-signal-icon" data-qm-icon="message-square-text"></span>
-            <span id="reader-rail-comment-count" class="reader-signal-count">0</span>
-          </button>
-          <button id="reader-rail-annotation" class="reader-signal-btn" type="button" title="查看划线点评" aria-label="查看划线点评">
-            <span class="reader-signal-icon" data-qm-icon="highlighter"></span>
-            <span id="reader-rail-annotation-count" class="reader-signal-count">0</span>
-          </button>
-          <button id="reader-rail-rewrite" class="reader-signal-btn" type="button" title="创作草稿" aria-label="创作草稿">
-            <span class="reader-signal-icon" data-qm-icon="sparkles"></span>
-          </button>
-          <button id="reader-rail-onepage" class="reader-signal-btn hidden" type="button" title="Onepage" aria-label="Onepage">
-            <span class="reader-signal-icon" data-qm-icon="file-text"></span>
-          </button>
-          <button id="reader-rail-translate" class="reader-signal-btn" type="button" title="中文翻译" aria-label="中文翻译">
-            <span class="reader-signal-icon" data-qm-icon="languages"></span>
-          </button>
-        </nav>
         <header class="reader-head">
           <div class="reader-kicker-row">
             <div class="reader-source" id="reader-source"></div>
@@ -252,15 +225,16 @@
         </header>
         <div id="reader-audio"></div>
         <div class="reader-tabs" role="tablist" aria-label="文章阅读模式">
-          <button class="reader-tab active" type="button" data-tab="original">原文</button>
-          <button class="reader-tab" type="button" data-tab="rewrite">创作草稿</button>
-          <button class="reader-tab hidden" type="button" data-tab="onepage">Onepage</button>
+          <button id="reader-tab-original" class="reader-tab active" type="button" data-tab="original" role="tab" aria-selected="true" aria-controls="reader-original-panel" tabindex="0">原文</button>
+          <button id="reader-tab-rewrite" class="reader-tab" type="button" data-tab="rewrite" role="tab" aria-selected="false" aria-controls="reader-rewrite-panel" tabindex="-1">创作草稿</button>
+          <button id="reader-tab-onepage" class="reader-tab" type="button" data-tab="onepage" role="tab" aria-selected="false" aria-controls="reader-onepage-panel" tabindex="-1">Onepage</button>
+          <button id="reader-tab-translation" class="reader-tab" type="button" data-tab="translation" role="tab" aria-selected="false" aria-controls="reader-translation" tabindex="-1">中文翻译</button>
         </div>
         <details id="reader-toc" class="reader-toc hidden">
           <summary>目录</summary>
           <nav id="reader-toc-list" aria-label="文章目录"></nav>
         </details>
-        <section id="reader-original-panel" class="reader-tab-panel annotation-surface-panel" data-annotation-surface="original">
+        <section id="reader-original-panel" class="reader-tab-panel annotation-surface-panel" data-annotation-surface="original" role="tabpanel" aria-labelledby="reader-tab-original">
           <div id="reader-content" class="reader-content"></div>
           <div id="reader-original-empty" class="reader-original-empty hidden" role="status" aria-live="polite">
             <strong id="reader-original-empty-title">RSS 未提供正文</strong>
@@ -272,7 +246,7 @@
           </div>
           <aside id="annotation-margin-original" class="annotation-margin" aria-label="原文划线讨论"></aside>
         </section>
-        <section id="reader-rewrite-panel" class="reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="rewrite">
+        <section id="reader-rewrite-panel" class="reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="rewrite" role="tabpanel" aria-labelledby="reader-tab-rewrite">
           <div class="reader-section-head">
             <span id="rewrite-section-label">Namoo 创作草稿</span>
             <div class="reader-section-actions">
@@ -289,7 +263,7 @@
           </div>
           <aside id="annotation-margin-rewrite" class="annotation-margin" aria-label="创作草稿划线讨论"></aside>
         </section>
-        <section id="reader-onepage-panel" class="reader-tab-panel onepage-panel hidden">
+        <section id="reader-onepage-panel" class="reader-tab-panel onepage-panel hidden" role="tabpanel" aria-labelledby="reader-tab-onepage">
           <div class="reader-section-head onepage-section-head">
             <div class="onepage-section-title">
               <span>Onepage</span>
@@ -309,7 +283,7 @@
             <p>这篇文章还没有 Onepage。</p>
           </div>
         </section>
-        <section id="reader-translation" class="reader-translation reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="translation">
+        <section id="reader-translation" class="reader-translation reader-tab-panel annotation-surface-panel hidden" data-annotation-surface="translation" role="tabpanel" aria-labelledby="reader-tab-translation">
           <div class="reader-section-head">
             <span>中文翻译</span>
             <div class="reader-section-actions">
@@ -428,8 +402,8 @@
                 <div class="profile-reader-setting">
                   <span class="profile-setting-label">打开文章</span>
                   <div class="profile-reader-tabs" role="radiogroup" aria-label="打开文章默认显示">
-                    <button class="profile-reader-tab active" type="button" role="radio" data-profile-reader-tab="rewrite" aria-checked="true">创作草稿</button>
-                    <button class="profile-reader-tab" type="button" role="radio" data-profile-reader-tab="original" aria-checked="false">原文</button>
+                    <button class="profile-reader-tab active" type="button" role="radio" data-profile-reader-tab="original" aria-checked="true">原文</button>
+                    <button class="profile-reader-tab" type="button" role="radio" data-profile-reader-tab="rewrite" aria-checked="false">创作草稿</button>
                   </div>
                 </div>
                 <div class="profile-links-head">
@@ -861,7 +835,7 @@
     </div>
   </div>
 
-  <div id="confirm-modal" class="confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <dialog id="confirm-modal" class="confirm-modal" aria-labelledby="confirm-title" aria-describedby="confirm-message">
     <div class="confirm-card">
       <div class="confirm-icon" id="confirm-icon"><span data-qm-icon="circle-alert"></span></div>
       <div class="confirm-copy">
@@ -873,12 +847,12 @@
         <button id="confirm-ok" class="ghost-btn primary" type="button">确定</button>
       </div>
     </div>
-  </div>
+  </dialog>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <script src="/purify.min.js"></script>
   <script src="/lucide-icons.js?v=cb5472ff6d82"></script>
-  <script src="/app.js?v=1601d77d3bd3"></script>
+  <script src="/app.js?v=cdcd521d92d2"></script>
 </body>
 </html>
