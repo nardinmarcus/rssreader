@@ -6,8 +6,8 @@
 - [x] Add a regression test that reproduces a one-step optional framework across the repair request.
 - [x] Give the repair request an explicit `2-5 steps or framework=null` recovery rule without weakening validation.
 - [x] Sweep sibling Onepage list constraints and run focused/full verification.
-- [ ] Commit and push the isolated Onepage fix without including unrelated worktree changes.
-- [ ] Back up production state, deploy the exact runtime file, and verify the live service.
+- [x] Commit and push the isolated Onepage fix without including unrelated worktree changes.
+- [x] Back up production state, deploy the exact runtime file, and verify the live service.
 
 ## Verification contract
 
@@ -23,11 +23,15 @@
 - The regression test first returns a one-step framework and only repairs it after the second request contains the explicit fallback rule; it failed with the reported error before the implementation and passes afterward.
 - Sibling sweep: required `keyPoints`, `evidence`, `implications`, and `questions` counts remain aligned between the system prompt and validator; aggregate-length failures retain their existing concrete 900-character repair budget. No second optional list structure exists.
 - Verification passes: Onepage suite 21/21, full suite 347/347, server/library/script/browser JavaScript syntax checks, and `git diff --check`.
-- Scope: no SQLite, raw snapshot, runtime cache, frontend asset, production configuration, deployment, or unrelated worktree file was changed.
+- Implementation scope: no SQLite, raw snapshot, runtime cache, frontend asset, production configuration, or unrelated worktree file was changed. Deployment synchronized only `lib/deepseek.js`; `.env` and the data volume remained unchanged.
 
 ## Production rollout
 
-Pending commit, push, backup, deployment, and live verification.
+- Commit `84ddca3` contains only `lib/deepseek.js`, its generation regression test, and this task record; it is published on `origin/main`.
+- Preserved the previous runtime file, mode-600 `.env`, build configuration, and a 432,594,944-byte consistent SQLite snapshot at `/opt/rssreader-backups/onepage-framework-20260717T033545Z`; the backup database reports `quick_check=ok`, zero foreign-key violations, and 1,347 entries.
+- Retained the previous image as `rssreader-namoo-reader:rollback-onepage-framework-20260717T033545Z`, then deployed image `sha256:0647093a2d291cc8b45d8f1974d6ab9e26503d46c6b23d9d05c487d97f538f74`.
+- Host and container `lib/deepseek.js` both match committed SHA-256 `747e47a44ca52b6335685ce59297b1973d74983982163e12177caa09e5b84de6`; the container is running with zero restarts, internal/public `/` and `/api/me` return 200, live SQLite remains healthy, and recent error lines are zero.
+- A non-persisting real DeepSeek canary returned a valid 169-character Onepage with 3 key points, 2 evidence items, 1 implication, 1 question, and `framework=null`.
 
 ---
 
