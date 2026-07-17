@@ -27,6 +27,7 @@
 - Responsive state: saved panel preferences are distinct from automatic and article-session state. The 1181+, 981-1180, 861-980, and <=860 layouts have explicit ownership; mobile tabs are 44px and the bottom context panel is capped at 38vh.
 - Verification: the full suite passes 367/367, related regressions pass, syntax/diff checks pass, and `npm audit --omit=dev` reports zero vulnerabilities. Isolated browser checks at 1440, 1180, 1024, 900, 860, and 390px show no horizontal overflow; tab keyboard routing, rapid article navigation, dialog focus/Escape, dark mode, reduced motion, and zero console errors were verified.
 - Safety: browser fixtures used `/tmp/rssreader-ui-019f6edb`; repository and production SQLite, raw snapshots, and runtime caches were untouched during implementation. Existing unrelated dirty files remain outside this change set.
+- Publication: `f1dbbd4` was pushed to `origin/main`; production was backed up at `/opt/rssreader-backups/reader-ui-20260717T085421Z`, rebuilt, and force-recreated. Public `/` and `/api/me` return 200, shipped JS/CSS hashes match the commit, SQLite reports `quick_check=ok`, recent logs are clean, and live 1440px/390px browser geometry matches the contract.
 
 ---
 
