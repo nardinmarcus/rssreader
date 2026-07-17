@@ -115,13 +115,21 @@ test('Onepage adapter fails closed when model evidence does not resolve to the d
   }
 });
 
-test('Onepage adapter retries one contract-invalid response before succeeding', async () => {
+test('Onepage adapter repairs an optional framework with fewer than two steps', async () => {
   const originalFetch = global.fetch;
   let calls = 0;
-  global.fetch = async () => {
+  let repairInstruction = '';
+  global.fetch = async (_url, options) => {
     calls += 1;
+    const requestBody = JSON.parse(options.body);
+    if (calls === 2) repairInstruction = requestBody.messages.at(-1).content;
     const responsePayload = payload();
-    if (calls === 1) responsePayload.framework = { title: '无效框架', steps: [] };
+    if (calls === 1 || !/framework=null/.test(repairInstruction)) {
+      responsePayload.framework = {
+        title: '无效框架',
+        steps: [{ label: '单步', text: '只有一个步骤。', segmentIds: ['s_fact_2'] }],
+      };
+    }
     return new Response(JSON.stringify({
       choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(responsePayload) } }],
     }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -134,6 +142,7 @@ test('Onepage adapter retries one contract-invalid response before succeeding', 
     });
     assert.equal(calls, 2);
     assert.deepEqual(result.payload, payload());
+    assert.match(repairInstruction, /framework.*2-5.*framework=null/);
   } finally {
     global.fetch = originalFetch;
   }

@@ -1,3 +1,36 @@
+# Repair invalid optional Onepage frameworks
+
+## Plan
+
+- [x] Trace the generated `framework.steps` value through provider retry and OnepageV1 validation.
+- [x] Add a regression test that reproduces a one-step optional framework across the repair request.
+- [x] Give the repair request an explicit `2-5 steps or framework=null` recovery rule without weakening validation.
+- [x] Sweep sibling Onepage list constraints and run focused/full verification.
+- [ ] Commit and push the isolated Onepage fix without including unrelated worktree changes.
+- [ ] Back up production state, deploy the exact runtime file, and verify the live service.
+
+## Verification contract
+
+1. Reproduction -> verify: an isolated provider returning a one-step framework twice fails with the reported `framework.steps must contain 2-5 items` error.
+2. Repair -> verify: the second provider request explicitly instructs `2-5` steps or `framework=null`, and a compliant retry succeeds.
+3. Contract -> verify: `lib/onepage-contract.js` continues rejecting one-step frameworks; no model content is silently fabricated or accepted.
+4. Scope -> verify: SQLite and runtime caches are untouched, and unrelated worktree changes remain unchanged.
+
+## Review
+
+- Root cause: article-dependent model output sometimes represented a single idea as a one-step `framework`; the validator correctly rejected it, while the only repair request repeated the generic structure instead of telling the model to remove the optional framework.
+- The repair request now says that `framework` must contain 2-5 complete steps or be `null`. The OnepageV1 validator remains unchanged and still rejects one-step frameworks.
+- The regression test first returns a one-step framework and only repairs it after the second request contains the explicit fallback rule; it failed with the reported error before the implementation and passes afterward.
+- Sibling sweep: required `keyPoints`, `evidence`, `implications`, and `questions` counts remain aligned between the system prompt and validator; aggregate-length failures retain their existing concrete 900-character repair budget. No second optional list structure exists.
+- Verification passes: Onepage suite 21/21, full suite 347/347, server/library/script/browser JavaScript syntax checks, and `git diff --check`.
+- Scope: no SQLite, raw snapshot, runtime cache, frontend asset, production configuration, deployment, or unrelated worktree file was changed.
+
+## Production rollout
+
+Pending commit, push, backup, deployment, and live verification.
+
+---
+
 # Reduce initial page latency and refresh-time stalls
 
 ## Plan
