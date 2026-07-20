@@ -31,6 +31,31 @@
 
 ---
 
+# Date-less feed mixed-list ordering
+
+## Plan
+
+- [x] Add a focused regression at the `fetcher.getEntries()` seam using an isolated SQLite data directory.
+- [x] Preserve upstream publication semantics while exposing first-ingestion time on entry projections.
+- [x] Apply the same effective ordering rule before the SQLite limit and in the service-level sort.
+- [x] Prove repeat upserts retain first-ingestion time and dated entries keep publication ordering.
+- [x] Run focused tests, syntax checks, the full suite, and `git diff --check`.
+- [x] Review the committed diff against project standards and this behavior contract, then keep unrelated worktree changes out of the commit.
+
+## Verification contract
+
+1. Missing publication date -> verify: a newly ingested date-less entry can appear ahead of an older dated entry in the mixed list while `publishedTs` remains `0`.
+2. Stable ingestion identity -> verify: re-upserting the same entry does not change its `createdAt` or make it newly ordered again.
+3. Dated-source compatibility -> verify: entries with real upstream dates remain ordered by `publishedTs`.
+4. Scope safety -> verify: only the ordering implementation, its regression test, and this task ledger enter the commit.
+
+## Review
+
+- Focused ordering/API regressions pass 34/34; the full suite passes 370/370.
+- Server, library, script, browser, and regression-test syntax checks pass; `git diff --check` and the changed-file whitespace check are clean; `npm audit --omit=dev` reports zero vulnerabilities.
+- Standards review: 0 findings; no documented-rule violations or baseline code smells.
+- Spec review: 0 findings; no missing requirements, incorrect behavior, or scope creep.
+
 # Extract the public Namoo Reader design system
 
 ## Plan
