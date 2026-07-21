@@ -12,11 +12,26 @@ Namoo Reader 是大月 Namoo 的个人 RSS 阅读与创作工作台。它把 AI 
 - 按文章、资讯、播客浏览，支持最新、热门、未读、收藏、历史和搜索。
 - 阅读原文，生成中文翻译，在文章上下文里和 AI 对话。
 - 生成 Namoo 创作草稿，保留事实和原始链接，并标出需要本人补充的体验、判断和情绪。
+- 在 rollout 开关允许时生成可追溯的 Onepage；版本默认私有，只有显式发布后才进入公开资产目录。
 - 给信息源设置标签、编辑优先级、启用状态和侧边栏顺序。
-- 登录用户可以提交文章链接；链接先进入隔离审核队列，管理员批准后才会联网抓取并公开。
-- 把翻译、创作草稿、点评、划线和文章对话沉淀为可分享的公开资产。
+- 登录用户可以提交文章链接；链接先进入隔离审核队列，管理员批准后才会联网抓取并公开。普通网页收录为文章，RSS/Atom 地址会创建、复用或恢复为持续刷新的自定义信息源。
+- 管理员可以在独立工作台搜索、筛选和审计用户，并安全执行停用、恢复和投稿下线。
+- 把翻译、创作草稿、Onepage、点评、划线和文章对话沉淀为可分享的公开资产。
+- 支持安装为 PWA：可加到主屏幕并以独立窗口打开；离线时仅保留阅读壳，订阅内容仍需网络。
 
 ![信息源与文章列表](docs/assets/namoo-reader-article-list.png)
+
+## PWA（可安装壳）
+
+Namoo Reader 提供 **Installable Shell / Offline Shell**（见 `docs/adr/0001-pwa-installable-offline-shell.md`）：
+
+- **可安装**：HTTPS 部署后，Chromium 等浏览器在满足条件时会出现「安装 App」入口（侧栏下载按钮仅在 `beforeinstallprompt` 可用时显示）。`display` 为 `standalone`。
+- **离线壳**：Service Worker 只预缓存最小阅读壳（`index.html` 对应文档、带版本号的 CSS/JS、图标与 manifest）。断网时可打开壳，列表/正文/登录/API 会明确提示需要网络，**不会**缓存文章或 `/api/*`。
+- **壳更新**：发现新版本 Service Worker 后弹出确认条，用户点「更新」后才切换并刷新，避免静默打断阅读。
+- **开发环境**：`localhost` / `127.0.0.1` / `*.local` 默认不注册 Service Worker，避免本地调试被旧壳卡住。
+- **自托管**：任意非本地 secure context（HTTPS）都会注册；生产请保证反向代理对 `/sw.js` 与 `/manifest.webmanifest` 可达，且不要被长期缓存覆盖应用返回的 `Cache-Control: no-cache`。
+
+相关静态文件：`public/manifest.webmanifest`、`public/sw.js`、`public/icon-192.png`、`public/icon-512.png`。
 
 ## 从阅读到创作草稿
 
@@ -35,7 +50,7 @@ Namoo Reader 是大月 Namoo 的个人 RSS 阅读与创作工作台。它把 AI 
 
 ## 信息源管理
 
-仓库保留上游的 61 个信息源，并加入 OpenAI、Anthropic、Google DeepMind、Google AI、Hugging Face Blog、The Batch 和 Meta AI Blog 等 Namoo 核心候选源。
+当前目录包含 75 个信息源，其中 52 个默认启用；它保留上游来源，并加入 OpenAI、Anthropic、Google DeepMind、Google AI、Hugging Face Blog、The Batch 和 Meta AI Blog 等 Namoo 核心候选源。
 
 每个信息源有四组互不混用的状态：
 
@@ -57,7 +72,7 @@ git clone https://github.com/nardinmarcus/rssreader.git
 cd rssreader
 npm ci
 cp .env.example .env
-npm start
+node --env-file=.env server.js
 ```
 
 默认访问地址是 `http://localhost:8080`。如果需要管理员账号，在 `.env` 里填写：
@@ -72,7 +87,7 @@ ADMIN_NAME=大月 Namoo
 
 ## AI 配置
 
-服务端支持 DeepSeek 和兼容 OpenAI 接口的供应商：
+服务端支持 DeepSeek，以及兼容 OpenAI 或 Anthropic 协议的供应商：
 
 ```dotenv
 DEEPSEEK_API_KEY=
@@ -80,9 +95,9 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 ```
 
-`DEEPSEEK_*`（或 `AI_*`）是站点默认 AI：手动翻译、创作草稿、文章对话和后台自动草稿会共用它。登录用户也可以在个人后台保存自己的 AI profile 作为覆盖；用户提供的 key 保存在浏览器 localStorage，请只在可信设备上使用。
+`DEEPSEEK_*`（或 `AI_*`）是站点默认 AI：手动翻译、创作草稿、Onepage、文章对话和后台自动草稿会共用它。登录用户也可以在个人后台保存自己的 AI profile 作为覆盖；用户提供的 key 保存在浏览器 localStorage，请只在可信设备上使用。
 
-没有可用 AI key 时，RSS 抓取和原文阅读仍然工作，翻译、创作草稿和文章对话会提示先配置模型。
+没有可用 AI key 时，RSS 抓取和原文阅读仍然工作，翻译、创作草稿、Onepage 和文章对话会提示先配置模型。
 
 ## 环境变量
 
@@ -94,22 +109,33 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 | `ADMIN_EMAIL` | 空 | 管理员邮箱 |
 | `ADMIN_PASSWORD` | 空 | 首次创建管理员时使用的引导密码 |
 | `ADMIN_NAME` | `大月 Namoo` | 管理员公开名称 |
-| `COOKIE_SECURE` | 空 | 设置为 `1` 时只通过 HTTPS 发送 session cookie |
+| `COOKIE_SECURE` | 代码默认空；示例为 `1` | 设置为 `1` 时只通过 HTTPS 发送 session cookie |
+| `AI_PROVIDER` / `AI_PROVIDER_TYPE` | `deepseek` / `openai_compatible` | 站点 AI 供应商及兼容协议 |
+| `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` | 空 | 非 DeepSeek 兼容供应商的站点级配置 |
+| `AI_TEMPERATURE` / `AI_MAX_TOKENS` | `0.7` / `2000` | 默认 AI 采样温度和输出预算；特定流水线可使用更严格的内部预算 |
 | `RSSHUB_INSTANCES` | 三个公共实例 | 逗号分隔的 RSSHub 地址，按顺序回退 |
 | `STARTUP_REFRESH_DELAY_MS` | `30000` | 启动后首次全量刷新延迟，`-1` 表示关闭 |
 | `FRESHNESS_SWEEP_INTERVAL_MS` | `300000` | 增量新鲜度扫描间隔，`-1` 表示关闭 |
+| `FRESHNESS_STARTUP_DELAY_MS` | `120000` | 启动后首次增量新鲜度扫描延迟 |
+| `FRESHNESS_SWEEP_BATCH_SIZE` | `3` | 单次新鲜度扫描选取的来源数 |
+| `FRESHNESS_SWEEP_MAX_COST` | `6` | 单次新鲜度扫描允许的总刷新成本 |
 | `NEWS_REFRESH_INTERVAL_MS` | `1800000` | 资讯默认刷新间隔 |
 | `ARTICLE_REFRESH_INTERVAL_MS` | `7200000` | 文章默认刷新间隔 |
 | `PODCAST_REFRESH_INTERVAL_MS` | `21600000` | 播客默认刷新间隔 |
+| `SOURCE_INTERACTION_REFRESH_COOLDOWN_MS` | `300000` | 用户触发来源刷新提示的冷却时间 |
 | `FETCH_SOURCE_CONCURRENCY` | `6` | 后台批量抓取并发数，范围为 1–8 |
+| `TITLE_TRANSLATION_LIMIT` | `80` | 单轮标题翻译数量上限 |
 | `AUTO_REWRITE_SOURCE_IDS` | 空 | 限定自动生成草稿的信息源 |
+| `AUTO_REWRITE_LIMIT_PER_SOURCE` | `3` | 每个来源单轮自动草稿上限 |
+| `AUTO_REWRITE_LIMIT_HACKERNEWS` | `10` | Hacker News 单轮自动草稿上限 |
 | `VERSIONED_TRANSLATION_MODE` | `off` | 版本化文档与翻译的发布阶段：`off`、`shadow`、`canary` 或 `all` |
 | `VERSIONED_TRANSLATION_CANARY_ENTRY_IDS` | 空 | `canary` 模式下额外启用 V2 翻译的文章 ID，逗号分隔 |
+| `ONEPAGE_MODE` | `off` | Onepage 开放范围：`off`、仅管理员 `admin` 或全部登录用户 `all` |
 | `UMAMI_SRC` | 空 | 可选 Umami 脚本地址 |
 | `UMAMI_WEBSITE_ID` | 空 | 可选 Umami 站点 ID |
 | `NAMOO_READER_DATA_DIR` | `./data` | 测试或自定义运行数据目录 |
 
-只有 `UMAMI_SRC` 和 `UMAMI_WEBSITE_ID` 同时有效时，页面才会加载 Umami。默认配置不会向任何统计服务发送请求。
+只有 `UMAMI_SRC` 是合法 HTTPS 地址且 `UMAMI_WEBSITE_ID` 是 36 字符 UUID 时，页面才会加载 Umami，并用 `SITE_URL` 的 hostname 限定统计域名。无效或缺失的配置不会注入脚本；默认配置不会向任何统计服务发送请求。
 
 ## Docker Compose 部署
 
@@ -128,7 +154,7 @@ Compose 只运行一个 `namoo-reader` 容器：
 
 当前数据库文件仍叫 `data/qmreader.sqlite`，这是为了让现有部署原地升级并保留回滚能力。它只是兼容文件名，不代表产品品牌。
 
-生产站点建议由 Caddy、Nginx 或 OpenResty 负责 HTTPS，再反向代理到 `127.0.0.1:3088`。
+生产站点建议由 Caddy、Nginx 或 OpenResty 负责 HTTPS，再反向代理到 `127.0.0.1:3088`。PWA 安装与 Service Worker 需要对外 HTTPS（或等效 secure context）；部署后可用浏览器 Application 面板确认 `/manifest.webmanifest` 与 `/sw.js`。
 
 ## 数据迁移
 
@@ -184,7 +210,11 @@ node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
 
 应用行为需要回滚时，把 `VERSIONED_TRANSLATION_MODE=off` 后重新创建容器；版本化表是增量数据，不必删除。只有验证报告数据库或 raw evidence 损坏时，才应停容器并从上述一致性备份恢复整个 `data/` 和对应 `.env`，随后再次运行只读验证。
 
-## API
+## Onepage 发布边界
+
+`ONEPAGE_MODE` 只控制谁可以生成和发布 Onepage。每位用户最多生成 20 次/24 小时；生成结果绑定当前 SQLite `article_documents` 版本，默认保持私有。用户显式发布后，它才会进入公开资产、贡献者页面、RSS、sitemap 和稳定公开 URL。原文文档变化时旧版本会标记为 stale，但不会被静默覆盖。
+
+## 常用 API（非完整）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -193,14 +223,27 @@ node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
 | `POST` | `/api/sources/:id/move` | 管理员在同一分类内上移或下移 |
 | `POST` | `/api/refresh` | 登录用户刷新当前源，管理员刷新全部源 |
 | `POST` | `/api/submit-link` | 登录用户提交文章链接，进入隔离审核队列 |
+| `GET` | `/api/me` | 获取当前用户、站点 AI 和 rollout 能力摘要 |
+| `POST` | `/api/auth/register` | 注册账号并建立会话 |
+| `POST` | `/api/auth/login` | 登录并建立会话 |
+| `POST` | `/api/auth/logout` | 退出并撤销当前会话 |
 | `GET` | `/api/admin/submission-requests` | 管理员查看待审核投稿 |
 | `POST` | `/api/admin/submission-requests/:id/approve` | 管理员批准投稿并开始抓取 |
 | `POST` | `/api/admin/submission-requests/:id/reject` | 管理员拒绝投稿，不访问目标地址 |
-| `GET` | `/api/entries?source=&category=&q=&limit=` | 获取文章列表 |
+| `GET` | `/api/admin/users` | 管理员分页搜索、筛选和排序全部注册用户 |
+| `GET` | `/api/admin/users/:id` | 管理员读取用户详情、影响计数和操作记录 |
+| `POST` | `/api/admin/users/:id/disable` | 管理员按确认影响原子停用普通用户 |
+| `POST` | `/api/admin/users/:id/restore` | 管理员恢复登录资格，不恢复旧会话或已下线内容 |
+| `GET` | `/api/entries?source=&category=&q=&limit=` | 获取不含正文的文章列表；前端从 100 篇起按 100 递增重取，最多 400 篇 |
 | `GET` | `/api/entry/:id` | 获取单篇文章 |
 | `GET` | `/api/entry/:id/translation` | 获取中文翻译 |
+| `POST` | `/api/entry/:id/translation` | 生成翻译；V2 站点 AI 返回持久化任务 |
+| `GET` | `/api/translation-jobs/:jobId` | 查询有权查看的翻译任务安全进度 |
 | `GET` | `/api/entry/:id/rewrite` | 获取 Namoo 创作草稿，保留旧路径兼容 |
 | `POST` | `/api/entry/:id/rewrite` | 生成或更新 Namoo 创作草稿 |
+| `GET` | `/api/entry/:id/onepage` | 获取当前用户可见的 Onepage 版本 |
+| `POST` | `/api/entry/:id/onepage` | 按 rollout 权限生成私有 Onepage |
+| `POST` | `/api/onepages/:onepageId/publish` | 显式发布本人 Onepage |
 | `GET` | `/assets` | 浏览公开资产 |
 | `GET` | `/assets.xml` | 订阅公开资产 RSS |
 
@@ -208,7 +251,9 @@ node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
 
 ```bash
 npm test
-node --check server.js lib/*.js scripts/*.js public/app.js
+node --check server.js
+find lib scripts -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+node --check public/app.js
 npm audit --omit=dev
 docker compose config
 docker build -t namoo-reader:test .
@@ -230,7 +275,7 @@ NAMOO_READER_DATA_DIR="$(mktemp -d)" \
 - 用户 AI key 从浏览器发送到 Namoo Reader 后端，再由后端请求供应商。
 - 站点默认 AI 只使用服务端配置，忽略浏览器伪造的供应商、模型、密钥和 base URL；只有显式的用户自带密钥请求会采用浏览器配置。
 - 投稿链接在管理员批准前不会发起 DNS、HTTP 或 AI 请求；批准后的抓取仍会拒绝 localhost、私有网段、危险重定向和超限响应体。
-- 公开翻译、创作草稿、点评、划线和文章对话可能进入公开资产页，不要写入私密内容。
+- 公开翻译、创作草稿、Onepage、点评、划线和文章对话可能进入公开资产页，不要写入私密内容。
 - AI base URL 必须使用 HTTPS，并且不能指向 localhost 或私有网段。
 
 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
@@ -245,4 +290,4 @@ MIT，详见 [LICENSE](LICENSE)。
 
 ## English
 
-Namoo Reader is a self-hosted RSS reading and creation workspace for AI-focused research and writing. It keeps source management, reading, translation, article chat, and a human-in-the-loop creation draft in one container. The draft preserves facts and links, while explicitly marking first-hand experience and personal judgment that only the author can provide.
+Namoo Reader is a self-hosted RSS reading and creation workspace for AI-focused research and writing. It keeps source management, reading, translation, Onepage publishing, article chat, and a human-in-the-loop creation draft in one container, with SQLite-backed moderation and user governance. It also ships an installable offline shell (PWA): the chrome can open offline, while feed content stays online-only.
