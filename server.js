@@ -2026,7 +2026,8 @@ app.get(['/me', '/dashboard', '/admin'], (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders(res, file) {
-    if (file.endsWith('.html')) {
+    const base = path.basename(file);
+    if (file.endsWith('.html') || base === 'sw.js' || base === 'manifest.webmanifest') {
       res.setHeader('Cache-Control', 'no-cache');
     } else if (res.req && res.req.query && res.req.query.v) {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');

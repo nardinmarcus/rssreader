@@ -104,7 +104,7 @@ test('brand icons contain the expected formats and dimensions', () => {
   const svg = fs.readFileSync(path.join(projectDir, 'public', 'favicon.svg'), 'utf8');
   assert.match(svg, /<mask[^>]+maskUnits="userSpaceOnUse"[^>]+maskContentUnits="userSpaceOnUse"/);
 
-  for (const [filename, expectedSize] of [['apple-touch-icon.png', 180], ['icon-512.png', 512]]) {
+  for (const [filename, expectedSize] of [['apple-touch-icon.png', 180], ['icon-192.png', 192], ['icon-512.png', 512]]) {
     const png = fs.readFileSync(path.join(projectDir, 'public', filename));
     assert.equal(png.subarray(1, 4).toString('ascii'), 'PNG');
     assert.equal(png.readUInt32BE(16), expectedSize);

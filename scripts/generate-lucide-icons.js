@@ -22,6 +22,7 @@ const ICONS = [
   ['circle-help', 'CircleHelp'],
   ['copy', 'Copy'],
   ['corner-down-left', 'CornerDownLeft'],
+  ['download', 'Download'],
   ['ellipsis', 'Ellipsis'],
   ['ellipsis-vertical', 'EllipsisVertical'],
   ['external-link', 'ExternalLink'],

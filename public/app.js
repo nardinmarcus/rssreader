@@ -436,6 +436,16 @@ function updateThemeControl() {
   });
 }
 
+function themeColorForTheme(theme) {
+  return theme === 'dark' ? '#0a0a0a' : '#f7f7f6';
+}
+
+function syncThemeColor(theme = document.documentElement.dataset.theme) {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  meta.content = themeColorForTheme(theme === 'dark' ? 'dark' : 'light');
+}
+
 function applyThemeMode(mode, { persist = true } = {}) {
   themeMode = normalizeThemeMode(mode);
   const theme = resolvedTheme(themeMode);
@@ -443,6 +453,7 @@ function applyThemeMode(mode, { persist = true } = {}) {
   document.documentElement.dataset.theme = theme;
   document.body.dataset.themeMode = themeMode;
   document.body.dataset.theme = theme;
+  syncThemeColor(theme);
   if (persist) {
     storage.setItem(THEME_STORAGE_KEY, themeMode);
     storage.removeItem('fr_theme');
@@ -450,6 +461,137 @@ function applyThemeMode(mode, { persist = true } = {}) {
   updateThemeControl();
   if (state.personaAgentController?.update) {
     state.personaAgentController.update(buildPersonaAgentConfig());
+  }
+}
+
+/* ---------- PWA shell (ADR-0001) ---------- */
+let deferredInstallPrompt = null;
+let shellUpdateRegistration = null;
+
+function shouldRegisterServiceWorker() {
+  if (!('serviceWorker' in navigator)) return false;
+  if (!window.isSecureContext) return false;
+  const host = String(location.hostname || '').toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return false;
+  if (host.endsWith('.local')) return false;
+  return true;
+}
+
+function offlineListEmptyHtml() {
+  return '<div class="list-empty" role="status">当前离线，需要网络才能加载订阅内容<br/><button class="ghost-btn" type="button" onclick="location.reload()" style="margin-top:10px">重试</button></div>';
+}
+
+function setNetworkBannerVisible(offline) {
+  const banner = $('#network-banner');
+  if (!banner) return;
+  banner.classList.toggle('hidden', !offline);
+}
+
+function setInstallButtonVisible(visible) {
+  const btn = $('#pwa-install-btn');
+  if (!btn) return;
+  btn.classList.toggle('hidden', !visible);
+  if (visible) hydrateLucideIcons(btn.parentElement || btn);
+}
+
+function setShellUpdateBannerVisible(visible) {
+  const banner = $('#shell-update-banner');
+  if (!banner) return;
+  banner.classList.toggle('hidden', !visible);
+}
+
+function showShellUpdatePrompt(registration) {
+  shellUpdateRegistration = registration || shellUpdateRegistration;
+  if (!shellUpdateRegistration?.waiting) return;
+  setShellUpdateBannerVisible(true);
+}
+
+async function applyShellUpdate() {
+  const waiting = shellUpdateRegistration?.waiting;
+  if (!waiting) {
+    setShellUpdateBannerVisible(false);
+    return;
+  }
+  const reloadOnce = () => {
+    window.location.reload();
+  };
+  navigator.serviceWorker.addEventListener('controllerchange', reloadOnce, { once: true });
+  waiting.postMessage('SKIP_WAITING');
+}
+
+async function promptPwaInstall() {
+  if (!deferredInstallPrompt) {
+    setInstallButtonVisible(false);
+    return;
+  }
+  const promptEvent = deferredInstallPrompt;
+  deferredInstallPrompt = null;
+  setInstallButtonVisible(false);
+  try {
+    await promptEvent.prompt();
+    await promptEvent.userChoice;
+  } catch {
+    // Browser may reject if prompt is no longer valid.
+  }
+}
+
+function setupPwaInstallAffordance() {
+  const btn = $('#pwa-install-btn');
+  if (btn) btn.addEventListener('click', () => { promptPwaInstall(); });
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    setInstallButtonVisible(true);
+  });
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    setInstallButtonVisible(false);
+  });
+}
+
+function setupShellUpdatePrompt() {
+  $('#shell-update-action')?.addEventListener('click', () => { applyShellUpdate(); });
+  $('#shell-update-dismiss')?.addEventListener('click', () => {
+    setShellUpdateBannerVisible(false);
+  });
+}
+
+function setupNetworkStatus() {
+  const sync = () => {
+    const offline = typeof navigator.onLine === 'boolean' ? !navigator.onLine : false;
+    setNetworkBannerVisible(offline);
+  };
+  window.addEventListener('online', () => {
+    setNetworkBannerVisible(false);
+    toast('网络已恢复');
+  });
+  window.addEventListener('offline', () => {
+    setNetworkBannerVisible(true);
+    toast('当前离线，内容需要网络', 4000);
+  });
+  sync();
+}
+
+async function registerServiceWorker() {
+  if (!shouldRegisterServiceWorker()) return null;
+  try {
+    const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      showShellUpdatePrompt(registration);
+    }
+    registration.addEventListener('updatefound', () => {
+      const installing = registration.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', () => {
+        if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+          showShellUpdatePrompt(registration);
+        }
+      });
+    });
+    return registration;
+  } catch (error) {
+    console.warn('Service worker registration failed:', error);
+    return null;
   }
 }
 
@@ -11860,6 +12002,10 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
 (async function init() {
   applyThemeMode(storedThemeMode(), { persist: false });
   hydrateLucideIcons();
+  setupPwaInstallAffordance();
+  setupShellUpdatePrompt();
+  setupNetworkStatus();
+  registerServiceWorker();
   loadAiProfilesForScope();
   renderAgentPrompts();
   applyReaderPrefs();
@@ -11873,8 +12019,15 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
   setupContextResizer();
   normalizeReaderWorkbenchLayout({ force: true });
   setContextPanel(state.contextPanel, { persist: false, expand: false });
-  $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
+  if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
+    $('#entry-list').innerHTML = offlineListEmptyHtml();
+  } else {
+    $('#entry-list').innerHTML = '<div class="list-empty">正在加载订阅内容…</div>';
+  }
   try {
+    if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
+      throw new Error('当前离线，需要网络');
+    }
     const [, data] = await Promise.all([
       loadMe(),
       loadSources(),
@@ -11895,7 +12048,10 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
       }
     }
   } catch (e) {
-    toast('加载失败: ' + e.message, 5000);
-    $('#entry-list').innerHTML = `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;
+    const offline = typeof navigator.onLine === 'boolean' && !navigator.onLine;
+    toast(offline ? '当前离线，内容需要网络' : ('加载失败: ' + e.message), 5000);
+    $('#entry-list').innerHTML = offline
+      ? offlineListEmptyHtml()
+      : `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;
   }
 })();
