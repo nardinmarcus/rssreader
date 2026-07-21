@@ -73,7 +73,7 @@ docker compose logs -f namoo-reader
 
 ## 功能
 
-- **多源抓取**: 直连 RSS/Atom、RSSHub、sitemap 与内置适配器。目录：`lib/sources.js` 中 **76** 个源，默认启用 **53** 个。启用状态、编辑优先级、侧栏顺序保存在 SQLite。
+- **多源抓取**: 直连 RSS/Atom、RSSHub、sitemap 与内置适配器。目录：`lib/sources.js` 中 **77** 个源，默认启用 **54** 个。启用状态、编辑优先级、侧栏顺序保存在 SQLite。
 - **阅读视图**: 文章 / 资讯 / 播客；最新、热门、未读、收藏、历史、搜索。
 - **可选 AI**: 中文翻译、文章对话、Namoo 创作草稿、Onepage（受功能开关控制）。
 - **创作草稿约定**: 固定六段；模型不得编造第一人称体验、调查过程或个人判断。缺材料时写 `[需要 Namoo 补充：…]`。

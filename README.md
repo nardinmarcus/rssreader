@@ -73,7 +73,7 @@ RSS and original reading work without AI keys. Translation, drafts, Onepage, and
 
 ## Features
 
-- **Multi-source ingestion**: direct RSS/Atom, RSSHub routes, sitemap, and built-in adapters. Catalog: **76** sources in `lib/sources.js`, **53** enabled by default. Per-source enablement, editorial priority, and sidebar order live in SQLite.
+- **Multi-source ingestion**: direct RSS/Atom, RSSHub routes, sitemap, and built-in adapters. Catalog: **77** sources in `lib/sources.js`, **54** enabled by default. Per-source enablement, editorial priority, and sidebar order live in SQLite.
 - **Reading modes**: articles, news, podcasts; latest, popular, unread, starred, history, search.
 - **AI assist (optional)**: Chinese translation, article chat, Namoo creation draft, Onepage (feature-flagged).
 - **Creation draft contract**: six fixed sections; the model must not invent first-person experience, research process, or judgment. Missing material becomes `[需要 Namoo 补充：…]`.

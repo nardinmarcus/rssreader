@@ -557,8 +557,8 @@ test('README documents rollout, BYOK, backup, backfill, verification, and rollba
     assert.match(readme, new RegExp(`\\b${mode}\\b`));
   }
   assert.match(readme, /BYOK[^\n]*(同步|synchronous)/i);
-  assert.match(readme, /备份/);
-  assert.match(readme, /回滚/);
+  assert.match(readme, /backup/i);
+  assert.match(readme, /rollback/i);
   assert.match(readme, /backfill-article-documents\.js/);
   assert.match(readme, /backfill-translation-versions\.js/);
   assert.match(readme, /verify-versioned-pipeline\.js/);
