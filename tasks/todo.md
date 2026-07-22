@@ -55,7 +55,16 @@
 - Production preflight resolved the public Cloudflare addresses and parsed the current 1,027,832-byte feed in 289 ms: 20 items, 20 unique GUIDs, 20 valid dates, and 20 substantial `content:encoded` bodies.
 - Verification passes: focused source catalog tests 6/6, full suite 380/380, all server/library/script/browser JavaScript syntax checks, and `git diff --check`.
 - The first concurrent full-suite run had one unrelated translation-worker timing failure; that file passed 2/2 alone and the unchanged full command then passed 380/380. Dependency audit reports two pre-existing low-severity findings in `body-parser` and `dompurify`; no unrelated dependency upgrade was made.
-- Repository and production SQLite, raw snapshots, caches, frontend assets, and production configuration were not changed. Existing unrelated worktree edits remain untouched.
+- During implementation verification, repository and production SQLite, raw snapshots, caches, frontend assets, and production configuration remained untouched. Existing unrelated worktree edits remained outside the implementation commit.
+
+## Deployment
+
+- Published runtime commit `ebb5614` to `origin/main`; local, tracking, and remote branch SHAs matched before deployment.
+- Created `/opt/rssreader-backups/bytebytego-20260722T162611Z` with mode `700`, configuration/runtime files, a mode-`600` SQLite `VACUUM INTO` snapshot, and the previous image tagged as `rssreader-namoo-reader:rollback-bytebytego-20260722T162611Z`. The backup reports `quick_check=ok`, zero foreign-key violations, and 1,893 entries.
+- Deployed host and container `lib/sources.js` SHA-256 `6271fa6d1651b36a9e0d01f62f846e1adf7aa09a9d38f503558a30e97bc179fc` in image `sha256:e42a1df264c66082183c9afc63becbd161f3d96b33a9ab1ed2bef2293becd6a5`.
+- Triggered a single-source refresh through the live server. SQLite now holds 20 ByteByteGo entries with 20 unique IDs, 20 valid publication dates, substantial bodies, and both enrollment posts preserved; the public entries API returns all 20.
+- Production reports source status `ok`, `quick_check=ok`, zero foreign-key violations, zero container restarts, zero recent error lines, and HTTP 200 for internal/public `/` and `/api/me`.
+- The versioned catalog places ByteByteGo after The Batch. The live workspace continues honoring its existing SQLite display preferences, so the current rendered predecessor may differ without changing the catalog default.
 
 # Date-less feed mixed-list ordering
 
