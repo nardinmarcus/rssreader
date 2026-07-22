@@ -61,6 +61,23 @@ test('the six approved high-signal sources use official endpoints and no XiaoHu 
   assert.equal(SOURCES.some(source => /xiaohu/i.test(`${source.id} ${source.name} ${source.siteUrl}`)), false);
 });
 
+test('ByteByteGo uses the official feed with the agreed built-in defaults', () => {
+  const sourceIndex = SOURCES.findIndex(source => source.id === 'bytebytego');
+  const source = SOURCES[sourceIndex];
+
+  assert.ok(source, 'missing bytebytego');
+  assert.equal(source.name, 'ByteByteGo');
+  assert.equal(source.category, 'article');
+  assert.equal(source.siteUrl, 'https://blog.bytebytego.com');
+  assert.deepEqual(source.feeds, ['https://blog.bytebytego.com/feed']);
+  assert.equal(source.enabled, true);
+  assert.equal(source.limit, 20);
+  assert.deepEqual(source.labels, ['产业']);
+  assert.equal(source.editorialPriority, 'normal');
+  assert.equal(SOURCES[sourceIndex - 1].id, 'the-batch');
+  assert.equal(Object.hasOwn(source, 'refreshIntervalMs'), false);
+});
+
 test('Zhang Xiaojun Podcast uses the official YouTube channel feed', () => {
   const source = SOURCES.find(item => item.id === 'xiaojunpodcast');
 

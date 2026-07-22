@@ -2,6 +2,16 @@
 
 Namoo Reader is a personal RSS reading and creation workspace. This file is the project glossary: shared names for product concepts, not implementation notes.
 
+## Information Sources
+
+**Built-in Source**:
+A publication deliberately curated as part of Namoo Reader's shared source catalog, with a stable identity across deployments. An administrator may still enable or disable it for the current workspace.
+_Avoid_: bundled feed, default subscription, hard-coded source
+
+**Custom Source**:
+A publication subscribed by an administrator for the current workspace without making it part of Namoo Reader's shared curation.
+_Avoid_: built-in source, temporary feed
+
 ## Progressive Web App
 
 **Installable Shell**:

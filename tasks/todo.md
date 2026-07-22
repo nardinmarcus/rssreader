@@ -31,6 +31,32 @@
 
 ---
 
+# Add ByteByteGo as a built-in source
+
+## Plan
+
+- [x] Add the agreed ByteByteGo catalog entry after The Batch.
+- [x] Preserve the standard RSS ingestion path with no source-specific filtering or refresh override.
+- [x] Add focused regressions for endpoint, enablement, limit, label, priority, and initial order.
+- [x] Run focused/full tests, syntax checks, and `git diff --check`.
+
+## Verification contract
+
+1. Catalog identity -> verify: stable ID `bytebytego` uses the official site and direct `/feed` endpoint without RSSHub.
+2. Product defaults -> verify: the source is an enabled `article` source with `limit: 20`, label `产业`, and `normal` editorial priority.
+3. Scheduling and content -> verify: no source-specific refresh policy or item filter is introduced, so the shared two-hour article cadence and original feed content remain in force.
+4. Ordering -> verify: ByteByteGo appears immediately after The Batch without replacing persisted administrator preferences.
+5. Safety -> verify: tests use no repository or production runtime data, frontend assets remain unchanged, and unrelated dirty files are preserved.
+
+## Review
+
+- Added `bytebytego` immediately after The Batch with the official direct feed, enabled article defaults, `limit: 20`, the `产业` label, and derived `normal` editorial priority. No RSSHub candidate, item filter, or refresh override was added.
+- Added the Built-in Source and Custom Source terms to the project glossary without recording an ADR; the source classification and editorial defaults remain easy to reverse through the existing catalog and administrator preferences.
+- Production preflight resolved the public Cloudflare addresses and parsed the current 1,027,832-byte feed in 289 ms: 20 items, 20 unique GUIDs, 20 valid dates, and 20 substantial `content:encoded` bodies.
+- Verification passes: focused source catalog tests 6/6, full suite 380/380, all server/library/script/browser JavaScript syntax checks, and `git diff --check`.
+- The first concurrent full-suite run had one unrelated translation-worker timing failure; that file passed 2/2 alone and the unchanged full command then passed 380/380. Dependency audit reports two pre-existing low-severity findings in `body-parser` and `dompurify`; no unrelated dependency upgrade was made.
+- Repository and production SQLite, raw snapshots, caches, frontend assets, and production configuration were not changed. Existing unrelated worktree edits remain untouched.
+
 # Date-less feed mixed-list ordering
 
 ## Plan
