@@ -10495,6 +10495,15 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     max-width: min(86ch, 100%);
   }
 
+  /* The Annotation Margin Rail never renders when the agent panel is
+     collapsed (see the display:none guard above), so center the capped
+     content column inside the widened reader instead of leaving it
+     left-aligned with dead space on the right. */
+  #app.reading.agent-collapsed:not(.reader-immersive)
+    .annotation-surface-panel > :is(.reader-content, .rewrite-content, .translation-list, .reader-original-empty) {
+    margin-inline: auto;
+  }
+
   #app.reading.agent-collapsed:not(.reader-immersive) #reader[data-reader-language="cjk"] .reader-content,
   #app.reading.agent-collapsed:not(.reader-immersive) #reader[data-reader-language="cjk"] .rewrite-content,
   #app.reading.agent-collapsed:not(.reader-immersive) #reader[data-reader-language="mixed"] .reader-content,

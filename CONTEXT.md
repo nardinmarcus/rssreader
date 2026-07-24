@@ -29,3 +29,13 @@ _Avoid_: stale feed, offline cache of entries, cached API responses
 **Shell Update Prompt**:
 An explicit user confirmation before a new Installable Shell replaces the one currently controlling the page.
 _Avoid_: silent force refresh, automatic skipWaiting without consent
+
+## Annotations
+
+**Highlight Annotation**:
+A reader's note or discussion thread anchored to a selected passage of an article asset (original, creation draft, or translation). 划线点评.
+_Avoid_: comment on article, margin note without anchor
+
+**Annotation Margin Rail**:
+The absolutely positioned overlay beside article content that shows Highlight Annotation cards aligned with their passages. It renders only when the agent panel is open or the view is immersive and the reader pane is wide enough; when the agent panel is collapsed the rail never renders and the content column centers in the widened reader instead.
+_Avoid_: sidebar, comment panel, right panel
