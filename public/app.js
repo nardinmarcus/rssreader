@@ -3834,7 +3834,7 @@ function renderAuthState() {
 }
 
 function renderSidebarAiSettings() {
-  // AI 配置入口位于“我的空间 → 阅读与 AI”，不再占用侧边栏账户区。
+  // AI 配置入口位于“我的空间 → AI 配置”，不再占用侧边栏账户区。
 }
 
 function setAuthMode(mode) {

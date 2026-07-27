@@ -2,7 +2,7 @@
  * Precaches the minimal reading shell only. APIs and non-shell assets stay network-only.
  * Bump SHELL_CACHE (and versioned asset URLs below) whenever shell files change.
  */
-const SHELL_CACHE = 'namoo-shell-v1-f0ff8b840815-d5e3a5dff057-3f59b770ca41';
+const SHELL_CACHE = 'namoo-shell-v1-a53d0bd79eca-d5e3a5dff057-3f59b770ca41';
 const SHELL_ASSETS = [
   '/',
   '/manifest.webmanifest',
@@ -12,7 +12,7 @@ const SHELL_ASSETS = [
   '/icon-512.png',
   '/styles.css?v=d5e3a5dff057',
   '/lucide-icons.js?v=3f59b770ca41',
-  '/app.js?v=f0ff8b840815',
+  '/app.js?v=a53d0bd79eca',
 ];
 
 self.addEventListener('install', event => {
