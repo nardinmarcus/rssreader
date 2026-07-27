@@ -158,7 +158,24 @@ const ICON_FALLBACK_GLYPHS = {
   sun: '☼',
   x: '×',
 };
-const AI_PROVIDER_CATEGORIES = ['海外大模型', '海外聚合', '国内大模型', '国内聚合'];
+const AI_PROVIDER_BRAND = {
+  deepseek: { abbr: 'D', color: '#4d6bfe' },
+  openrouter: { abbr: 'OR', color: '#4f46e5' },
+  openai: { abbr: 'O', color: '#0d0d0d' },
+  codex: { abbr: 'C', color: '#475569' },
+  anthropic: { abbr: 'C', color: '#d97757' },
+  grok: { abbr: 'G', color: '#111827' },
+  groq: { abbr: 'G', color: '#f55036' },
+  together: { abbr: 'T', color: '#0f6fff' },
+  moonshot: { abbr: 'K', color: '#5b5bd6' },
+  zhipu: { abbr: '智', color: '#3859ff' },
+  qwen: { abbr: '百', color: '#ff6a00' },
+  siliconflow: { abbr: '硅', color: '#6e56cf' },
+  doubao: { abbr: '火', color: '#f53f3f' },
+  aihubmix: { abbr: 'A', color: '#0ea5e9' },
+  workers_ai: { abbr: 'CF', color: '#f6821f' },
+  custom: { abbr: 'O', color: '#64748b' },
+};
 const AI_PROVIDER_PRESETS = [
   {
     id: 'deepseek',
@@ -10378,9 +10395,9 @@ function renderAiProfileList() {
     btn.type = 'button';
     btn.className = 'ai-profile-item' + (profile.id === state.editingAiProfileId ? ' active' : '');
     btn.innerHTML = `
-      <span class="ai-profile-name">${escapeHtml(profile.name)}</span>
+      <span class="ai-profile-title"><span class="ai-profile-name">${escapeHtml(profile.name)}</span>${profile.isDefault ? '<span class="ai-profile-badge">默认</span>' : ''}</span>
       <span class="ai-profile-meta">${escapeHtml(profile.providerName || profile.provider)} · ${escapeHtml(profile.model || '未填模型')}</span>
-      <span class="ai-profile-key">${profile.apiKey ? escapeHtml(maskApiKey(profile.apiKey)) : '未填 API Key'}${profile.isDefault ? ' · 默认' : ''}</span>`;
+      <span class="ai-profile-key">${profile.apiKey ? escapeHtml(maskApiKey(profile.apiKey)) : '未填 API Key'}</span>`;
     btn.onclick = () => {
       state.editingAiProfileId = profile.id;
       state.activeAiProfileId = profile.id;
@@ -10397,19 +10414,16 @@ function renderAiProfileList() {
 function renderTemplateList() {
   const el = $('#ai-template-list');
   if (!el) return;
-  const parts = [];
-  for (const category of AI_PROVIDER_CATEGORIES) {
-    const presets = AI_PROVIDER_PRESETS.filter(preset => preset.category === category);
-    if (!presets.length) continue;
-    parts.push(`<div class="ai-template-group"><div class="ai-template-category">${escapeHtml(category)}</div><div class="ai-template-buttons">`);
-    for (const preset of presets) {
-      parts.push(`<button type="button" class="ai-template" data-preset="${escapeHtml(preset.id)}" title="${escapeHtml(preset.description)}">
-        <span>${escapeHtml(preset.name)}${preset.recommended ? ' · 推荐' : ''}</span>
-      </button>`);
-    }
-    parts.push('</div></div>');
-  }
-  parts.push(`<div class="ai-template-group"><div class="ai-template-category">自定义</div><div class="ai-template-buttons"><button type="button" class="ai-template" data-preset="custom"><span>OpenAI 兼容</span></button></div></div>`);
+  const capsule = (id, name, description) => {
+    const brand = AI_PROVIDER_BRAND[id] || AI_PROVIDER_BRAND.custom;
+    return `<button type="button" class="ai-template" data-preset="${escapeHtml(id)}" title="${escapeHtml(description || '')}">
+      <span class="ai-template-logo" style="background:${brand.color}" aria-hidden="true">${escapeHtml(brand.abbr)}</span>
+      <span>${escapeHtml(name)}</span>
+    </button>`;
+  };
+  const sorted = [...AI_PROVIDER_PRESETS].sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)));
+  const parts = sorted.map(preset => capsule(preset.id, preset.name, preset.description));
+  parts.push(capsule('custom', 'OpenAI 兼容', '自定义 OpenAI 兼容服务'));
   el.innerHTML = parts.join('');
 }
 
@@ -10422,9 +10436,17 @@ function quickModelsForProfile(profile) {
 function renderQuickModels(models) {
   const el = $('#ai-quick-models');
   if (!el) return;
+  const current = ($('#ai-model').value || '').trim();
   el.innerHTML = models.slice(0, 18).map(model => (
-    `<button type="button" class="ai-model-chip" data-model="${escapeHtml(model)}">${escapeHtml(model)}</button>`
+    `<button type="button" class="ai-model-chip${model === current ? ' active' : ''}" data-model="${escapeHtml(model)}">${escapeHtml(model)}</button>`
   )).join('');
+}
+
+function syncQuickModelChips() {
+  const current = ($('#ai-model').value || '').trim();
+  document.querySelectorAll('#ai-quick-models .ai-model-chip').forEach(chip => {
+    chip.classList.toggle('active', (chip.dataset.model || chip.textContent.trim()) === current);
+  });
 }
 
 function fillAiProfileForm(profile) {
@@ -10538,6 +10560,14 @@ function saveAiProfileFromForm({ silent = false } = {}) {
   return profile;
 }
 
+function setAiTemplatesExpanded(expanded) {
+  const toggle = $('#ai-template-toggle');
+  const list = $('#ai-template-list');
+  if (!toggle || !list) return;
+  toggle.setAttribute('aria-expanded', String(expanded));
+  list.hidden = !expanded;
+}
+
 function addAiProfile() {
   const profile = createProfileFromPreset(DEFAULT_AI_PRESET_ID, {
     name: `DeepSeek ${state.aiProfiles.length + 1}`,
@@ -10547,6 +10577,7 @@ function addAiProfile() {
   state.activeAiProfileId = profile.id;
   state.editingAiProfileId = profile.id;
   persistAiProfiles();
+  setAiTemplatesExpanded(true);
   renderAiSettings();
 }
 
@@ -10623,8 +10654,8 @@ async function fetchAiModels() {
       $('#ai-config-note').textContent = '连接成功，但接口没有返回模型列表。';
       return;
     }
-    renderQuickModels(models);
     if (!$('#ai-model').value.trim()) $('#ai-model').value = models[0];
+    renderQuickModels(models);
     $('#ai-config-note').textContent = `已获取 ${models.length} 个模型，点击下方模型可填入。`;
   } catch (err) {
     $('#ai-config-note').textContent = err.message;
@@ -11721,6 +11752,9 @@ $('#ai-profile-form').onsubmit = (e) => {
   e.preventDefault();
   saveAiProfileFromForm();
 };
+$('#ai-template-toggle').onclick = () => {
+  setAiTemplatesExpanded($('#ai-template-toggle').getAttribute('aria-expanded') !== 'true');
+};
 $('#ai-template-list').onclick = (e) => {
   const btn = e.target.closest('.ai-template');
   if (btn) applyAiPreset(btn.dataset.preset);
@@ -11729,7 +11763,9 @@ $('#ai-quick-models').onclick = (e) => {
   const btn = e.target.closest('.ai-model-chip');
   if (!btn) return;
   $('#ai-model').value = btn.dataset.model || btn.textContent.trim();
+  syncQuickModelChips();
 };
+$('#ai-model').oninput = syncQuickModelChips;
 $('#ai-max-tokens').oninput = (e) => { e.target.value = e.target.value.replace(/[^\d]/g, ''); };
 $('#ai-fetch-models').onclick = fetchAiModels;
 $('#ai-test').onclick = testAiConnection;

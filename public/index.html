@@ -31,7 +31,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=4bced9fdb07c" />
+  <link rel="stylesheet" href="/styles.css?v=3f745ac44187" />
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
   <meta property="og:site_name" content="Namoo Reader" />
@@ -771,16 +771,21 @@
         <form id="ai-profile-form" class="ai-profile-form">
           <div id="ai-config-alert" class="ai-config-alert hidden"></div>
 
-          <section class="ai-form-section">
-            <div class="ai-section-head">
-              <span>快捷模板</span>
-              <a id="ai-key-link" class="ai-key-link hidden" target="_blank" rel="noopener">获取 API Key</a>
-            </div>
-            <div id="ai-template-list" class="ai-template-list"></div>
+          <section class="ai-form-section ai-template-section">
+            <button id="ai-template-toggle" class="ai-template-toggle" type="button" aria-expanded="false" aria-controls="ai-template-list">
+              <span data-qm-icon="sparkles"></span>
+              <span>从模板快速填充</span>
+              <span class="ai-template-caret" aria-hidden="true"></span>
+            </button>
+            <div id="ai-template-list" class="ai-template-list" hidden></div>
           </section>
 
           <section class="ai-form-section">
-            <div class="ai-form-grid two">
+            <div class="ai-section-head">
+              <span>服务商与凭证</span>
+              <a id="ai-key-link" class="ai-key-link hidden" target="_blank" rel="noopener">获取 API Key</a>
+            </div>
+            <div class="ai-form-grid cols-3">
               <label>
                 <span>配置名称</span>
                 <input id="ai-profile-name" type="text" maxlength="48" placeholder="DeepSeek / OpenRouter" required />
@@ -789,25 +794,27 @@
                 <span>服务商</span>
                 <input id="ai-provider-name" type="text" maxlength="48" placeholder="DeepSeek" />
               </label>
-            </div>
-            <div class="ai-form-grid two">
               <label>
                 <span>Provider ID</span>
                 <input id="ai-provider-id" type="text" maxlength="48" placeholder="deepseek" />
               </label>
+            </div>
+            <div class="ai-form-grid two">
               <label>
-                <span>分类</span>
-                <input id="ai-provider-category" type="text" maxlength="48" placeholder="国内大模型" />
+                <span>API Key</span>
+                <input id="ai-api-key" type="password" autocomplete="off" placeholder="sk-..." />
+              </label>
+              <label>
+                <span>Base URL</span>
+                <input id="ai-base-url" type="url" placeholder="https://api.deepseek.com/v1" required />
               </label>
             </div>
-            <label>
-              <span>API Key</span>
-              <input id="ai-api-key" type="password" autocomplete="off" placeholder="sk-..." />
-            </label>
-            <label>
-              <span>Base URL</span>
-              <input id="ai-base-url" type="url" placeholder="https://api.deepseek.com/v1" required />
-            </label>
+          </section>
+
+          <section class="ai-form-section">
+            <div class="ai-section-head">
+              <span>模型与参数</span>
+            </div>
             <label>
               <span>模型</span>
               <input id="ai-model" type="text" placeholder="deepseek-v4-flash" required />
@@ -827,6 +834,7 @@
                 <span>设为默认</span>
               </label>
             </div>
+            <input id="ai-provider-category" type="hidden" />
             <input id="ai-provider-type" type="hidden" value="openai_compatible" />
             <input id="ai-api-key-url" type="hidden" />
           </section>
@@ -868,6 +876,6 @@
 
   <script src="/purify.min.js"></script>
   <script src="/lucide-icons.js?v=3f59b770ca41"></script>
-  <script src="/app.js?v=b4dc5114d1c2"></script>
+  <script src="/app.js?v=a1635f52df24"></script>
 </body>
 </html>
