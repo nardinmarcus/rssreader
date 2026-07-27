@@ -14,9 +14,10 @@ after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
 
 const sampleDaily = {
   date: '2026-07-20',
+  links: { aihot: 'https://aihot.virxact.com/daily/2026-07-20' },
   attribution: {
-    source: 'AI HOT',
-    canonical: 'https://aihot.virxact.com/daily/2026-07-20',
+    name: 'AI HOT',
+    url: 'https://aihot.virxact.com/daily/2026-07-20',
   },
   lead: '今日重点是开源模型与边缘推理。',
   sections: [
@@ -26,9 +27,11 @@ const sampleDaily = {
         {
           title: 'Qwen3.8 开源发布',
           summary: '2.4T 参数模型上线预览。',
-          sourceUrl: 'https://example.com/qwen',
-          sourceName: 'X：通义千问',
-          permalink: 'https://aihot.virxact.com/items/abc',
+          source: { name: 'X：通义千问' },
+          links: {
+            original: 'https://example.com/qwen',
+            aihot: 'https://aihot.virxact.com/items/abc',
+          },
         },
       ],
     },
@@ -38,8 +41,8 @@ const sampleDaily = {
         {
           title: 'transcribe.cpp 发布',
           summary: '跨平台语音转录库。',
-          sourceUrl: 'https://example.com/transcribe',
-          sourceName: 'Hacker News',
+          source: { name: 'Hacker News' },
+          links: { original: 'https://example.com/transcribe' },
         },
       ],
     },
@@ -79,6 +82,25 @@ test('buildAihotDailyHtml assembles sectioned long-form content', () => {
   assert.equal(aihotDailyDateFromEntry({
     title: 'AI HOT 日报 · 2026-07-19 — something',
   }), '2026-07-19');
+});
+
+test('fetchAihotDailyJson calls v1 dailies endpoint and unwraps report envelope', async () => {
+  const { fetchAihotDailyJson } = fetcher.__test;
+  const requested = [];
+  const report = await fetchAihotDailyJson('2026-07-20', {
+    fetchText: async (url) => {
+      requested.push(url);
+      return JSON.stringify({ schemaVersion: 1, report: sampleDaily });
+    },
+  });
+
+  assert.deepEqual(requested, ['https://aihot.virxact.com/api/v1/dailies/2026-07-20']);
+  assert.deepEqual(report, sampleDaily);
+
+  await assert.rejects(
+    () => fetchAihotDailyJson('2026-07-20', { fetchText: async () => '{"schemaVersion":1}' }),
+    /invalid payload/,
+  );
 });
 
 test('hydrateAihotDailyEntries enriches short RSS items via API and keeps teaser on failure', async () => {
