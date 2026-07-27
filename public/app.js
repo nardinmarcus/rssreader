@@ -10433,13 +10433,35 @@ function quickModelsForProfile(profile) {
   return [...new Set([profile.model, ...models].filter(Boolean))];
 }
 
+const QUICK_MODEL_LIMIT = 18;
+const FETCHED_MODEL_RENDER_LIMIT = 60;
+
+function modelChipHtml(model, current) {
+  return `<button type="button" class="ai-model-chip${model === current ? ' active' : ''}" data-model="${escapeHtml(model)}">${escapeHtml(model)}</button>`;
+}
+
 function renderQuickModels(models) {
   const el = $('#ai-quick-models');
   if (!el) return;
   const current = ($('#ai-model').value || '').trim();
-  el.innerHTML = models.slice(0, 18).map(model => (
-    `<button type="button" class="ai-model-chip${model === current ? ' active' : ''}" data-model="${escapeHtml(model)}">${escapeHtml(model)}</button>`
-  )).join('');
+  el.classList.remove('scrollable');
+  el.innerHTML = models.slice(0, QUICK_MODEL_LIMIT).map(model => modelChipHtml(model, current)).join('');
+}
+
+function renderFetchedModels() {
+  const el = $('#ai-quick-models');
+  const models = state.aiFetchedModels || [];
+  if (!el || !models.length) return;
+  const current = ($('#ai-model').value || '').trim();
+  const keyword = ($('#ai-model-filter').value || '').trim().toLowerCase();
+  const matched = keyword ? models.filter(model => model.toLowerCase().includes(keyword)) : models;
+  el.classList.add('scrollable');
+  el.innerHTML = matched.length
+    ? matched.slice(0, FETCHED_MODEL_RENDER_LIMIT).map(model => modelChipHtml(model, current)).join('')
+    : '<span class="ai-model-empty">没有匹配的模型</span>';
+  $('#ai-config-note').textContent = keyword
+    ? `已获取 ${models.length} 个模型，匹配 ${matched.length} 个，点击可填入。`
+    : `已获取 ${models.length} 个模型，可输入关键词筛选后点击填入。`;
 }
 
 function syncQuickModelChips() {
@@ -10468,6 +10490,10 @@ function fillAiProfileForm(profile) {
   $('#ai-config-note').textContent = profile.apiKey
     ? `当前 API Key：${maskApiKey(profile.apiKey)}`
     : 'API Key 只保存在当前浏览器，不写入服务器数据库。';
+  state.aiFetchedModels = [];
+  const modelFilter = $('#ai-model-filter');
+  modelFilter.value = '';
+  modelFilter.classList.add('hidden');
   renderQuickModels(quickModelsForProfile(profile));
 }
 
@@ -10655,8 +10681,11 @@ async function fetchAiModels() {
       return;
     }
     if (!$('#ai-model').value.trim()) $('#ai-model').value = models[0];
-    renderQuickModels(models);
-    $('#ai-config-note').textContent = `已获取 ${models.length} 个模型，点击下方模型可填入。`;
+    state.aiFetchedModels = models;
+    const modelFilter = $('#ai-model-filter');
+    modelFilter.value = '';
+    modelFilter.classList.remove('hidden');
+    renderFetchedModels();
   } catch (err) {
     $('#ai-config-note').textContent = err.message;
     toast('获取模型失败: ' + err.message, 5000);
@@ -11766,6 +11795,7 @@ $('#ai-quick-models').onclick = (e) => {
   syncQuickModelChips();
 };
 $('#ai-model').oninput = syncQuickModelChips;
+$('#ai-model-filter').oninput = renderFetchedModels;
 $('#ai-max-tokens').oninput = (e) => { e.target.value = e.target.value.replace(/[^\d]/g, ''); };
 $('#ai-fetch-models').onclick = fetchAiModels;
 $('#ai-test').onclick = testAiConnection;

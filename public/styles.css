@@ -4777,6 +4777,19 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   flex-wrap: wrap;
   gap: 6px;
 }
+.ai-model-filter {
+  margin-bottom: 8px;
+}
+.ai-quick-models.scrollable {
+  max-height: 148px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.ai-model-empty {
+  color: var(--text-2);
+  font-size: 12px;
+  padding: 4px 2px;
+}
 .ai-model-chip {
   max-width: 100%;
   border: 1px solid var(--border);
