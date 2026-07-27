@@ -688,6 +688,10 @@ test('Product Hunt refresh backfills stored summary-only history in one API batc
   store.upsertEntries([oldEntry]);
   process.env.PRODUCTHUNT_API_TOKEN = 'producthunt-batch-token';
   const apiBatches = [];
+  let markApiStarted;
+  let releaseApi;
+  const apiStarted = new Promise(resolve => { markApiStarted = resolve; });
+  const apiGate = new Promise(resolve => { releaseApi = resolve; });
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     if (url === feedUrl) {
@@ -708,6 +712,8 @@ test('Product Hunt refresh backfills stored summary-only history in one API batc
     const payload = JSON.parse(String(init.body));
     const aliases = [...payload.query.matchAll(/(p\d+):\s*post\(id:\s*"(\d+)"\)/g)];
     apiBatches.push(aliases.map(match => match[2]));
+    markApiStarted();
+    await apiGate;
     const data = Object.fromEntries(aliases.map(([, alias, id]) => [alias, {
       id,
       name: id === '1207001' ? 'Stored Product' : 'New Product',
@@ -730,14 +736,19 @@ test('Product Hunt refresh backfills stored summary-only history in one API batc
   };
 
   try {
-    const refreshed = await fetcher.fetchSource({
+    let refreshSettled = false;
+    const refreshPromise = fetcher.fetchSource({
       id: 'producthunt',
       name: 'Product Hunt test',
       enabled: true,
       limit: 10,
       feeds: [feedUrl],
-    });
-    await fetcher.__test.waitForProductHuntBackfill();
+    }).finally(() => { refreshSettled = true; });
+    await apiStarted;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(refreshSettled, false, 'source refresh must wait for Product Hunt history backfill');
+    releaseApi();
+    const refreshed = await refreshPromise;
 
     assert.equal(apiBatches.length, 1);
     assert.deepEqual(apiBatches[0].sort(), ['1207001', '1208002']);
@@ -748,6 +759,8 @@ test('Product Hunt refresh backfills stored summary-only history in one API batc
     assert.match(stored.content, /Detailed Product Hunt description for 1207001/);
     assert.match(newest.content, /Detailed Product Hunt description for 1208002/);
   } finally {
+    releaseApi();
+    await fetcher.__test.waitForProductHuntBackfill();
     restoreDns();
     globalThis.fetch = originalFetch;
     if (previousToken === undefined) delete process.env.PRODUCTHUNT_API_TOKEN;
