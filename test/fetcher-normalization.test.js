@@ -587,6 +587,174 @@ test('Hacker News original fetch preserves the structured discussion components'
   }
 });
 
+test('Product Hunt API enrichment persists a detailed product brief and raw evidence', async () => {
+  const previousToken = process.env.PRODUCTHUNT_API_TOKEN;
+  const previousMode = process.env.VERSIONED_TRANSLATION_MODE;
+  const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['api.producthunt.com']);
+  const entry = {
+    id: 'producthunt-api-detail-entry',
+    sourceId: 'producthunt',
+    title: 'HeyZoku',
+    link: 'https://www.producthunt.com/products/heyzoku',
+    author: 'Priyanshu Dangi',
+    published: '2026-07-27T06:25:42.000Z',
+    publishedTs: Date.parse('2026-07-27T06:25:42.000Z'),
+    summary: 'Orchestrate an army of coding agents with your voice. Discussion | Link',
+    content: `<p>Orchestrate an army of coding agents with your voice.</p>
+      <p><a href="https://www.producthunt.com/products/heyzoku">Discussion</a> |
+      <a href="https://www.producthunt.com/r/p/1207527?app_id=339">Link</a></p>`,
+  };
+  store.upsertEntries([entry]);
+  process.env.PRODUCTHUNT_API_TOKEN = 'producthunt-test-token';
+  process.env.VERSIONED_TRANSLATION_MODE = 'shadow';
+  globalThis.fetch = async (input, init = {}) => {
+    assert.equal(String(input), 'https://api.producthunt.com/v2/api/graphql');
+    assert.equal(init.method, 'POST');
+    assert.equal(new Headers(init.headers).get('authorization'), 'Bearer producthunt-test-token');
+    assert.equal(Boolean(init.dispatcher), true);
+    const payload = JSON.parse(String(init.body));
+    assert.match(payload.query, /p0:\s*post\(id:\s*"1207527"\)/);
+    return new Response(JSON.stringify({
+      data: {
+        p0: {
+          id: '1207527',
+          name: 'HeyZoku',
+          tagline: 'Orchestrate an army of coding agents with your voice.',
+          description: 'A voice-first Mac development environment that lets developers run, redirect, and interrupt multiple coding agents from one shared workspace.',
+          url: 'https://www.producthunt.com/products/heyzoku',
+          website: 'https://www.producthunt.com/r/p/1207527',
+          votesCount: 14,
+          commentsCount: 3,
+          makers: [{ id: 'maker-1', name: 'Priyanshu Dangi', username: 'dangibuilds' }],
+          productLinks: [{ type: 'Website', url: 'https://heyzoku.com/' }],
+          topics: { edges: [
+            { node: { name: 'AI Coding Agents', slug: 'ai-coding-agents' } },
+            { node: { name: 'Terminals', slug: 'terminals' } },
+          ] },
+          comments: { edges: [{ node: {
+            id: 'comment-1',
+            body: 'HeyZoku controls terminal coding agents by voice and keeps speech processing completely on device, without requiring a monthly transcription subscription.',
+            createdAt: '2026-07-27T07:00:00.000Z',
+            url: 'https://www.producthunt.com/posts/heyzoku#comment-1',
+            user: { id: 'maker-1', name: 'Priyanshu Dangi', username: 'dangibuilds' },
+          } }] },
+          thumbnail: { url: 'https://ph-files.imgix.net/heyzoku.png' },
+        },
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  };
+
+  try {
+    const updated = await fetcher.fetchEntryOriginal(store.getEntry(entry.id));
+    assert.match(updated.content, /Product Hunt 产品速览/);
+    assert.match(updated.content, /voice-first Mac development environment/);
+    assert.match(updated.content, /Maker 介绍/);
+    assert.match(updated.content, /keeps speech processing completely on device/);
+    assert.match(updated.content, /href="https:\/\/heyzoku\.com\/"/);
+    assert.match(updated.content, /AI Coding Agents/);
+    assert.equal(updated.summary, 'A voice-first Mac development environment that lets developers run, redirect, and interrupt multiple coding agents from one shared workspace.');
+    assert.equal(updated.image, 'https://ph-files.imgix.net/heyzoku.png');
+    assert.equal(updated.originalFetchedAt > 0, true);
+
+    const current = store.getCurrentArticleDocument(entry.id);
+    assert.equal(current.provenance, 'fetched');
+    assert.notEqual(current.snapshotId, null);
+    assert.match(current.plainText, /keeps speech processing completely on device/);
+  } finally {
+    restoreDns();
+    globalThis.fetch = originalFetch;
+    process.env.VERSIONED_TRANSLATION_MODE = previousMode;
+    if (previousToken === undefined) delete process.env.PRODUCTHUNT_API_TOKEN;
+    else process.env.PRODUCTHUNT_API_TOKEN = previousToken;
+  }
+});
+
+test('Product Hunt refresh backfills stored summary-only history in one API batch', async () => {
+  const previousToken = process.env.PRODUCTHUNT_API_TOKEN;
+  const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['feeds.example', 'api.producthunt.com']);
+  const feedUrl = 'https://feeds.example/producthunt.xml';
+  const oldEntry = {
+    id: 'producthunt-stored-history-entry',
+    sourceId: 'producthunt',
+    title: 'Stored Product',
+    link: 'https://www.producthunt.com/products/stored-product',
+    published: '2026-07-20T08:00:00.000Z',
+    publishedTs: Date.parse('2026-07-20T08:00:00.000Z'),
+    summary: 'A stored one-line Product Hunt tagline. Discussion | Link',
+    content: '<p>A stored one-line Product Hunt tagline.</p><p><a href="https://www.producthunt.com/r/p/1207001?app_id=339">Link</a></p>',
+  };
+  store.upsertEntries([oldEntry]);
+  process.env.PRODUCTHUNT_API_TOKEN = 'producthunt-batch-token';
+  const apiBatches = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === feedUrl) {
+      return new Response(`<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <title>Product Hunt test</title>
+          <entry>
+            <id>tag:www.producthunt.com,2005:Post/1208002</id>
+            <published>2026-07-27T08:00:00.000Z</published>
+            <link rel="alternate" type="text/html" href="https://www.producthunt.com/products/new-product"/>
+            <title>New Product</title>
+            <content type="html">&lt;p&gt;A new one-line Product Hunt tagline.&lt;/p&gt;&lt;p&gt;&lt;a href="https://www.producthunt.com/r/p/1208002?app_id=339"&gt;Link&lt;/a&gt;&lt;/p&gt;</content>
+            <author><name>New Maker</name></author>
+          </entry>
+        </feed>`, { status: 200, headers: { 'content-type': 'application/atom+xml; charset=utf-8' } });
+    }
+    assert.equal(url, 'https://api.producthunt.com/v2/api/graphql');
+    const payload = JSON.parse(String(init.body));
+    const aliases = [...payload.query.matchAll(/(p\d+):\s*post\(id:\s*"(\d+)"\)/g)];
+    apiBatches.push(aliases.map(match => match[2]));
+    const data = Object.fromEntries(aliases.map(([, alias, id]) => [alias, {
+      id,
+      name: id === '1207001' ? 'Stored Product' : 'New Product',
+      tagline: `Short tagline for ${id}.`,
+      description: `Detailed Product Hunt description for ${id}, explaining the product workflow, intended users, and concrete value instead of repeating a one-line tagline.`,
+      url: `https://www.producthunt.com/posts/product-${id}`,
+      website: `https://www.producthunt.com/r/p/${id}`,
+      votesCount: 20,
+      commentsCount: 1,
+      makers: [{ id: `maker-${id}`, name: `Maker ${id}`, username: `maker${id}` }],
+      productLinks: [{ type: 'Website', url: `https://product-${id}.example/` }],
+      topics: { edges: [{ node: { name: 'Developer Tools', slug: 'developer-tools' } }] },
+      comments: { edges: [] },
+      thumbnail: null,
+    }]));
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+  };
+
+  try {
+    const refreshed = await fetcher.fetchSource({
+      id: 'producthunt',
+      name: 'Product Hunt test',
+      enabled: true,
+      limit: 10,
+      feeds: [feedUrl],
+    });
+    await fetcher.__test.waitForProductHuntBackfill();
+
+    assert.equal(apiBatches.length, 1);
+    assert.deepEqual(apiBatches[0].sort(), ['1207001', '1208002']);
+    const stored = store.getEntry(oldEntry.id);
+    const newest = store.getEntry(refreshed.entries[0].id);
+    assert.equal(stored.originalFetchedAt > 0, true);
+    assert.equal(newest.originalFetchedAt > 0, true);
+    assert.match(stored.content, /Detailed Product Hunt description for 1207001/);
+    assert.match(newest.content, /Detailed Product Hunt description for 1208002/);
+  } finally {
+    restoreDns();
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.PRODUCTHUNT_API_TOKEN;
+    else process.env.PRODUCTHUNT_API_TOKEN = previousToken;
+  }
+});
+
 test('TLDR original fetch preserves every newsletter article in page order', async () => {
   const entry = {
     id: 'tldr-metadata-only-entry',

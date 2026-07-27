@@ -96,12 +96,15 @@ Copy `.env.example` and fill what you need. Full defaults and comments live ther
 | `COOKIE_SECURE` | example `1` | Session cookies HTTPS-only when `1` |
 | `DEEPSEEK_*` or `AI_*` | see `.env.example` | Server-funded AI (DeepSeek or OpenAI/Anthropic-compatible) |
 | `RSSHUB_INSTANCES` | three public hubs | Comma-separated fallback list; no local RSSHub container |
+| `PRODUCTHUNT_API_TOKEN` | empty | Server-only developer token for detailed Product Hunt briefs and summary-only history backfill |
 | `VERSIONED_TRANSLATION_MODE` | `off` | `off` \| `shadow` \| `canary` \| `all` |
 | `ONEPAGE_MODE` | `off` | `off` \| `admin` \| `all` |
 | `NAMOO_READER_DATA_DIR` | `./data` | Data root (tests must use an isolated dir) |
 | `UMAMI_SRC` / `UMAMI_WEBSITE_ID` | empty | Optional analytics; both must be valid or nothing is injected |
 
 Without AI keys, feeds and reading still work; AI features prompt for configuration.
+
+Without `PRODUCTHUNT_API_TOKEN`, Product Hunt remains readable from its public Atom feed but may contain only the upstream tagline. After configuring the token, the next Product Hunt refresh backfills stored summary-only entries in the background.
 
 Server AI always uses server env for provider/model/key. Browser-supplied routing is accepted only for explicit user-owned keys (BYOK).
 
