@@ -1090,12 +1090,12 @@ function articleRouteFromPath(pathname) {
 
 function slugifyForUrl(value, fallback = 'article') {
   const slug = String(value || '')
-    .normalize('NFKC')
+    .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/&/g, ' and ')
     .replace(/['’"“”‘]/g, '')
-    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+    .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .replace(/-{2,}/g, '-')
     .slice(0, 80)
@@ -1104,8 +1104,7 @@ function slugifyForUrl(value, fallback = 'article') {
 }
 
 function entrySlug(entry) {
-  const fallback = slugifyForUrl(entry && entry.id, 'article');
-  return slugifyForUrl(entry && (entry.titleZh || entry.title || entry.id), fallback);
+  return slugifyForUrl(entry && entry.title, 'article');
 }
 
 function entryShortId(entryOrId) {
