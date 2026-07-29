@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
 const path = require('path');
+const vm = require('node:vm');
 const { spawn } = require('child_process');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
 
@@ -47,6 +48,59 @@ test('startup renders cached entries while refresh polling stays status-only', (
   assert.match(refreshLoop, /if \(!d\.refreshing\) \{\s*await reload\(\{ keepReader: true, clearUrl: false \}\);\s*break;\s*\}/);
   assert.doesNotMatch(postInitialRender, /loadEntries\(\)|renderList\(\)|renderSidebar\(\)|updateListTitle\(\)/);
   assert.doesNotMatch(init, /state\.entries\.length === 0/);
+});
+
+test('sidebar category changes paint a local preview before exact API revalidation', () => {
+  const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
+  const helperStart = app.indexOf('function entriesForSidebarCategory(');
+  const helperEnd = app.indexOf('\nfunction ', helperStart + 1);
+  assert.notEqual(helperStart, -1, 'expected entriesForSidebarCategory()');
+  assert.notEqual(helperEnd, -1, 'expected the next helper after entriesForSidebarCategory()');
+
+  const context = {
+    result: null,
+    entries: [
+      { id: 'article-1', sourceId: 'source-article' },
+      { id: 'news-1', sourceId: 'source-news' },
+      { id: 'article-2', sourceId: 'source-article' },
+      { id: 'unknown-1', sourceId: 'missing-source' },
+    ],
+    sources: [
+      { id: 'source-article', category: 'article' },
+      { id: 'source-news', category: 'news' },
+    ],
+  };
+  vm.runInNewContext(`${app.slice(helperStart, helperEnd)}\nresult = {
+    all: entriesForSidebarCategory(entries, sources, 'all'),
+    article: entriesForSidebarCategory(entries, sources, 'article'),
+    news: entriesForSidebarCategory(entries, sources, 'news'),
+  };`, context);
+  const result = JSON.parse(JSON.stringify(context.result));
+  assert.deepEqual(result.all.map(entry => entry.id), ['article-1', 'news-1', 'article-2', 'unknown-1']);
+  assert.deepEqual(result.article.map(entry => entry.id), ['article-1', 'article-2']);
+  assert.deepEqual(result.news.map(entry => entry.id), ['news-1']);
+
+  const loadEntries = app.slice(
+    app.indexOf('async function loadEntries('),
+    app.indexOf('async function loadMoreEntries('),
+  );
+  assert.match(app, /const categoryEntryCache = new Map\(\);/);
+  assert.match(loadEntries, /const requestSequence = \+\+entryListRequestSequence;/);
+  assert.match(loadEntries, /requestSequence !== entryListRequestSequence/);
+  assert.ok(
+    loadEntries.indexOf('requestSequence !== entryListRequestSequence')
+      < loadEntries.indexOf('categoryEntryCache.set(categoryCacheKey, entries)'),
+    'a superseded response must be rejected before it can update the preview cache',
+  );
+
+  const selectCategory = app.slice(
+    app.indexOf('async function selectCategory('),
+    app.indexOf('function selectView('),
+  );
+  const previewIndex = selectCategory.indexOf('renderSidebarCategoryPreview(');
+  const reloadIndex = selectCategory.indexOf('await reload()');
+  assert.ok(previewIndex >= 0, 'category selection must render its cached or derived preview');
+  assert.ok(reloadIndex > previewIndex, 'exact API revalidation must happen after the preview is painted');
 });
 
 test('YouTube podcast players are hydrated from validated ids without weakening sanitization', () => {

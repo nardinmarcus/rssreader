@@ -49,6 +49,8 @@ const CONTEXT_PANE_MAX_WIDTH = 620;
 const READER_PANE_MIN_WIDTH = 700;
 const ENTRY_PAGE_SIZE = 100;
 const ENTRY_MAX_LIMIT = 400;
+const categoryEntryCache = new Map();
+let entryListRequestSequence = 0;
 const SOURCE_REFRESH_HINT_COOLDOWN_MS = 5 * 60 * 1000;
 const COMMENT_TEMPLATES = {
   insight: '观点：',
@@ -2062,14 +2064,30 @@ function pollHintedSourceRefresh(sourceId) {
   sourceRefreshPolls.set(id, task);
 }
 
-async function loadEntries() {
+function entryListParams() {
   const p = new URLSearchParams();
   p.set('limit', String(state.entryLimit));
   if (state.filterSource) p.set('source', state.filterSource);
   if (state.filterCategory) p.set('category', state.filterCategory);
   if (state.q && state.view !== 'assets' && state.view !== 'contributors') p.set('q', state.q);
-  const data = await api('/api/entries?' + p.toString());
-  state.entries = data.entries;
+  return p;
+}
+
+async function loadEntries() {
+  const params = entryListParams();
+  const requestKey = params.toString();
+  const requestSequence = ++entryListRequestSequence;
+  const data = await api('/api/entries?' + requestKey);
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const categoryCacheKey = !params.has('source')
+    && !params.has('q')
+    && Number(params.get('limit')) === ENTRY_PAGE_SIZE
+    ? (params.get('category') || 'all')
+    : '';
+  if (requestSequence !== entryListRequestSequence || entryListParams().toString() !== requestKey) return false;
+  if (categoryCacheKey) categoryEntryCache.set(categoryCacheKey, entries);
+  state.entries = entries;
+  return true;
 }
 
 async function loadMoreEntries(button) {
@@ -2327,6 +2345,33 @@ function entryCountForSource(source) {
 
 function normalizeSidebarCategory(category) {
   return category === 'all' || Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category) ? category : 'all';
+}
+
+function entriesForSidebarCategory(entries, sources, category) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (category === 'all') return list.slice();
+  const sourceCategories = new Map((Array.isArray(sources) ? sources : []).map(source => [source.id, source.category]));
+  return list.filter(entry => sourceCategories.get(entry.sourceId) === category);
+}
+
+function sidebarCategoryPreview(category) {
+  const normalizedCategory = normalizeSidebarCategory(category);
+  const exactEntries = categoryEntryCache.get(normalizedCategory);
+  if (Array.isArray(exactEntries)) return exactEntries;
+  const allEntries = categoryEntryCache.get('all');
+  if (!Array.isArray(allEntries)) return null;
+  return entriesForSidebarCategory(allEntries, state.sources, normalizedCategory);
+}
+
+function renderSidebarCategoryPreview(category) {
+  const preview = sidebarCategoryPreview(category);
+  if (Array.isArray(preview)) {
+    state.entries = preview;
+    updateListTitle();
+    renderList();
+  }
+  renderSidebar();
+  return Array.isArray(preview);
 }
 
 function setSidebarCategory(category) {
@@ -3933,6 +3978,7 @@ async function submitAuth() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, displayName }),
     });
+    categoryEntryCache.clear();
     setCurrentUser(data.user || null);
     setSiteAi(data.siteAi);
     closeAuth();
@@ -3995,6 +4041,7 @@ async function submitChangePassword() {
 async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   const wasDashboardOpen = state.workspacePage === 'dashboard';
+  categoryEntryCache.clear();
   setCurrentUser(null);
   state.myComments = [];
   state.myChatMessages = [];
@@ -9741,7 +9788,7 @@ async function selectSource(id) {
   await reload();
   if (nextSource) hintSourceRefresh(nextSource, 'source-select');
 }
-function selectCategory(cat) {
+async function selectCategory(cat) {
   state.entryLimit = ENTRY_PAGE_SIZE;
   setSidebarCategory(cat);
   state.view = 'all';
@@ -9752,7 +9799,12 @@ function selectCategory(cat) {
   state.contributorSort = 'latest';
   state.readerFocus = null;
   state.readerAssetId = '';
-  reload();
+  renderSidebarCategoryPreview(state.sidebarCategory);
+  try {
+    await reload();
+  } catch (error) {
+    toast('文章列表加载失败: ' + error.message, 5000);
+  }
 }
 function selectView(v) {
   state.entryLimit = ENTRY_PAGE_SIZE;
