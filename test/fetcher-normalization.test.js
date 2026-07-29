@@ -311,6 +311,62 @@ test('Lilian Weng feed excerpts hydrate from the original page and survive refre
   }
 });
 
+test('OpenRouter feed excerpts hydrate every retained article from the original page', async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreDns = stubPublicDns(['feeds.example', 'openrouter.ai']);
+  const feedUrl = 'https://feeds.example/openrouter.xml';
+  const articles = [
+    { slug: 'routing-guide', marker: 'Complete routing guide marker 7301.' },
+    { slug: 'provider-benchmarks', marker: 'Complete provider benchmark marker 7302.' },
+  ];
+  const articleRequests = [];
+  const excerpt = 'The OpenRouter RSS feed publishes a useful introduction but not the complete article body. '.repeat(2);
+  globalThis.fetch = async input => {
+    const url = String(input);
+    if (url === feedUrl) {
+      const items = articles.map((article, index) => `<item><title>${article.slug}</title>
+        <link>https://openrouter.ai/blog/insights/${article.slug}/</link>
+        <guid>https://openrouter.ai/blog/insights/${article.slug}/</guid>
+        <pubDate>${index ? 'Tue, 28 Jul 2026' : 'Wed, 29 Jul 2026'} 00:00:00 GMT</pubDate>
+        <description><![CDATA[<p>${excerpt}</p>]]></description></item>`).join('');
+      return new Response(`<rss version="2.0"><channel><title>OpenRouter Blog</title>${items}</channel></rss>`, {
+        status: 200,
+        headers: { 'content-type': 'application/xml; charset=utf-8' },
+      });
+    }
+    const article = articles.find(item => url.endsWith(`/${item.slug}/`));
+    assert.ok(article, `unexpected URL: ${url}`);
+    articleRequests.push(url);
+    return new Response(`<html><head><title>${article.slug}</title></head><body><main><article>
+      <h1>${article.slug}</h1><p>${article.marker} ${'Full OpenRouter article content. '.repeat(12)}</p>
+      </article></main></body></html>`, {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    });
+  };
+
+  try {
+    const result = await fetcher.fetchSource({
+      id: 'openrouter',
+      name: 'OpenRouter Blog',
+      category: 'article',
+      enabled: true,
+      limit: 2,
+      feeds: [feedUrl],
+    });
+
+    assert.equal(articleRequests.length, 2);
+    for (const article of articles) {
+      const entry = result.entries.find(item => item.link.endsWith(`/${article.slug}/`));
+      assert.equal(entry.originalFetchedAt > 0, true);
+      assert.match(entry.content, new RegExp(article.marker));
+    }
+  } finally {
+    restoreDns();
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('sitemap page fetch carries redirected HTTP bytes into a fetched snapshot', async () => {
   const previousMode = process.env.VERSIONED_TRANSLATION_MODE;
   const originalFetch = globalThis.fetch;

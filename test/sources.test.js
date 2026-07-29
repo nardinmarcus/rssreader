@@ -21,6 +21,7 @@ test('Namoo core source catalog is present without duplicating existing sources'
     'openai',
     'anthropic',
     'anthropic-research',
+    'openrouter',
     'google-deepmind',
     'google-ai',
     'huggingface-blog',
@@ -38,6 +39,23 @@ test('Namoo core source catalog is present without duplicating existing sources'
   assert.equal(SOURCES.find(source => source.id === 'qiaomu-blog').enabled, false);
   assert.deepEqual(SOURCES.find(source => source.id === 'qiaomu-blog').labels, ['上游来源']);
   assert.equal(SOURCES.find(source => source.id === 'meta-ai').enabled, false);
+});
+
+test('OpenRouter uses its official excerpt feed with built-in product defaults', () => {
+  const sourceIndex = SOURCES.findIndex(source => source.id === 'openrouter');
+  const source = SOURCES[sourceIndex];
+
+  assert.ok(source, 'missing openrouter');
+  assert.equal(source.name, 'OpenRouter Blog');
+  assert.equal(source.category, 'article');
+  assert.equal(source.siteUrl, 'https://openrouter.ai/blog');
+  assert.deepEqual(source.feeds, ['https://openrouter.ai/blog/feed.xml']);
+  assert.equal(source.enabled, true);
+  assert.equal(source.limit, 15);
+  assert.deepEqual(source.labels, ['官方', '产品']);
+  assert.equal(source.editorialPriority, 'high');
+  assert.equal(SOURCES[sourceIndex - 1].id, 'langchain-blog');
+  assert.equal(Object.hasOwn(source, 'refreshIntervalMs'), false);
 });
 
 test('the six approved high-signal sources use official endpoints and no XiaoHu proxy', () => {
