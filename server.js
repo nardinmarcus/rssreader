@@ -1819,7 +1819,11 @@ function renderIndex(req, entry = null) {
     .replace(/src="\/purify\.min\.js(?:\?v=[^"]*)?"/, `src="/purify.min.js?v=${escapeHtml(DOMPURIFY_VERSION)}"`)
     .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
-    .replace('</head>', `  ${tags}${umami ? `\n  ${umami}` : ''}\n</head>`);
+    .replace(
+      /  <!-- social-meta:start -->[\s\S]*?  <!-- social-meta:end -->/,
+      `  <!-- social-meta:start -->\n  ${tags}\n  <!-- social-meta:end -->`,
+    )
+    .replace('</head>', `${umami ? `  ${umami}\n` : ''}</head>`);
 }
 
 function renderLlmsTxt(req) {

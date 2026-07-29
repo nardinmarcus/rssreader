@@ -31,6 +31,35 @@
 
 ---
 
+# Repair duplicate public canonical metadata
+
+## Plan
+
+- [x] Confirm the isolated worktree is clean and pinned to `c26bd1cabd042ba2cb3f2ea8100947ff76a0c27c`.
+- [x] Trace every public `renderIndex()` route and prove the duplicate `canonical` / `og:url` root cause on the unmodified implementation.
+- [x] Add exact page-semantic regressions for the home page, article page, and every other public page rendered through `renderIndex()`.
+- [x] Apply the smallest metadata-only fix without changing ASCII article slug generation or routing.
+- [x] Run focused regressions, the full `npm test` suite, JavaScript syntax checks, and diff checks.
+- [x] Review the final scope, commit the fix, and record the root cause and verification evidence here.
+
+## Verification contract
+
+1. Uniqueness -> verify: each rendered public HTML document contains exactly one `link[rel="canonical"]` and one `meta[property="og:url"]`.
+2. Semantics -> verify: home metadata resolves to `/`, article metadata resolves to its ASCII canonical article path, and every other public `renderIndex()` route resolves to its own public URL.
+3. Slug safety -> verify: the `c26bd1c` article URL regressions remain unchanged and passing.
+4. Scope -> verify: only metadata rendering, its regression coverage, and this task record enter the commit; no production or VPS state changes.
+
+## Review
+
+- Root cause: `public/index.html` gained a static homepage SEO block after `renderIndex()` already appended `socialMetaTags()`, so every rendered shell retained the static canonical/`og:url` and added a second request-specific pair.
+- The regression test failed on the unmodified implementation with the homepage returning two canonical URLs and two `og:url` values, then passed after the fix.
+- `renderIndex()` now replaces one marked static social-metadata fallback block in place. Direct static index delivery keeps its homepage metadata, while all dynamic routes have one request-semantic metadata owner.
+- The HTTP matrix covers 30 route instances across home, ASCII article and exact asset paths, every asset directory type, query canonicalization, contributor pages, and account-shell aliases. Focused metadata/article/brand regressions pass 20/20.
+- The final full suite passes 388/388; all 93 tracked or newly added JavaScript files pass `node --check`; `git diff --check` passes.
+- Scope remains metadata-only: no slug generator, article router, browser URL helper, service worker, SQLite data, runtime cache, production configuration, VPS, or deployment state changed.
+
+---
+
 # Add ByteByteGo as a built-in source
 
 ## Plan
