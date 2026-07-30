@@ -75,8 +75,14 @@ test('periodical index is public only when PERIODICALS_MODE is on', { timeout: 3
         const response = await fetch(`${server.baseUrl}/api/periodicals?cadence=daily`);
         const text = await response.text();
         assert.equal(response.status, expectedStatus, mode);
-        if (mode === 'on') assert.deepEqual(JSON.parse(text), { issues: [], nextCursor: null });
-        else assert.equal(text.includes(mode), false);
+        if (mode === 'on') {
+          const body = JSON.parse(text);
+          assert.equal(body.issues.length, 1);
+          assert.equal(body.issues[0].cadence, 'daily');
+          assert.equal(body.issues[0].status, 'open');
+          assert.equal(body.issues[0].eventCount, 0);
+          assert.equal(body.nextCursor, null);
+        } else assert.equal(text.includes(mode), false);
       } finally {
         await stopServer(server);
       }
