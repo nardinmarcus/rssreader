@@ -179,6 +179,7 @@ let translationWorkerRestartAttempts = 0;
 let periodicalWorker = null;
 let periodicalWorkerRestartTimer = null;
 let periodicalWorkerRestartAttempts = 0;
+let periodicalFinalizationTimer = null;
 const aiQueuedSourceIds = new Set();
 let autoRewriteRunning = false;
 let autoRewriteLast = null;
@@ -3107,13 +3108,29 @@ function scheduleFreshnessRefresh() {
 function checkPeriodicalBuilds(trigger) {
   const startedAt = Date.now();
   try {
+    store.periodicals.finalizeDueIssues({ now: startedAt });
     const result = store.periodicals.syncOpenDaily({ now: startedAt, trigger });
     wakePeriodicalWorkerIfNeeded();
+    scheduleNextPeriodicalFinalization();
     return result;
   } catch {
     console.warn(`[periodical-build] issue=- job=- source=- input=- revision=0 candidates=0 events=0 state=check_failed durationMs=${Date.now() - startedAt}`);
     return null;
   }
+}
+
+function scheduleNextPeriodicalFinalization() {
+  if (periodicalFinalizationTimer) {
+    clearTimeout(periodicalFinalizationTimer);
+    periodicalFinalizationTimer = null;
+  }
+  if (store.periodicals.mode === 'off') return;
+  const wakeAt = store.periodicals.getNextFinalizationWakeAt();
+  if (wakeAt === null) return;
+  periodicalFinalizationTimer = setTimeout(() => {
+    periodicalFinalizationTimer = null;
+    checkPeriodicalBuilds('daily-boundary');
+  }, Math.max(0, wakeAt - Date.now()));
 }
 
 function schedulePeriodicalBuilds() {
@@ -3143,10 +3160,10 @@ app.get('/api/periodicals', (req, res) => {
 
 app.get('/api/periodicals/:cadence/:periodKey', (req, res) => {
   if (!store.periodicals.isPublic) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const result = store.periodicals.getIssue(req.params);
     if (result.issue.status !== 'frozen') {
-      res.setHeader('Cache-Control', 'no-store');
       return res.json(result);
     }
     const etag = `"${result.issue.contentHash}"`;

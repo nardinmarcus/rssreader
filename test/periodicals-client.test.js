@@ -119,8 +119,8 @@ test('periodical controller loads only the SQLite index for root and legal deep 
   const requests = [];
   const rendered = [];
   const controller = createPeriodicalsController({
-    request: async url => {
-      requests.push(url);
+    request: async (url, options) => {
+      requests.push([url, options]);
       return { issues: [], nextCursor: null };
     },
     view: {
@@ -134,8 +134,8 @@ test('periodical controller loads only the SQLite index for root and legal deep 
   assert.equal(await controller.open('/periodicals'), true);
   assert.equal(await controller.open('/periodicals/weekly/2026-W31'), true);
   assert.deepEqual(requests, [
-    '/api/periodicals?cadence=daily&limit=30',
-    '/api/periodicals?cadence=weekly&limit=30',
+    ['/api/periodicals?cadence=daily&limit=30', { cache: 'no-store' }],
+    ['/api/periodicals?cadence=weekly&limit=30', { cache: 'no-store' }],
   ]);
   assert.deepEqual(rendered, [
     ['enter', 'daily'],
@@ -159,8 +159,8 @@ test('periodical controller loads and renders SQLite detail for a legal deep lin
     evidence: [],
   };
   const controller = createPeriodicalsController({
-    request: async url => {
-      requests.push(url);
+    request: async (url, options) => {
+      requests.push([url, options]);
       if (url.startsWith('/api/periodicals?')) {
         return {
           issues: [{ cadence: 'daily', periodKey: '2026-07-30', status: 'open' }],
@@ -180,8 +180,8 @@ test('periodical controller loads and renders SQLite detail for a legal deep lin
 
   assert.equal(await controller.open('/periodicals/daily/2026-07-30'), true);
   assert.deepEqual(requests, [
-    '/api/periodicals?cadence=daily&limit=30',
-    '/api/periodicals/daily/2026-07-30',
+    ['/api/periodicals?cadence=daily&limit=30', { cache: 'no-store' }],
+    ['/api/periodicals/daily/2026-07-30', { cache: 'no-cache' }],
   ]);
   assert.deepEqual(rendered, [
     ['enter', 'daily'],
@@ -226,6 +226,40 @@ test('periodical mount gates the trigger and enters only the minimal empty works
   assert.equal(workspace.elements['#periodicals-nav'].classList.contains('hidden'), true);
   assert.equal(workspace.elements['#periodicals-reader'].classList.contains('hidden'), true);
   assert.equal(workspace.elements['#periodicals-open'].attributes.has('aria-current'), false);
+});
+
+test('finalizing renders the exact state while preserving the last successful revision', async () => {
+  const issue = {
+    cadence: 'daily',
+    periodKey: '2026-07-29',
+    volumeNo: 1,
+    status: 'finalizing',
+    eventCount: 0,
+    overview: '这是跨过上海日界线前最后一次成功生成的内容。',
+    lastSuccessfulAt: NOW,
+    updateDelayed: true,
+    updateState: 'retry_wait',
+  };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/daily/2026-07-29',
+    responses: [
+      { issues: [issue], nextCursor: null },
+      { issue, themes: [], events: [], evidence: [] },
+    ],
+  });
+
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  const indexText = flattenedText(browser.elements['#periodicals-list']);
+  assert.match(indexText, /正在定稿/);
+  assert.doesNotMatch(indexText, /生成异常/);
+  assert.match(flattenedText(browser.elements['#periodicals-document']), /正在定稿/);
+  assert.match(
+    flattenedText(browser.elements['#periodicals-document']),
+    /这是跨过上海日界线前最后一次成功生成的内容/,
+  );
 });
 
 test('periodical mount renders an explainable issue with score reasons and SQLite evidence', async () => {

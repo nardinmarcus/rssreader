@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
+const { computePeriodicalContentHash } = require('../lib/periodical-summary');
 
 const projectDir = path.resolve(__dirname, '..');
 
@@ -95,16 +96,21 @@ test('periodical index validates parameters and reads a paged allowlist projecti
   try {
     server = await startServer(dataDir, 'on');
     const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
-    const insertIssue = db.prepare(`
+    const insertOpenIssue = db.prepare(`
       INSERT INTO periodical_issues (
         id, cadence, period_key, volume_no, period_start_at, period_end_at,
         status, overview, selection_version, summary_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)
     `);
-    insertIssue.run('periodical:daily:2026-07-28', 'daily', '2026-07-28', 1, 100, 200, 'frozen', 'Old overview', 'importance-v1', 'fallback-v1', 1, 1);
-    insertIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, 200, 300, 'frozen', 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
-    insertIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400, 'open', 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
-    insertIssue.run('periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 100, 800, 'frozen', 'Weekly overview', 'importance-v1', 'fallback-v1', 4, 4);
+    insertOpenIssue.run('periodical:daily:2026-07-28', 'daily', '2026-07-28', 1, 100, 200, 'Old overview', 'importance-v1', 'fallback-v1', 1, 1);
+    insertOpenIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, 200, 300, 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
+    insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400, 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
+    insertOpenIssue.run('periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 100, 800, 'Weekly overview', 'importance-v1', 'fallback-v1', 4, 4);
+    db.exec(`
+      UPDATE periodical_issues
+      SET status = 'frozen', frozen_at = period_end_at
+      WHERE period_key IN ('2026-07-28', '2026-07-29', '2026-W31')
+    `);
     db.close();
 
     const firstResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=daily&limit=2`);
@@ -170,9 +176,9 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
         summary_status, last_built_at, frozen_at, created_at, updated_at
       ) VALUES (
         'periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400,
-        320, 'frozen', 2, '本期概览。第二句。', 'importance-v1', 'fallback-v1',
-        'private-source-input', '{"threshold":40}', 'private-input', 'content-hash-30',
-        'fallback', 390, 400, 300, 400
+        320, 'open', 2, '本期概览。第二句。', 'importance-v1', 'fallback-v1',
+        'private-source-input', '{"threshold":40}', 'private-input', '',
+        'fallback', 390, NULL, 300, 400
       );
       INSERT INTO periodical_themes (id, issue_id, theme_key, title, trend_note, display_order)
       VALUES ('theme-one', 'periodical:daily:2026-07-30', 'products_tools', '产品与工具', '本期收录 1 个事件。', 0);
@@ -197,11 +203,88 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
         'Evidence excerpt.', 'entry-content-hash', 350, 1, 0
       );
     `);
+    const contentHash = computePeriodicalContentHash({
+      issue: {
+        id: 'periodical:daily:2026-07-30',
+        cadence: 'daily',
+        periodKey: '2026-07-30',
+        volumeNo: 3,
+        timezone: 'Asia/Shanghai',
+        periodStartAt: 300,
+        periodEndAt: 400,
+        coverageStartedAt: 320,
+        status: 'frozen',
+        revision: 2,
+        overview: '本期概览。第二句。',
+        selectionVersion: 'importance-v1',
+        summaryVersion: 'fallback-v1',
+        sourceInputHash: 'private-source-input',
+        selectionContext: { threshold: 40 },
+        inputHash: 'private-input',
+        contentHash: '',
+        summaryStatus: 'fallback',
+        provider: null,
+        model: null,
+        lastBuiltAt: 390,
+        frozenAt: 400,
+      },
+      themes: [{
+        id: 'theme-one',
+        themeKey: 'products_tools',
+        title: '产品与工具',
+        trendNote: '本期收录 1 个事件。',
+        displayOrder: 0,
+      }],
+      events: [{
+        id: 'event-one',
+        themeId: 'theme-one',
+        eventKey: 'event-key-one',
+        topicKey: 'topic-key-one',
+        title: 'Event title',
+        summary: 'Evidence summary.',
+        summaryEvidenceIds: ['entry-evidence'],
+        whySelected: '来自高优先级来源。',
+        effectiveAt: 350,
+        firstSeenAt: 350,
+        lastSeenAt: 350,
+        importanceScore: 50.5,
+        score: {
+          version: 'importance-v1',
+          sourceQuality: { points: 30 },
+          freshness: { points: 20.5 },
+        },
+        cluster: { version: 'cluster-v1', entryIds: ['entry-evidence'] },
+        displayOrder: 0,
+      }],
+      evidence: [{
+        eventId: 'event-one',
+        entryId: 'entry-evidence',
+        sourceId: 'source-one',
+        sourceName: 'Source One',
+        sourceLabels: ['AI', '产品'],
+        editorialPriority: 'high',
+        entryTitle: 'Original title',
+        entryTitleZh: '中文标题',
+        entryLink: 'https://example.com/original',
+        canonicalUrl: 'https://example.com/original',
+        summaryExcerpt: 'Evidence excerpt.',
+        contentHash: 'entry-content-hash',
+        effectivePublishedAt: 350,
+        timestampFallback: false,
+        isPrimary: true,
+        displayOrder: 0,
+      }],
+    });
+    db.prepare(`
+      UPDATE periodical_issues
+      SET status = 'frozen', content_hash = ?, frozen_at = 400
+      WHERE id = 'periodical:daily:2026-07-30'
+    `).run(contentHash);
     db.close();
 
     const response = await fetch(`${server.baseUrl}/api/periodicals/daily/2026-07-30`);
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('etag'), '"content-hash-30"');
+    assert.equal(response.headers.get('etag'), `"${contentHash}"`);
     assert.match(String(response.headers.get('cache-control')), /no-cache/);
     const body = await response.json();
     assert.deepEqual(body.issue, {
@@ -218,7 +301,7 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
       overview: '本期概览。第二句。',
       selectionVersion: 'importance-v1',
       summaryVersion: 'fallback-v1',
-      contentHash: 'content-hash-30',
+      contentHash,
       summaryStatus: 'fallback',
       provider: null,
       model: null,
@@ -243,9 +326,24 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
     assert.equal(JSON.stringify(body).includes('threshold'), false);
 
     const notModified = await fetch(`${server.baseUrl}/api/periodicals/daily/2026-07-30`, {
-      headers: { 'If-None-Match': '"content-hash-30"' },
+      headers: { 'If-None-Match': `"${contentHash}"` },
     });
     assert.equal(notModified.status, 304);
+
+    const corrupted = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    corrupted.exec(`
+      DROP TRIGGER reject_frozen_periodical_event_update;
+      UPDATE periodical_events
+      SET summary = 'corrupted after the ETag was issued'
+      WHERE id = 'event-one';
+    `);
+    corrupted.close();
+    const rejected = await fetch(`${server.baseUrl}/api/periodicals/daily/2026-07-30`, {
+      headers: { 'If-None-Match': `"${contentHash}"` },
+    });
+    assert.equal(rejected.status, 503);
+    assert.notEqual(rejected.headers.get('etag'), `"${contentHash}"`);
+    assert.match(String(rejected.headers.get('cache-control')), /no-store/);
 
     for (const [pathname, expectedStatus] of [
       ['/api/periodicals/daily/2026-07-31', 404],

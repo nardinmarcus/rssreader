@@ -83,6 +83,7 @@ test('periodical schema initializes twice without rewriting existing entry data'
       'source_input_hash',
       'input_hash',
       'as_of_at',
+      'candidate_cutoff_at',
       'selection_version',
       'score_config_json',
       'summary_version',
@@ -101,6 +102,17 @@ test('periodical schema initializes twice without rewriting existing entry data'
     `).get().sql;
     for (const state of ['queued', 'running', 'retry_wait', 'succeeded', 'failed', 'superseded']) {
       assert.match(buildJobSql, new RegExp(`'${state}'`));
+    }
+
+    const triggers = new Set(db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name LIKE 'reject_frozen_periodical_%'
+    `).all().map(row => row.name));
+    for (const target of ['issue', 'theme', 'event', 'evidence', 'input']) {
+      for (const operation of ['insert', 'update', 'delete']) {
+        const trigger = `reject_frozen_periodical_${target}_${operation}`;
+        assert.equal(triggers.has(trigger), true, `missing frozen guard ${trigger}`);
+      }
     }
 
     assert.deepEqual(
