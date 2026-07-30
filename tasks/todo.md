@@ -1651,3 +1651,31 @@ Deploy `nardinmarcus/rssreader` as an independent production service on `myvps`,
   ```
 
 ---
+
+# 精选期刊最终设计稿
+
+## Plan
+
+- [x] 核对现有来源目录、SQLite 来源偏好、文章/行为数据、前端工作区和设计文档惯例。
+- [x] 固化不改变来源侧栏、唯一头部入口、三栏期刊工作区和日报/周报/月报结构。
+- [x] 定义事件证据、保守聚类、可解释评分、AI 边界、持久化模型和冻结生命周期。
+- [x] 完成歧义、迁移、错误状态和验收标准自审，并检查文档 diff。
+
+## Verification contract
+
+1. Product boundary -> verify: the draft preserves the source-first sidebar and adds no feed/group/hot-stream semantics.
+2. Source of truth -> verify: SQLite and versioned source definitions are authoritative; runtime caches are projections only.
+3. Explainability -> verify: every score component and “why selected” can be reconstructed from persisted evidence.
+4. Lifecycle -> verify: open daily issues freeze after day end; weekly/monthly consume frozen daily issues only.
+5. Implementation readiness -> verify: schema, routes, UI states, AI fallback, migration, and acceptance tests have explicit contracts.
+6. Scope -> verify: only the new specification and this task record change; no production code or UI is modified.
+
+## Review
+
+- Final draft: `docs/superpowers/specs/2026-07-30-namoo-reader-curated-periodicals-design.md`.
+- Repository fit: the design follows the current `lib/sources.js` + SQLite `source_preferences` authority split, current entry/user statistics, existing route state, and `DESIGN.md` workspace/responsive rules.
+- Ambiguity review fixed four boundaries: manual `user-submitted` content is outside RSS candidates; AI cannot merge events; wall-clock progress alone cannot rebuild an open issue; and the first weekly/monthly issue starts with a complete post-enable period.
+- Product defaults are implementation-ready: behavior scoring is supported but off in v1, pre-launch backfill is deferred, and scoring thresholds, caps, freeze grace, fallback, migration, and acceptance contracts are explicit.
+- Documentation checks pass: required sections and invariants are present, code fences are balanced, and `git diff --check` is clean. The final specification, Matt workflow configuration, and this task record are the only repository documents in scope; no production code, UI, runtime data, or cache was modified.
+- ADR alignment: periodical APIs follow the accepted Online Content Contract and never enter the Service Worker cache; offline mode shows a network-required state instead of a cached Issue.
+- Implementation tracker: `nardinmarcus/rssreader` issues #4–#13 are published with `ready-for-agent`; all native blocking edges were read back and match the approved dependency graph. Issue #4 is the only initial frontier.
