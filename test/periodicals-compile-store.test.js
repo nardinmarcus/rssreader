@@ -96,6 +96,8 @@ test('shadow sync persists a Custom Source event and timestamp fallback through 
 
     assert.equal(synced.issue.revision, 1);
     assert.equal(stored.issue.status, 'open');
+    assert.equal(stored.issue.summaryStatus, 'fallback');
+    assert.equal(stored.issue.summaryVersion, 'constrained-summary-v1');
     assert.equal(stored.issue.revision, 1);
     assert.equal(stored.events.length, 1);
     assert.equal(stored.events[0].importanceScore, 49.9);
@@ -445,6 +447,143 @@ test('shadow sync reads its source, candidate, and issue snapshot under BEGIN IM
 
     assert.equal(snapshotReadStates.length >= 4, true);
     assert.equal(snapshotReadStates.every(Boolean), true);
+  } finally {
+    db.close();
+  }
+});
+
+test('validated AI expression persists without changing revision, selection facts, or evidence', async () => {
+  const db = fixtureDatabase();
+  try {
+    const insertSource = db.prepare(`
+      INSERT INTO custom_sources (
+        id, name, feed_url, category, labels_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertSource.run(
+      'summary-source',
+      'Summary Source',
+      'https://summary.example/feed.xml',
+      'article',
+      '["产品"]',
+      NOW - 1000,
+      NOW - 1000,
+    );
+    insertSource.run(
+      'summary-source-2',
+      'Second Summary Source',
+      'https://second-summary.example/feed.xml',
+      'article',
+      '["产品"]',
+      NOW - 1000,
+      NOW - 1000,
+    );
+    const insertPreference = db.prepare(`
+      INSERT INTO source_preferences (
+        source_id, enabled, editorial_priority, display_order, updated_at
+      ) VALUES (?, 1, 'high', ?, '2026-07-30T04:00:00.000Z')
+    `);
+    insertPreference.run('summary-source', 0);
+    insertPreference.run('summary-source-2', 1);
+    const insertEntry = db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, summary, content,
+        content_hash, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertEntry.run(
+      'summary-entry',
+      'summary-source',
+      'Atlas releases alpha bravo charlie',
+      'https://summary.example/posts/atlas-release',
+      NOW,
+      'Atlas releases alpha bravo charlie.',
+      '<p>SQLite private body.</p>',
+      'summary-content-hash',
+      NOW,
+      NOW,
+    );
+    insertEntry.run(
+      'summary-entry-2',
+      'summary-source-2',
+      'Atlas releases alpha bravo charlie delta',
+      'https://second-summary.example/posts/atlas-release',
+      NOW,
+      'Atlas releases alpha bravo charlie delta.',
+      '<p>Second SQLite private body.</p>',
+      'summary-content-hash-2',
+      NOW,
+      NOW,
+    );
+
+    const aiAdapter = async request => ({
+      content: JSON.stringify({
+        overview: '本期聚焦 1 项有明确证据的进展。所有表达均受证据约束。',
+        events: request.evidencePackage.events.map(event => ({
+          id: event.id,
+          themeKey: 'products_tools',
+          title: '稳定事件获得证据确认',
+          summary: '现有证据说明该事件已经发生。',
+          evidenceIds: event.evidence.map(item => item.id),
+        })),
+        themes: [{ themeKey: 'products_tools', trendNote: '本期产品主题关注稳定进展。' }],
+      }),
+      provider: 'site-provider',
+      model: 'site-model',
+    });
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter });
+    const fallback = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    const generated = await periodicals.summarizeIssue({
+      cadence: 'daily',
+      periodKey: '2026-07-30',
+    });
+    const reread = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+
+    assert.equal(fallback.issue.summaryStatus, 'fallback');
+    assert.equal(generated.issue.summaryStatus, 'generated');
+    assert.equal(reread.issue.summaryStatus, 'generated');
+    assert.equal(reread.issue.provider, 'site-provider');
+    assert.equal(reread.issue.model, 'site-model');
+    assert.equal(reread.issue.revision, fallback.issue.revision);
+    assert.notEqual(reread.issue.contentHash, fallback.issue.contentHash);
+    assert.equal(fallback.events.length, 1);
+    assert.equal(fallback.evidence.length, 2);
+    assert.equal(fallback.events[0].score.confirmation.independentSourceCount, 2);
+    assert.equal(fallback.events[0].score.confirmation.points, 8);
+    assert.deepEqual(
+      fallback.events[0].cluster.entryIds,
+      ['summary-entry', 'summary-entry-2'],
+    );
+    assert.deepEqual(
+      reread.events.map(event => ({
+        id: event.id,
+        eventKey: event.eventKey,
+        topicKey: event.topicKey,
+        importanceScore: event.importanceScore,
+        score: event.score,
+        cluster: event.cluster,
+        whySelected: event.whySelected,
+        displayOrder: event.displayOrder,
+      })),
+      fallback.events.map(event => ({
+        id: event.id,
+        eventKey: event.eventKey,
+        topicKey: event.topicKey,
+        importanceScore: event.importanceScore,
+        score: event.score,
+        cluster: event.cluster,
+        whySelected: event.whySelected,
+        displayOrder: event.displayOrder,
+      })),
+    );
+    assert.deepEqual(reread.evidence, fallback.evidence);
+    assert.deepEqual(
+      reread.evidence.map(item => item.entryLink).sort(),
+      [
+        'https://second-summary.example/posts/atlas-release',
+        'https://summary.example/posts/atlas-release',
+      ],
+    );
   } finally {
     db.close();
   }
