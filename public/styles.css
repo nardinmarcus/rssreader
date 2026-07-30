@@ -8722,15 +8722,52 @@ body[data-periodicals-mode="off"] .periodicals-open {
   font-size: 14px;
   line-height: 1.7;
 }
+.periodical-event-source-count {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 650;
+}
 .periodical-event-why {
   margin: 12px 0 0;
   color: var(--text-2);
   font-size: 12px;
 }
-.periodical-evidence-list {
-  margin: 16px 0 0;
-  padding: 12px 0 0;
+.periodical-score-details,
+.periodical-evidence-details {
+  margin-top: 14px;
   border-top: 1px solid var(--border-subtle);
+}
+.periodical-details-summary {
+  padding: 10px 0 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.periodical-score-components {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.periodical-score-component {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  color: var(--text-1);
+  font-size: 12px;
+}
+.periodical-score-component small {
+  grid-column: 1 / -1;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.periodical-evidence-list {
+  margin: 4px 0 0;
+  padding: 0;
   list-style: none;
 }
 .periodical-evidence {

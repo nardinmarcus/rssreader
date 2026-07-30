@@ -122,6 +122,45 @@
       return `${score.toFixed(1).replace(/\.0$/, '')} 分`;
     }
 
+    function scoreComponents(score = {}) {
+      const sourceQuality = score.sourceQuality || {};
+      const confirmation = score.confirmation || {};
+      const persistence = score.persistence || {};
+      const trend = score.trend || {};
+      const freshness = score.freshness || {};
+      const behavior = score.behavior || {};
+      return [
+        ['来源质量', sourceQuality.points, `${EDITORIAL_PRIORITY_LABELS[sourceQuality.priority] || '普通'}优先级`],
+        ['独立确认', confirmation.points, `${Number(confirmation.independentSourceCount) || 0} 个独立来源`],
+        ['近期持续', persistence.points, `过去 7 个冻结日报 ${Number(persistence.daysPresent) || 0} 天`],
+        ['趋势增量', trend.points, `单日峰值 ${Number(trend.baselineSourceCount) || 0}，增加 ${Number(trend.sourceIncrease) || 0}`],
+        ['时间衰减', freshness.points, `${Number(freshness.ageHours) || 0} 小时`],
+        ['行为信号', behavior.points, behavior.enabled ? '已启用' : '已关闭'],
+      ];
+    }
+
+    function renderScoreDetails(event) {
+      const details = element('details', 'periodical-score-details');
+      const version = String(event.score && event.score.version || '').trim();
+      details.append(element(
+        'summary',
+        'periodical-details-summary',
+        version ? `评分分量 · ${version}` : '评分分量',
+      ));
+      const list = element('ul', 'periodical-score-components');
+      for (const [label, points, input] of scoreComponents(event.score)) {
+        const row = element('li', 'periodical-score-component');
+        row.append(
+          element('strong', '', label),
+          element('span', '', displayScore(points)),
+          element('small', '', input),
+        );
+        list.append(row);
+      }
+      details.append(list);
+      return details;
+    }
+
     function renderEvidence(item) {
       const evidence = element('li', 'periodical-evidence');
       const source = element('span', 'periodical-evidence-source', item.sourceName || '未知来源');
@@ -231,15 +270,33 @@
               element('h3', '', event.title),
               element('strong', 'periodical-score', displayScore(event.importanceScore)),
             );
+            const eventEvidence = evidence.filter(value => value.eventId === event.id);
+            const independentSourceCount = Number(
+              event.score && event.score.confirmation
+                && event.score.confirmation.independentSourceCount,
+            ) || 0;
+            const evidenceDetails = element('details', 'periodical-evidence-details');
+            evidenceDetails.append(element(
+              'summary',
+              'periodical-details-summary',
+              `查看 ${eventEvidence.length} 条证据`,
+            ));
             const evidenceList = element('ul', 'periodical-evidence-list');
-            for (const item of evidence.filter(value => value.eventId === event.id)) {
+            for (const item of eventEvidence) {
               evidenceList.append(renderEvidence(item));
             }
+            evidenceDetails.append(evidenceList);
             card.append(
               heading,
+              element(
+                'p',
+                'periodical-event-source-count',
+                `${independentSourceCount} 个独立来源 · ${eventEvidence.length} 条证据`,
+              ),
               element('p', 'periodical-event-summary', event.summary),
               element('p', 'periodical-event-why', event.whySelected),
-              evidenceList,
+              renderScoreDetails(event),
+              evidenceDetails,
             );
             section.append(card);
           }

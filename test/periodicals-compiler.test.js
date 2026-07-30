@@ -132,6 +132,9 @@ test('source eligibility and editorial priority are explicit while refresh prior
   const candidates = sources.map((source, index) => candidate({
     id: `entry-${source.id}`,
     sourceId: source.id,
+    title: `Entry for ${source.id}`,
+    titleZh: null,
+    link: `https://example.com/${source.id}`,
     publishedTs: NOW,
     createdAt: NOW,
     contentHash: `hash-${index}`,
@@ -196,7 +199,7 @@ test('Shanghai window, build cutoff, and future timestamp fallback are strict an
   assert.equal(endBoundary.events.length, 0);
 });
 
-test('each candidate remains an independent event and AI HOT body links do not confirm it', () => {
+test('AI HOT canonical syndication merges evidence without counting body links as confirmation', () => {
   const source = highPrioritySource({
     id: 'aihot-daily',
     name: 'AI HOT 日报',
@@ -217,12 +220,12 @@ test('each candidate remains an independent event and AI HOT body links do not c
     ],
   });
 
-  assert.equal(result.events.length, 2);
+  assert.equal(result.events.length, 1);
   assert.equal(result.evidence.length, 2);
-  assert.equal(new Set(result.events.map(event => event.eventKey)).size, 2);
+  assert.equal(new Set(result.events.map(event => event.eventKey)).size, 1);
   for (const event of result.events) {
     assert.deepEqual(event.score.confirmation, { independentSourceCount: 1, points: 0 });
-    assert.equal(event.cluster.reason, 'single-candidate');
+    assert.equal(event.cluster.reason, 'canonical-url');
     assert.doesNotMatch(event.whySelected, /确认|OpenAI|Anthropic/);
   }
 });
@@ -230,6 +233,9 @@ test('each candidate remains an independent event and AI HOT body links do not c
 test('stable tie-break caps the issue at 12 and is independent of candidate input order', () => {
   const candidates = Array.from({ length: 13 }, (_, index) => candidate({
     id: `tied-entry-${String(index + 1).padStart(2, '0')}`,
+    title: `Acme launches Product-${String(index + 1).padStart(2, '0')} for enterprise teams`,
+    titleZh: null,
+    summary: `Acme launches Product-${String(index + 1).padStart(2, '0')} for enterprise teams.`,
     link: `https://example.com/tied/${index + 1}`,
     contentHash: `tied-content-${index + 1}`,
     publishedTs: NOW,
