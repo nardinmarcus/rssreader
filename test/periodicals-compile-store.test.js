@@ -364,6 +364,11 @@ test('shadow sync scores the current topic from the latest frozen daily SQLite e
 
     const current = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
     const stored = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    const selectionContext = JSON.parse(db.prepare(`
+      SELECT selection_context_json
+      FROM periodical_issues
+      WHERE id = ?
+    `).get(current.issue.id).selection_context_json);
 
     assert.equal(current.events.length, 1);
     assert.deepEqual(current.events[0].score.confirmation, {
@@ -385,6 +390,30 @@ test('shadow sync scores the current topic from the latest frozen daily SQLite e
     assert.match(stored.events[0].whySelected, /2 个独立来源确认/);
     assert.match(stored.events[0].whySelected, /过去 7 个冻结日报出现 1 天/);
     assert.match(stored.events[0].whySelected, /单日峰值增加 1 个/);
+    assert.deepEqual(selectionContext.scoreConfig, {
+      behavior: {
+        enabled: false,
+        maxPoints: 5,
+        starWeight: 2,
+        viewWeight: 0.5,
+      },
+      confirmation: { maxPoints: 25, pointsPerAdditionalSource: 8 },
+      freshness: { halfLifeHours: 36, maxPoints: 20 },
+      maxEvents: 12,
+      persistence: {
+        lookbackFrozenDailyIssues: 7,
+        maxPoints: 14,
+        pointsPerDay: 3.5,
+      },
+      sourceQuality: { high: 30, low: 8, normal: 20 },
+      threshold: 40,
+      trend: {
+        baseline: 'max-daily-independent-source-count',
+        lookbackFrozenDailyIssues: 7,
+        maxPoints: 6,
+        pointsPerAdditionalSource: 2,
+      },
+    });
   } finally {
     db.close();
   }
