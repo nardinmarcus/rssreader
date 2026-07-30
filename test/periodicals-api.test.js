@@ -7,6 +7,8 @@ const { spawn } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
 const { computePeriodicalContentHash } = require('../lib/periodical-summary');
+const { createPeriodicalsModule } = require('../lib/periodicals');
+const { seedEmptyFrozenDailyMonths } = require('./helpers/periodical-monthly-fixture');
 
 const projectDir = path.resolve(__dirname, '..');
 
@@ -96,6 +98,11 @@ test('periodical index validates parameters and reads a paged allowlist projecti
   try {
     server = await startServer(dataDir, 'on');
     const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    seedEmptyFrozenDailyMonths(db, ['2026-06'], { startVolume: 100 });
+    const periodicals = createPeriodicalsModule({ db, mode: 'on', logger: () => {} });
+    const monthlyBuildAt = Date.parse('2026-07-01T00:05:00.000+08:00');
+    periodicals.syncMonthlyRollup({ now: monthlyBuildAt, trigger: 'api-index-fixture' });
+    assert.equal((await periodicals.runNextBuild({ now: monthlyBuildAt + 1 })).status, 'succeeded');
     const insertOpenIssue = db.prepare(`
       INSERT INTO periodical_issues (
         id, cadence, period_key, volume_no, period_start_at, period_end_at,
@@ -107,12 +114,11 @@ test('periodical index validates parameters and reads a paged allowlist projecti
     insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400, 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
     insertOpenIssue.run('periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 100, 800, 'Weekly overview', 'importance-v1', 'fallback-v1', 4, 4);
     insertOpenIssue.run('periodical:weekly:2026-W32', 'weekly', '2026-W32', 2, 800, 1500, 'Hidden pending Weekly', 'importance-v1', 'fallback-v1', 5, 5);
-    insertOpenIssue.run('periodical:monthly:2026-06', 'monthly', '2026-06', 1, 100, 800, 'Monthly overview', 'monthly-rollup-v1', 'fallback-v1', 6, 6);
     insertOpenIssue.run('periodical:monthly:2026-07', 'monthly', '2026-07', 2, 800, 1500, 'Hidden pending Monthly', 'monthly-rollup-v1', 'fallback-v1', 7, 7);
     db.exec(`
       UPDATE periodical_issues
       SET status = 'frozen', frozen_at = period_end_at
-      WHERE period_key IN ('2026-07-28', '2026-07-29', '2026-W31', '2026-06')
+      WHERE period_key IN ('2026-07-28', '2026-07-29', '2026-W31')
     `);
     db.close();
 
@@ -141,8 +147,8 @@ test('periodical index validates parameters and reads a paged allowlist projecti
     const nextResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=daily&limit=2&cursor=2026-07-29`);
     const next = await nextResponse.json();
     assert.equal(nextResponse.status, 200);
-    assert.deepEqual(next.issues.map(issue => issue.periodKey), ['2026-07-28']);
-    assert.equal(next.nextCursor, null);
+    assert.deepEqual(next.issues.map(issue => issue.periodKey), ['2026-07-28', '2026-06-30']);
+    assert.equal(next.nextCursor, '2026-06-30');
 
     const weeklyResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=weekly`);
     const weekly = await weeklyResponse.json();
@@ -180,73 +186,15 @@ test('Monthly detail exposes a Frozen empty issue but hides an incomplete placeh
   try {
     server = await startServer(dataDir, 'on');
     const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
-    const issue = {
-      id: 'periodical:monthly:2026-06',
-      cadence: 'monthly',
-      periodKey: '2026-06',
-      volumeNo: 1,
-      timezone: 'Asia/Shanghai',
-      periodStartAt: 100,
-      periodEndAt: 200,
-      coverageStartedAt: 100,
-      status: 'frozen',
-      revision: 1,
-      overview: '本月 30 份冻结日报均已完整覆盖，但没有事件达到入选门槛。第二句。',
-      selectionVersion: 'monthly-rollup-v1',
-      summaryVersion: 'constrained-summary-v1',
-      sourceInputHash: 'private-monthly-source-input',
-      selectionContext: { dailyInputCount: 30 },
-      inputHash: 'private-monthly-input',
-      contentHash: '',
-      summaryStatus: 'fallback',
-      provider: null,
-      model: null,
-      lastBuiltAt: 201,
-      frozenAt: 201,
-    };
-    issue.contentHash = computePeriodicalContentHash({
-      issue,
-      themes: [],
-      events: [],
-      evidence: [],
-      inputs: [],
-    });
-    db.prepare(`
-      INSERT INTO periodical_issues (
-        id, cadence, period_key, volume_no, timezone,
-        period_start_at, period_end_at, coverage_started_at,
-        status, revision, overview, selection_version, summary_version,
-        source_input_hash, selection_context_json, input_hash, content_hash,
-        summary_status, provider, model, last_built_at, frozen_at,
-        created_at, updated_at
-      ) VALUES (
-        ?, 'monthly', ?, ?, 'Asia/Shanghai',
-        ?, ?, ?, 'finalizing', 1, ?, ?, ?,
-        ?, ?, ?, ?, 'fallback', NULL, NULL, ?, ?, ?, ?
-      )
-    `).run(
-      issue.id,
-      issue.periodKey,
-      issue.volumeNo,
-      issue.periodStartAt,
-      issue.periodEndAt,
-      issue.coverageStartedAt,
-      issue.overview,
-      issue.selectionVersion,
-      issue.summaryVersion,
-      issue.sourceInputHash,
-      JSON.stringify(issue.selectionContext),
-      issue.inputHash,
-      issue.contentHash,
-      issue.lastBuiltAt,
-      issue.frozenAt,
-      issue.periodStartAt,
-      issue.frozenAt,
-    );
-    db.prepare(`
-      UPDATE periodical_issues SET status = 'frozen'
-      WHERE id = 'periodical:monthly:2026-06'
-    `).run();
+    seedEmptyFrozenDailyMonths(db, ['2026-06']);
+    const periodicals = createPeriodicalsModule({ db, mode: 'on', logger: () => {} });
+    const monthlyBuildAt = Date.parse('2026-07-01T00:05:00.000+08:00');
+    assert.equal(periodicals.syncMonthlyRollup({
+      now: monthlyBuildAt,
+      trigger: 'api-detail-fixture',
+    }).action, 'queued');
+    assert.equal((await periodicals.runNextBuild({ now: monthlyBuildAt + 1 })).status, 'succeeded');
+    const issue = periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-06' }).issue;
     db.prepare(`
       INSERT INTO periodical_issues (
         id, cadence, period_key, volume_no, timezone,
@@ -255,10 +203,16 @@ test('Monthly detail exposes a Frozen empty issue but hides an incomplete placeh
         created_at, updated_at
       ) VALUES (
         'periodical:monthly:2026-07', 'monthly', '2026-07', 2, 'Asia/Shanghai',
-        200, 300, 200, 'finalizing', 0, '', 'monthly-rollup-v1',
-        'constrained-summary-v1', 200, 200
+        ?, ?, ?, 'finalizing', 0, '', 'monthly-rollup-v1',
+        'constrained-summary-v1', ?, ?
       )
-    `).run();
+    `).run(
+      Date.parse('2026-07-01T00:00:00.000+08:00'),
+      Date.parse('2026-08-01T00:00:00.000+08:00'),
+      Date.parse('2026-07-01T00:00:00.000+08:00'),
+      monthlyBuildAt,
+      monthlyBuildAt,
+    );
     db.close();
 
     const response = await fetch(`${server.baseUrl}/api/periodicals/monthly/2026-06`);

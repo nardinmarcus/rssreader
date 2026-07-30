@@ -153,6 +153,8 @@
 - A constrained-summary test fixture must use the exact supported numeric token; an allowed structural count `1` does not authorize the Chinese token `一`, and an accidental validation repair changes AI-call assertions.
 - Before asserting across a browser/API boundary, read the endpoint contract or capture its response shape; guessing an envelope key can turn valid runtime evidence into a misleading diagnostic NON_PASS.
 - A legacy no-op fixture must restore the exact legacy selection context as well as its hashes; current algorithm context paired with old hashes is a false compatibility proof.
+- A cadence catch-up sweep must persist every due period before waking the worker; selecting only the oldest period makes startup progress depend on later timers, while same-timestamp jobs need period-time ordering instead of hash-ID ordering.
+- A Frozen rollup fixture is valid only when its complete ordered input chain, historical succeeded-job identity, structure, and semantic content hash agree; seed API positives through the production build path instead of toggling `status = 'frozen'` on an incomplete row.
 - A durable lease must exceed one complete provider adapter call, including internal retries and backoff; renewing only before a call cannot save a lease whose duration merely equals the nominal timeout.
 - A pre-orchestration compatibility matcher must require the exact legacy field set and no durable job history; projecting known keys lets future algorithm inputs masquerade as an old no-op.
 - Browser shadow evidence must query persisted child rows through the schema's exact table names; inspect `sqlite_master` before treating an ad hoc SQLite assertion as a product failure.

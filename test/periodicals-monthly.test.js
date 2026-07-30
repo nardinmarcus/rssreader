@@ -325,6 +325,164 @@ function seedFrozenDaily(db, {
   return { issue, themes, events: dailyEvents, evidence };
 }
 
+function seedRawMonthlyIssue(db, {
+  periodKey,
+  volumeNo,
+  id = `periodical:monthly:${periodKey}`,
+  status = 'finalizing',
+  contentHashOverride,
+}) {
+  const periodStartAt = Date.parse(`${periodKey}-01T00:00:00.000+08:00`);
+  const [year, month] = periodKey.split('-').map(Number);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const periodEndAt = Date.parse(
+    `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00.000+08:00`,
+  );
+  const issue = {
+    id,
+    cadence: 'monthly',
+    periodKey,
+    volumeNo,
+    timezone: 'Asia/Shanghai',
+    periodStartAt,
+    periodEndAt,
+    coverageStartedAt: periodStartAt,
+    status,
+    revision: status === 'frozen' ? 1 : 0,
+    overview: status === 'frozen' ? '损坏的冻结月报。第二句。' : '',
+    selectionVersion: 'monthly-rollup-v1',
+    summaryVersion: 'constrained-summary-v1',
+    sourceInputHash: `raw-source:${periodKey}`,
+    selectionContext: {},
+    inputHash: `raw-input:${periodKey}`,
+    contentHash: '',
+    summaryStatus: 'fallback',
+    provider: null,
+    model: null,
+    lastBuiltAt: status === 'frozen' ? periodEndAt : null,
+    frozenAt: status === 'frozen' ? periodEndAt + 1 : null,
+  };
+  issue.contentHash = contentHashOverride === undefined
+    ? computePeriodicalContentHash({
+        issue,
+        themes: [],
+        events: [],
+        evidence: [],
+        inputs: [],
+      })
+    : contentHashOverride;
+  db.prepare(`
+    INSERT INTO periodical_issues (
+      id, cadence, period_key, volume_no, timezone,
+      period_start_at, period_end_at, coverage_started_at,
+      status, revision, overview, selection_version, summary_version,
+      source_input_hash, selection_context_json, input_hash, content_hash,
+      summary_status, provider, model, last_built_at, frozen_at,
+      created_at, updated_at
+    ) VALUES (
+      ?, 'monthly', ?, ?, 'Asia/Shanghai',
+      ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      'fallback', NULL, NULL, ?, ?,
+      ?, ?
+    )
+  `).run(
+    issue.id,
+    issue.periodKey,
+    issue.volumeNo,
+    issue.periodStartAt,
+    issue.periodEndAt,
+    issue.coverageStartedAt,
+    status === 'frozen' ? 'finalizing' : status,
+    issue.revision,
+    issue.overview,
+    issue.selectionVersion,
+    issue.summaryVersion,
+    issue.sourceInputHash,
+    JSON.stringify(issue.selectionContext),
+    issue.inputHash,
+    issue.contentHash,
+    issue.lastBuiltAt,
+    issue.frozenAt,
+    issue.periodStartAt,
+    issue.frozenAt || issue.periodStartAt,
+  );
+  if (status === 'frozen') {
+    db.prepare(`
+      UPDATE periodical_issues SET status = 'frozen' WHERE id = ?
+    `).run(issue.id);
+  }
+  return issue;
+}
+
+function seedFrozenMonths(db, monthKeys, { skip = null, startVolume = 1 } = {}) {
+  let volumeNo = startVolume;
+  for (const monthKey of monthKeys) {
+    for (const periodKey of naturalMonthKeys(monthKey)) {
+      if (periodKey !== skip) seedFrozenDaily(db, { periodKey, volumeNo });
+      volumeNo += 1;
+    }
+  }
+}
+
+async function drainImmediateBuilds(periodicals, now, limit = 20) {
+  const results = [];
+  while (results.length < limit) {
+    const result = await periodicals.runNextBuild({ now });
+    if (!result) break;
+    results.push(result);
+  }
+  return results;
+}
+
+function storedEmptyMonthlyDocument(db, issueId) {
+  const row = db.prepare(`
+    SELECT * FROM periodical_issues WHERE id = ?
+  `).get(issueId);
+  return {
+    issue: {
+      id: row.id,
+      cadence: row.cadence,
+      periodKey: row.period_key,
+      volumeNo: row.volume_no,
+      timezone: row.timezone,
+      periodStartAt: row.period_start_at,
+      periodEndAt: row.period_end_at,
+      coverageStartedAt: row.coverage_started_at,
+      status: row.status,
+      revision: row.revision,
+      overview: row.overview,
+      selectionVersion: row.selection_version,
+      summaryVersion: row.summary_version,
+      sourceInputHash: row.source_input_hash,
+      selectionContext: JSON.parse(row.selection_context_json),
+      inputHash: row.input_hash,
+      contentHash: row.content_hash,
+      summaryStatus: row.summary_status,
+      provider: row.provider,
+      model: row.model,
+      lastBuiltAt: row.last_built_at,
+      frozenAt: row.frozen_at,
+    },
+    themes: [],
+    events: [],
+    evidence: [],
+    inputs: db.prepare(`
+      SELECT issue_id, daily_issue_id, daily_content_hash, display_order
+      FROM periodical_issue_inputs
+      WHERE issue_id = ?
+      ORDER BY display_order
+    `).all(issueId).map(input => ({
+      issueId: input.issue_id,
+      dailyIssueId: input.daily_issue_id,
+      dailyContentHash: input.daily_content_hash,
+      displayOrder: input.display_order,
+    })),
+  };
+}
+
 test('Shanghai January boundary rolls the complete prior December into one Frozen Monthly', async () => {
   const db = fixtureDatabase();
   try {
@@ -503,6 +661,327 @@ test('a sweep after multiple missed boundaries recovers complete months oldest f
       FROM periodical_issues
       WHERE id = 'periodical:monthly:2026-02'
     `).get().count, 0);
+  } finally {
+    db.close();
+  }
+});
+
+test('one Monthly sync durably schedules every due month before the worker drains', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05']);
+    const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: startupAt,
+      trigger: 'single-startup-catch-up',
+    });
+    assert.deepEqual(
+      (scheduled.issues || [scheduled]).map(item => item.periodKey),
+      ['2026-03', '2026-04', '2026-05'],
+    );
+    assert.deepEqual(db.prepare(`
+      SELECT issue.period_key, issue.volume_no, job.status
+      FROM periodical_issues AS issue
+      INNER JOIN periodical_build_jobs AS job ON job.issue_id = issue.id
+      WHERE issue.cadence = 'monthly'
+      ORDER BY issue.period_key
+    `).all().map(row => ({ ...row })), [
+      { period_key: '2026-03', volume_no: 1, status: 'queued' },
+      { period_key: '2026-04', volume_no: 2, status: 'queued' },
+      { period_key: '2026-05', volume_no: 3, status: 'queued' },
+    ]);
+
+    const drained = await drainImmediateBuilds(periodicals, startupAt + 1);
+    assert.equal(drained.length, 3);
+    assert.equal(drained.every(job => job.status === 'succeeded'), true);
+    assert.deepEqual(drained.map(job => job.issueId), [
+      'periodical:monthly:2026-03',
+      'periodical:monthly:2026-04',
+      'periodical:monthly:2026-05',
+    ]);
+    assert.equal(periodicals.hasActiveBuildJobs(), false);
+    assert.deepEqual(db.prepare(`
+      SELECT period_key, volume_no, status
+      FROM periodical_issues
+      WHERE cadence = 'monthly'
+      ORDER BY period_key
+    `).all().map(row => ({ ...row })), [
+      { period_key: '2026-03', volume_no: 1, status: 'frozen' },
+      { period_key: '2026-04', volume_no: 2, status: 'frozen' },
+      { period_key: '2026-05', volume_no: 3, status: 'frozen' },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('a permanently retrying oldest month does not starve later due months', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05'], { skip: '2026-03-15' });
+    const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: startupAt,
+      trigger: 'oldest-retry-catch-up',
+    });
+    assert.deepEqual(
+      (scheduled.issues || [scheduled]).map(item => [item.periodKey, item.action]),
+      [
+        ['2026-03', 'retry_wait'],
+        ['2026-04', 'queued'],
+        ['2026-05', 'queued'],
+      ],
+    );
+
+    const drained = await drainImmediateBuilds(periodicals, startupAt + 1);
+    assert.equal(drained.length, 2);
+    assert.equal(drained.every(job => job.status === 'succeeded'), true);
+    assert.deepEqual(db.prepare(`
+      SELECT period_key, status
+      FROM periodical_issues
+      WHERE cadence = 'monthly'
+      ORDER BY period_key
+    `).all().map(row => ({ ...row })), [
+      { period_key: '2026-03', status: 'finalizing' },
+      { period_key: '2026-04', status: 'frozen' },
+      { period_key: '2026-05', status: 'frozen' },
+    ]);
+    assert.deepEqual({ ...db.prepare(`
+      SELECT status, error_code
+      FROM periodical_build_jobs
+      WHERE issue_id = 'periodical:monthly:2026-03'
+    `).get() }, {
+      status: 'retry_wait',
+      error_code: 'ERR_PERIODICAL_MONTHLY_INPUTS_PENDING',
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('an open Monthly with a succeeded job is rebuilt instead of pinning catch-up', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05']);
+    const marchAt = Date.parse('2026-04-01T00:05:00.000+08:00');
+    const stale = periodicals.syncMonthlyRollup({ now: marchAt, trigger: 'seed-stale-open' });
+    db.prepare(`
+      UPDATE periodical_build_jobs
+      SET status = 'succeeded', completed_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(marchAt + 1, marchAt + 1, stale.job.id);
+    db.prepare(`
+      UPDATE periodical_issues SET status = 'open' WHERE id = ?
+    `).run(stale.issueId);
+
+    const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: startupAt,
+      trigger: 'repair-stale-open',
+    });
+    assert.deepEqual(
+      (scheduled.issues || [scheduled]).map(item => [item.periodKey, item.action]),
+      [
+        ['2026-03', 'queued'],
+        ['2026-04', 'queued'],
+        ['2026-05', 'queued'],
+      ],
+    );
+    await drainImmediateBuilds(periodicals, startupAt + 1);
+    assert.deepEqual(db.prepare(`
+      SELECT period_key, volume_no, status
+      FROM periodical_issues
+      WHERE cadence = 'monthly'
+      ORDER BY period_key
+    `).all().map(row => ({ ...row })), [
+      { period_key: '2026-03', volume_no: 1, status: 'frozen' },
+      { period_key: '2026-04', volume_no: 2, status: 'frozen' },
+      { period_key: '2026-05', volume_no: 3, status: 'frozen' },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('a noncanonical non-Frozen Monthly identity is safely rebuilt once', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03']);
+    seedRawMonthlyIssue(db, {
+      id: 'legacy-monthly:2026-03',
+      periodKey: '2026-03',
+      volumeNo: 1,
+      status: 'finalizing',
+    });
+
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: Date.parse('2026-04-01T00:05:00.000+08:00'),
+      trigger: 'repair-noncanonical-id',
+    });
+    assert.equal(scheduled.action, 'queued');
+    assert.equal(scheduled.issueId, 'periodical:monthly:2026-03');
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM periodical_issues
+      WHERE id = 'legacy-monthly:2026-03'
+    `).get().count, 0);
+    assert.deepEqual({ ...db.prepare(`
+      SELECT id, volume_no, status FROM periodical_issues
+      WHERE cadence = 'monthly' AND period_key = '2026-03'
+    `).get() }, {
+      id: 'periodical:monthly:2026-03',
+      volume_no: 1,
+      status: 'finalizing',
+    });
+    const repeated = periodicals.syncMonthlyRollup({
+      now: Date.parse('2026-04-01T00:05:00.000+08:00'),
+      trigger: 'repeat-repaired-id',
+    });
+    assert.equal(repeated.action, 'noop');
+    assert.equal(repeated.job.id, scheduled.job.id);
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM periodical_issues
+      WHERE cadence = 'monthly' AND period_key = '2026-03'
+    `).get().count, 1);
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM periodical_build_jobs
+      WHERE issue_id = 'periodical:monthly:2026-03'
+    `).get().count, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('invalid Frozen Monthly snapshots are diagnosed, hidden, and do not starve later months', async t => {
+  const cases = [
+    {
+      name: 'content hash mismatch',
+      corrupt(db) {
+        db.exec('DROP TRIGGER reject_frozen_periodical_issue_update');
+        db.prepare(`
+          UPDATE periodical_issues SET content_hash = ?
+          WHERE id = 'periodical:monthly:2026-03'
+        `).run('a'.repeat(64));
+      },
+    },
+    {
+      name: 'hash-valid missing ordered input',
+      corrupt(db) {
+        const frozen = storedEmptyMonthlyDocument(db, 'periodical:monthly:2026-03');
+        db.exec(`
+          DROP TRIGGER reject_frozen_periodical_issue_update;
+          DROP TRIGGER reject_frozen_periodical_input_delete;
+        `);
+        db.prepare(`
+          DELETE FROM periodical_issue_inputs
+          WHERE issue_id = 'periodical:monthly:2026-03' AND display_order = 30
+        `).run();
+        db.prepare(`
+          UPDATE periodical_issues SET content_hash = ? WHERE id = ?
+        `).run(computePeriodicalContentHash({
+          ...frozen,
+          inputs: frozen.inputs.slice(0, -1),
+        }), 'periodical:monthly:2026-03');
+      },
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      const db = fixtureDatabase();
+      try {
+        let periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+        seedFrozenMonths(db, ['2026-03']);
+        const marchAt = Date.parse('2026-04-01T00:05:00.000+08:00');
+        periodicals.syncMonthlyRollup({ now: marchAt, trigger: 'seed-frozen-monthly' });
+        assert.equal((await periodicals.runNextBuild({ now: marchAt + 1 })).status, 'succeeded');
+        fixture.corrupt(db);
+        periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+        seedFrozenMonths(db, ['2026-04', '2026-05'], { startVolume: 32 });
+
+        const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+        const scheduled = periodicals.syncMonthlyRollup({
+          now: startupAt,
+          trigger: 'detect-invalid-frozen',
+        });
+        assert.deepEqual(
+          (scheduled.issues || [scheduled]).map(item => [item.periodKey, item.action]),
+          [
+            ['2026-03', 'blocked'],
+            ['2026-04', 'queued'],
+            ['2026-05', 'queued'],
+          ],
+        );
+        assert.deepEqual({ ...db.prepare(`
+          SELECT status, error_code
+          FROM periodical_build_jobs
+          WHERE issue_id = 'periodical:monthly:2026-03'
+          ORDER BY created_at DESC, rowid DESC
+          LIMIT 1
+        `).get() }, {
+          status: 'failed',
+          error_code: 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID',
+        });
+        assert.deepEqual(
+          periodicals.listIssues({ cadence: 'monthly' }).issues.map(issue => issue.periodKey),
+          [],
+        );
+        assert.throws(
+          () => periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-03' }),
+          error => error.statusCode === 503
+            && error.code === 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID',
+        );
+
+        const drained = await drainImmediateBuilds(periodicals, startupAt + 1);
+        assert.equal(drained.length, 2);
+        assert.equal(drained.every(job => job.status === 'succeeded'), true);
+        assert.deepEqual(
+          periodicals.listIssues({ cadence: 'monthly' }).issues.map(issue => issue.periodKey),
+          ['2026-05', '2026-04'],
+        );
+      } finally {
+        db.close();
+      }
+    });
+  }
+});
+
+test('a later Frozen volume cannot force an earlier catch-up month to take a larger volume', () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05']);
+    seedRawMonthlyIssue(db, {
+      periodKey: '2026-05',
+      volumeNo: 1,
+      status: 'frozen',
+    });
+
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: Date.parse('2026-06-01T00:05:00.000+08:00'),
+      trigger: 'reject-reordered-volume-history',
+    });
+    assert.equal(scheduled.action, 'blocked');
+    assert.equal(scheduled.errorCode, 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER');
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM periodical_issues
+      WHERE cadence = 'monthly' AND period_key < '2026-05'
+    `).get().count, 0);
+    assert.deepEqual({ ...db.prepare(`
+      SELECT status, error_code
+      FROM periodical_build_jobs
+      WHERE issue_id = 'periodical:monthly:2026-05'
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `).get() }, {
+      status: 'failed',
+      error_code: 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER',
+    });
   } finally {
     db.close();
   }
@@ -763,11 +1242,38 @@ test('a repaired old Monthly input chain creates a replacement job after month r
       periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-04' }).issue.status,
       'frozen',
     );
-    assert.equal(db.prepare(`
-      SELECT COUNT(*) AS count
+    assert.deepEqual(db.prepare(`
+      SELECT period_key, volume_no, status
       FROM periodical_issues
-      WHERE cadence = 'monthly' AND period_key > '2026-04'
-    `).get().count, 0);
+      WHERE cadence = 'monthly'
+      ORDER BY period_key
+    `).all().map(row => ({ ...row })), [
+      { period_key: '2026-04', volume_no: 1, status: 'frozen' },
+      { period_key: '2026-05', volume_no: 2, status: 'finalizing' },
+      { period_key: '2026-06', volume_no: 3, status: 'finalizing' },
+    ]);
+    assert.deepEqual(db.prepare(`
+      SELECT issue.period_key, job.status, job.error_code
+      FROM periodical_build_jobs AS job
+      INNER JOIN periodical_issues AS issue ON issue.id = job.issue_id
+      WHERE issue.cadence = 'monthly' AND issue.period_key > '2026-04'
+      ORDER BY issue.period_key
+    `).all().map(row => ({ ...row })), [
+      {
+        period_key: '2026-05',
+        status: 'retry_wait',
+        error_code: 'ERR_PERIODICAL_MONTHLY_INPUTS_PENDING',
+      },
+      {
+        period_key: '2026-06',
+        status: 'retry_wait',
+        error_code: 'ERR_PERIODICAL_MONTHLY_INPUTS_PENDING',
+      },
+    ]);
+    assert.deepEqual(
+      periodicals.listIssues({ cadence: 'monthly' }).issues.map(issue => issue.periodKey),
+      ['2026-04'],
+    );
   } finally {
     db.close();
   }
