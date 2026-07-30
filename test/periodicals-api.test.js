@@ -7,6 +7,8 @@ const { spawn } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
 const { computePeriodicalContentHash } = require('../lib/periodical-summary');
+const { createPeriodicalsModule } = require('../lib/periodicals');
+const { seedEmptyFrozenDailyMonths } = require('./helpers/periodical-monthly-fixture');
 
 const projectDir = path.resolve(__dirname, '..');
 
@@ -96,17 +98,26 @@ test('periodical index validates parameters and reads a paged allowlist projecti
   try {
     server = await startServer(dataDir, 'on');
     const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    seedEmptyFrozenDailyMonths(db, ['2026-06'], { startVolume: 100 });
+    const periodicals = createPeriodicalsModule({ db, mode: 'on', logger: () => {} });
+    const monthlyBuildAt = Date.parse('2026-07-01T00:05:00.000+08:00');
+    periodicals.syncMonthlyRollup({ now: monthlyBuildAt, trigger: 'api-index-fixture' });
+    assert.equal((await periodicals.runNextBuild({ now: monthlyBuildAt + 1 })).status, 'succeeded');
     const insertOpenIssue = db.prepare(`
       INSERT INTO periodical_issues (
         id, cadence, period_key, volume_no, period_start_at, period_end_at,
         status, overview, selection_version, summary_version, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)
     `);
-    insertOpenIssue.run('periodical:daily:2026-07-28', 'daily', '2026-07-28', 1, 100, 200, 'Old overview', 'importance-v1', 'fallback-v1', 1, 1);
-    insertOpenIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, 200, 300, 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
-    insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400, 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
+    const july28StartAt = Date.parse('2026-07-28T00:00:00.000+08:00');
+    const july29StartAt = Date.parse('2026-07-29T00:00:00.000+08:00');
+    const july30StartAt = Date.parse('2026-07-30T00:00:00.000+08:00');
+    insertOpenIssue.run('periodical:daily:2026-07-28', 'daily', '2026-07-28', 1, july28StartAt, july29StartAt, 'Old overview', 'importance-v1', 'fallback-v1', 1, 1);
+    insertOpenIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, july29StartAt, july30StartAt, 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
+    insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, july30StartAt, Date.parse('2026-07-31T00:00:00.000+08:00'), 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
     insertOpenIssue.run('periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 100, 800, 'Weekly overview', 'importance-v1', 'fallback-v1', 4, 4);
     insertOpenIssue.run('periodical:weekly:2026-W32', 'weekly', '2026-W32', 2, 800, 1500, 'Hidden pending Weekly', 'importance-v1', 'fallback-v1', 5, 5);
+    insertOpenIssue.run('periodical:monthly:2026-07', 'monthly', '2026-07', 2, 800, 1500, 'Hidden pending Monthly', 'monthly-rollup-v1', 'fallback-v1', 7, 7);
     db.exec(`
       UPDATE periodical_issues
       SET status = 'frozen', frozen_at = period_end_at
@@ -139,19 +150,70 @@ test('periodical index validates parameters and reads a paged allowlist projecti
     const nextResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=daily&limit=2&cursor=2026-07-29`);
     const next = await nextResponse.json();
     assert.equal(nextResponse.status, 200);
-    assert.deepEqual(next.issues.map(issue => issue.periodKey), ['2026-07-28']);
-    assert.equal(next.nextCursor, null);
+    assert.deepEqual(next.issues.map(issue => issue.periodKey), ['2026-07-28', '2026-06-30']);
+    assert.equal(next.nextCursor, '2026-06-30');
 
     const weeklyResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=weekly`);
     const weekly = await weeklyResponse.json();
     assert.equal(weeklyResponse.status, 200);
     assert.deepEqual(weekly.issues.map(issue => issue.periodKey), ['2026-W31']);
 
+    const monthlyResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=monthly`);
+    const monthly = await monthlyResponse.json();
+    assert.equal(monthlyResponse.status, 200);
+    assert.deepEqual(monthly.issues.map(issue => issue.periodKey), ['2026-06']);
+
+    const invalidHistoryDb = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const insertMalformedMonthly = invalidHistoryDb.prepare(`
+      INSERT INTO periodical_issues (
+        id, cadence, period_key, volume_no, period_start_at, period_end_at,
+        status, overview, selection_version, summary_version, created_at, updated_at
+      ) VALUES (?, 'monthly', ?, ?, ?, ?, 'finalizing', ?, ?, ?, ?, ?)
+    `);
+    for (let index = 0; index < 30; index += 1) {
+      insertMalformedMonthly.run(
+        `malformed-monthly-api:${index}`,
+        `9999-X${String(99 - index).padStart(2, '0')}`,
+        1000 + index,
+        1000 + index,
+        2000 + index,
+        'Invalid frozen history.',
+        'monthly-rollup-v1',
+        'constrained-summary-v1',
+        1000 + index,
+        1000 + index,
+      );
+    }
+    invalidHistoryDb.prepare(`
+      UPDATE periodical_issues
+      SET status = 'frozen', frozen_at = period_end_at
+      WHERE id LIKE 'malformed-monthly-api:%'
+    `).run();
+    invalidHistoryDb.close();
+
+    const invalidHistoryFirstResponse = await fetch(
+      `${server.baseUrl}/api/periodicals?cadence=monthly&limit=1`,
+    );
+    const invalidHistoryFirst = await invalidHistoryFirstResponse.json();
+    assert.equal(invalidHistoryFirstResponse.status, 200);
+    assert.deepEqual(invalidHistoryFirst.issues, []);
+    assert.match(invalidHistoryFirst.nextCursor, /^monthly-scan-v1\./);
+
+    const invalidHistorySecondResponse = await fetch(
+      `${server.baseUrl}/api/periodicals?cadence=monthly&limit=1&cursor=${
+        encodeURIComponent(invalidHistoryFirst.nextCursor)
+      }`,
+    );
+    const invalidHistorySecond = await invalidHistorySecondResponse.json();
+    assert.equal(invalidHistorySecondResponse.status, 200);
+    assert.deepEqual(invalidHistorySecond.issues.map(issue => issue.periodKey), ['2026-06']);
+
     for (const query of [
       '',
       '?cadence=yearly',
       '?cadence=daily&cursor=2026-7-30',
       '?cadence=weekly&cursor=2021-W53',
+      '?cadence=monthly&cursor=2026-13',
       '?cadence=daily&limit=0',
       '?cadence=daily&limit=101',
       '?cadence=daily&limit=1.5',
@@ -160,6 +222,63 @@ test('periodical index validates parameters and reads a paged allowlist projecti
       const response = await fetch(`${server.baseUrl}/api/periodicals${query}`);
       assert.equal(response.status, 400, query || 'missing cadence');
     }
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('Monthly detail exposes a Frozen empty issue but hides an incomplete placeholder', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir('namoo-reader-periodicals-monthly-detail-');
+  let server = null;
+  try {
+    server = await startServer(dataDir, 'on');
+    const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    seedEmptyFrozenDailyMonths(db, ['2026-06']);
+    const periodicals = createPeriodicalsModule({ db, mode: 'on', logger: () => {} });
+    const monthlyBuildAt = Date.parse('2026-07-01T00:05:00.000+08:00');
+    assert.equal(periodicals.syncMonthlyRollup({
+      now: monthlyBuildAt,
+      trigger: 'api-detail-fixture',
+    }).action, 'queued');
+    assert.equal((await periodicals.runNextBuild({ now: monthlyBuildAt + 1 })).status, 'succeeded');
+    const issue = periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-06' }).issue;
+    db.prepare(`
+      INSERT INTO periodical_issues (
+        id, cadence, period_key, volume_no, timezone,
+        period_start_at, period_end_at, coverage_started_at,
+        status, revision, overview, selection_version, summary_version,
+        created_at, updated_at
+      ) VALUES (
+        'periodical:monthly:2026-07', 'monthly', '2026-07', 2, 'Asia/Shanghai',
+        ?, ?, ?, 'finalizing', 0, '', 'monthly-rollup-v1',
+        'constrained-summary-v1', ?, ?
+      )
+    `).run(
+      Date.parse('2026-07-01T00:00:00.000+08:00'),
+      Date.parse('2026-08-01T00:00:00.000+08:00'),
+      Date.parse('2026-07-01T00:00:00.000+08:00'),
+      monthlyBuildAt,
+      monthlyBuildAt,
+    );
+    db.close();
+
+    const response = await fetch(`${server.baseUrl}/api/periodicals/monthly/2026-06`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('etag'), `"${issue.contentHash}"`);
+    assert.match(String(response.headers.get('cache-control')), /no-cache/);
+    const body = await response.json();
+    assert.equal(body.issue.cadence, 'monthly');
+    assert.equal(body.issue.periodKey, '2026-06');
+    assert.equal(body.issue.status, 'frozen');
+    assert.equal(body.issue.contentHash, issue.contentHash);
+    assert.deepEqual(body.themes, []);
+    assert.deepEqual(body.events, []);
+    assert.deepEqual(body.evidence, []);
+    assert.equal(JSON.stringify(body).includes('private-monthly'), false);
+
+    const hidden = await fetch(`${server.baseUrl}/api/periodicals/monthly/2026-07`);
+    assert.equal(hidden.status, 404);
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });

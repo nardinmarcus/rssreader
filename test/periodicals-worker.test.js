@@ -6,6 +6,7 @@ const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const { DatabaseSync } = require('node:sqlite');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
+const { seedEmptyFrozenDailyMonths } = require('./helpers/periodical-monthly-fixture');
 
 const execFileAsync = promisify(execFile);
 const projectDir = path.resolve(__dirname, '..');
@@ -132,7 +133,7 @@ test('server forwards only allowlisted periodical worker log lines', () => {
   assert.match(workerSource, /PERIODICAL_WORKER_SAFE_LOG\.test\(line\)/);
 });
 
-test('server finalizes the previous Daily, schedules Weekly, then syncs today', () => {
+test('server finalizes the previous Daily, schedules Weekly and Monthly, then syncs today', () => {
   const serverSource = fs.readFileSync(path.join(projectDir, 'server.js'), 'utf8');
   const checkSource = serverSource.slice(
     serverSource.indexOf('function checkPeriodicalBuilds('),
@@ -140,11 +141,12 @@ test('server finalizes the previous Daily, schedules Weekly, then syncs today', 
   );
   const finalizedAt = checkSource.indexOf('finalizeDueIssues');
   const weeklyAt = checkSource.indexOf('syncWeeklyRollup');
+  const monthlyAt = checkSource.indexOf('syncMonthlyRollup');
   const dailyAt = checkSource.indexOf('syncOpenDaily');
   assert.ok(
-    finalizedAt >= 0 && weeklyAt >= 0 && dailyAt >= 0
-      && finalizedAt < weeklyAt && weeklyAt < dailyAt,
-    'the previous Daily must finalize before Weekly scheduling and today synchronization',
+    finalizedAt >= 0 && weeklyAt >= 0 && monthlyAt >= 0 && dailyAt >= 0
+      && finalizedAt < weeklyAt && weeklyAt < monthlyAt && monthlyAt < dailyAt,
+    'the previous Daily must finalize before rollup scheduling and today synchronization',
   );
   assert.match(checkSource, /scheduleNextPeriodicalFinalization\(\)/);
   assert.match(serverSource, /getNextFinalizationWakeAt\(\)/);
@@ -242,6 +244,107 @@ test('server startup check and hourly sweep wake durable periodical work', {
       SELECT COUNT(*) AS count FROM periodical_build_jobs WHERE status = 'succeeded'
     `).get().count, 2);
     verified.close();
+  } finally {
+    if (child) {
+      try { process.kill(-child.pid, 'SIGTERM'); } catch { /* process already exited */ }
+    }
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+async function waitForMonthlyStartupDrain(databaseFile, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let state = null;
+  while (Date.now() < deadline) {
+    try {
+      const db = new DatabaseSync(databaseFile);
+      state = {
+        issues: db.prepare(`
+          SELECT period_key, volume_no, status
+          FROM periodical_issues
+          WHERE cadence = 'monthly'
+          ORDER BY period_key
+        `).all().map(row => ({ ...row })),
+        jobs: db.prepare(`
+          SELECT issue.period_key, job.status, job.trigger_reason
+          FROM periodical_build_jobs AS job
+          INNER JOIN periodical_issues AS issue ON issue.id = job.issue_id
+          WHERE issue.cadence = 'monthly'
+          ORDER BY issue.period_key
+        `).all().map(row => ({ ...row })),
+        active: db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM periodical_build_jobs
+          WHERE status IN ('queued', 'running', 'retry_wait')
+        `).get().count,
+      };
+      db.close();
+      if (state.issues.length === 3
+        && state.issues.every(issue => issue.status === 'frozen')
+        && state.active === 0) return state;
+    } catch { /* schema or startup transaction may not be ready */ }
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  return state;
+}
+
+test('one real server startup sync plus worker drain catches up every due Monthly', {
+  timeout: 10000,
+}, async () => {
+  const dataDir = createTempDataDir('namoo-reader-monthly-startup-catch-up-');
+  const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+  const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+  let child;
+  try {
+    await execFileAsync(process.execPath, ['-e', "require('./lib/store')"], {
+      cwd: projectDir,
+      env: {
+        ...process.env,
+        NAMOO_READER_DATA_DIR: dataDir,
+        PERIODICALS_MODE: 'off',
+      },
+    });
+    const db = new DatabaseSync(databaseFile);
+    db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+    seedEmptyFrozenDailyMonths(db, ['2026-03', '2026-04', '2026-05']);
+    db.close();
+
+    child = spawn(process.execPath, ['-e', `
+      Date.now = () => ${startupAt};
+      require('./server');
+    `], {
+      cwd: projectDir,
+      detached: true,
+      env: {
+        ...process.env,
+        NAMOO_READER_DATA_DIR: dataDir,
+        NODE_ENV: 'test',
+        HOST: '127.0.0.1',
+        PORT: '0',
+        PERIODICALS_MODE: 'shadow',
+        PERIODICAL_WORKER_STARTUP: '1',
+        PERIODICAL_SWEEP_INTERVAL_MS: '-1',
+        STARTUP_REFRESH_DELAY_MS: '-1',
+        FRESHNESS_SWEEP_INTERVAL_MS: '-1',
+        TRANSLATION_WORKER_STARTUP: '0',
+      },
+      stdio: 'ignore',
+    });
+
+    const state = await waitForMonthlyStartupDrain(databaseFile);
+    assert.deepEqual(state, {
+      issues: [
+        { period_key: '2026-03', volume_no: 1, status: 'frozen' },
+        { period_key: '2026-04', volume_no: 2, status: 'frozen' },
+        { period_key: '2026-05', volume_no: 3, status: 'frozen' },
+      ],
+      jobs: [
+        { period_key: '2026-03', status: 'succeeded', trigger_reason: 'startup' },
+        { period_key: '2026-04', status: 'succeeded', trigger_reason: 'startup' },
+        { period_key: '2026-05', status: 'succeeded', trigger_reason: 'startup' },
+      ],
+      active: 0,
+    });
   } finally {
     if (child) {
       try { process.kill(-child.pid, 'SIGTERM'); } catch { /* process already exited */ }

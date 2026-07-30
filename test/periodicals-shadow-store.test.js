@@ -5,6 +5,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
+const { computePeriodicalContentHash } = require('../lib/periodical-summary');
 
 const projectDir = path.resolve(__dirname, '..');
 const storePath = path.join(projectDir, 'lib', 'store.js');
@@ -97,4 +98,133 @@ test('shadow worker compiles identical SQLite truth with polluted or deleted run
   assert.deepEqual(deleted.evidence.map(item => item.sourceId), ['sqlite-source']);
   assert.equal(JSON.stringify(polluted).includes('cache-only'), false);
   assert.equal(JSON.stringify(deleted).includes('cache-only'), false);
+});
+
+function seedFrozenJune(dataDir) {
+  runStore(dataDir, 'off');
+  const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+  try {
+    for (let day = 1; day <= 30; day += 1) {
+      const periodKey = `2026-06-${String(day).padStart(2, '0')}`;
+      const periodStartAt = Date.parse(`${periodKey}T00:00:00.000+08:00`);
+      const issue = {
+        id: `periodical:daily:${periodKey}`,
+        cadence: 'daily',
+        periodKey,
+        volumeNo: day,
+        timezone: 'Asia/Shanghai',
+        periodStartAt,
+        periodEndAt: periodStartAt + (24 * 60 * 60 * 1000),
+        coverageStartedAt: periodStartAt,
+        status: 'frozen',
+        revision: 1,
+        overview: '本日为空日报。第二句。',
+        selectionVersion: 'importance-v1',
+        summaryVersion: 'constrained-summary-v1',
+        sourceInputHash: `source:${periodKey}`,
+        selectionContext: { fixture: true },
+        inputHash: `input:${periodKey}`,
+        contentHash: '',
+        summaryStatus: 'fallback',
+        provider: null,
+        model: null,
+        lastBuiltAt: periodStartAt + (24 * 60 * 60 * 1000),
+        frozenAt: periodStartAt + (24 * 60 * 60 * 1000) + 1,
+      };
+      issue.contentHash = computePeriodicalContentHash({
+        issue,
+        themes: [],
+        events: [],
+        evidence: [],
+      });
+      db.prepare(`
+        INSERT INTO periodical_issues (
+          id, cadence, period_key, volume_no, timezone,
+          period_start_at, period_end_at, coverage_started_at,
+          status, revision, overview, selection_version, summary_version,
+          source_input_hash, selection_context_json, input_hash, content_hash,
+          summary_status, provider, model, last_built_at, frozen_at,
+          created_at, updated_at
+        ) VALUES (
+          ?, 'daily', ?, ?, 'Asia/Shanghai', ?, ?, ?,
+          'finalizing', 1, ?, ?, ?, ?, ?, ?, ?,
+          'fallback', NULL, NULL, ?, ?, ?, ?
+        )
+      `).run(
+        issue.id,
+        issue.periodKey,
+        issue.volumeNo,
+        issue.periodStartAt,
+        issue.periodEndAt,
+        issue.coverageStartedAt,
+        issue.overview,
+        issue.selectionVersion,
+        issue.summaryVersion,
+        issue.sourceInputHash,
+        JSON.stringify(issue.selectionContext),
+        issue.inputHash,
+        issue.contentHash,
+        issue.lastBuiltAt,
+        issue.frozenAt,
+        issue.periodStartAt,
+        issue.frozenAt,
+      );
+      db.prepare(`
+        UPDATE periodical_issues SET status = 'frozen' WHERE id = ?
+      `).run(issue.id);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function compileMonthlyWithCacheState(cacheState) {
+  const dataDir = createTempDataDir(`namoo-reader-monthly-cache-${cacheState}-`);
+  try {
+    seedFrozenJune(dataDir);
+    const cachePath = path.join(dataDir, 'cache.json');
+    fs.writeFileSync(cachePath, JSON.stringify({
+      'cache-only-source': {
+        entries: [{
+          id: 'cache-only-entry',
+          title: 'Cache-only Monthly event must not exist',
+          importanceScore: 100,
+        }],
+      },
+    }));
+    if (cacheState === 'deleted') fs.rmSync(cachePath);
+    const output = runStore(dataDir, 'shadow', `
+      store.periodicals.syncMonthlyRollup({ now: Date.now(), trigger: 'cache-test' });
+      store.periodicals.runNextBuild({ now: Date.now() + 1 }).then(() => {
+        const issue = store.periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-06' });
+        process.stdout.write('RESULT:' + JSON.stringify(issue));
+      });
+    `);
+    const issue = JSON.parse(output.slice(output.lastIndexOf('RESULT:') + 'RESULT:'.length));
+    const db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const inputCount = db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM periodical_issue_inputs
+        WHERE issue_id = 'periodical:monthly:2026-06'
+      `).get().count;
+      return { issue, inputCount };
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+test('Monthly rollup is identical with polluted or deleted runtime cache', () => {
+  const polluted = compileMonthlyWithCacheState('polluted');
+  const deleted = compileMonthlyWithCacheState('deleted');
+
+  assert.equal(polluted.inputCount, 30);
+  assert.equal(deleted.inputCount, 30);
+  assert.deepEqual(polluted.issue, deleted.issue);
+  assert.equal(polluted.issue.issue.status, 'frozen');
+  assert.equal(polluted.issue.events.length, 0);
+  assert.equal(JSON.stringify(polluted).includes('cache-only'), false);
 });
