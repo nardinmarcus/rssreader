@@ -148,7 +148,7 @@ components:
 
 # Namoo Reader Design System
 
-本文档描述 Namoo Reader 当前采用的设计语言和实现约束，供产品、设计与开发协作者共同使用。视觉 token 的权威实现位于 [`public/styles.css`](public/styles.css)，页面结构位于 [`public/index.html`](public/index.html)，交互和主题行为位于 [`public/app.js`](public/app.js)。代码与本文档不一致时，以当前代码为准，并在同一次变更中更新本文档。
+本文档描述 Namoo Reader 当前采用的设计语言和实现约束，供产品、设计与开发协作者共同使用。视觉 token 的权威实现位于 [`public/styles.css`](public/styles.css)，页面结构位于 [`public/index.html`](public/index.html)，普通阅读交互和主题行为位于 [`public/app.js`](public/app.js)；受模式控制、且不接管普通阅读状态机的精选期刊读取骨架隔离在 [`public/periodicals.js`](public/periodicals.js)。代码与本文档不一致时，以当前代码为准，并在同一次变更中更新本文档。
 
 ## Design Principles
 
@@ -333,4 +333,4 @@ favicon 使用居中 cover 和 4px 圆角；条目缩略图使用 cover 裁切�
 
 ## Maintenance
 
-设计变更应先落在现有架构中：样式修改 [`public/styles.css`](public/styles.css)，结构修改 [`public/index.html`](public/index.html)，交互修改 [`public/app.js`](public/app.js)。新增 token 前先确认现有语义变量无法表达需求；修改前端资产时，同时更新页面中的资源版本和对应回归断言。
+设计变更应先落在现有架构中：样式修改 [`public/styles.css`](public/styles.css)，结构修改 [`public/index.html`](public/index.html)，普通阅读交互修改 [`public/app.js`](public/app.js)。受模式控制的精选期刊读取交互保持在 [`public/periodicals.js`](public/periodicals.js)，不得接管普通阅读的历史与状态机。新增 token 前先确认现有语义变量无法表达需求；修改前端资产时，同时更新页面中的资源版本和对应回归断言。
