@@ -220,6 +220,60 @@ test('rendered SQLite semantics change the source input identity and replace the
   }
 });
 
+test('reassigning an entry between equivalent SQLite sources replaces its evidence source identity', () => {
+  const db = fixtureDatabase();
+  try {
+    const insertSource = db.prepare(`
+      INSERT INTO custom_sources (
+        id, name, feed_url, category, labels_json, created_at, updated_at
+      ) VALUES (?, 'Equivalent Source', ?, 'article', '["产品"]', ?, ?)
+    `);
+    insertSource.run(
+      'source-a',
+      'https://source-a.example/feed.xml',
+      NOW - 1000,
+      NOW - 1000,
+    );
+    insertSource.run(
+      'source-b',
+      'https://source-b.example/feed.xml',
+      NOW - 1000,
+      NOW - 1000,
+    );
+    const insertPreference = db.prepare(`
+      INSERT INTO source_preferences (
+        source_id, enabled, editorial_priority, display_order, updated_at
+      ) VALUES (?, 1, 'high', ?, '2026-07-30T04:00:00.000Z')
+    `);
+    insertPreference.run('source-a', 0);
+    insertPreference.run('source-b', 1);
+    db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, summary, content,
+        content_hash, created_at, updated_at
+      ) VALUES ('reassigned-entry', 'source-a', 'Stable entry',
+        'https://entry.example/stable', ?, 'Stable summary.', '<p>Stable body.</p>',
+        'stable-content-hash', ?, ?)
+    `).run(NOW, NOW, NOW);
+
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
+    const first = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+
+    db.prepare(`
+      UPDATE entries SET source_id = 'source-b'
+      WHERE id = 'reassigned-entry'
+    `).run();
+    const replaced = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+
+    assert.equal(first.issue.revision, 1);
+    assert.equal(first.evidence[0].sourceId, 'source-a');
+    assert.equal(replaced.issue.revision, 2);
+    assert.equal(replaced.evidence[0].sourceId, 'source-b');
+  } finally {
+    db.close();
+  }
+});
+
 test('shadow sync reads its source, candidate, and issue snapshot under BEGIN IMMEDIATE', () => {
   const db = fixtureDatabase();
   try {

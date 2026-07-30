@@ -134,3 +134,4 @@
 - On macOS, validate temporary cleanup against the resolved `/private/tmp/...` path before deleting it; do not first attempt a prohibited `rm -f` command or compare `realpath` output to the unresolved `/tmp/...` alias.
 - Before a marker-bounded mechanical rewrite, prove both markers still exist after the semantic patch; immediately inspect the rewritten boundary and syntax so a removed end marker cannot broaden formatting changes.
 - Before accepting a browser screenshot, verify the CLI option order, the exact output path, and one fixture-specific value in the rendered image; a success message alone does not prove the intended evidence file was replaced.
+- A deterministic candidate hash must bind the entry to its stable source ID; hashing the source roster and display attributes separately cannot detect reassignment between equivalent sources and can leave stale SQLite evidence.
