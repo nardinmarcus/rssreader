@@ -78,7 +78,10 @@
       view.enter(route.cadence);
 
       try {
-        const index = await request(`/api/periodicals?cadence=${route.cadence}&limit=30`);
+        const index = await request(
+          `/api/periodicals?cadence=${route.cadence}&limit=30`,
+          { cache: 'no-store' },
+        );
         if (sequence !== requestSequence) return false;
         const issues = Array.isArray(index && index.issues) ? index.issues : [];
         view.renderIndex(route.cadence, issues);
@@ -87,7 +90,10 @@
           return true;
         }
         const periodKey = route.periodKey || issues[0].periodKey;
-        const detail = await request(`/api/periodicals/${route.cadence}/${periodKey}`);
+        const detail = await request(
+          `/api/periodicals/${route.cadence}/${periodKey}`,
+          { cache: 'no-cache' },
+        );
         if (sequence !== requestSequence) return false;
         view.renderIssue(detail);
         return true;
@@ -218,9 +224,9 @@
         const items = issues.map(issue => {
           const link = element('a', 'periodicals-list-item');
           link.href = `/periodicals/${cadence}/${issue.periodKey}`;
-          const status = issue.updateDelayed
-            ? '生成异常'
-            : (STATUS_LABELS[issue.status] || issue.status);
+          const status = issue.status === 'finalizing'
+            ? STATUS_LABELS.finalizing
+            : (issue.updateDelayed ? '生成异常' : (STATUS_LABELS[issue.status] || issue.status));
           link.append(
             element('strong', '', issue.periodKey),
             element('span', '', `${issue.eventCount || 0} 个事件 · ${status}`),
@@ -330,9 +336,9 @@
         document.title = `${issue.periodKey || '精选期刊'} · Namoo Reader`;
       },
     };
-    const request = async url => {
+    const request = async (url, options = {}) => {
       const response = await root.fetch(url, {
-        cache: 'no-store',
+        cache: options.cache || 'no-store',
         headers: { Accept: 'application/json' },
       });
       if (!response.ok) {

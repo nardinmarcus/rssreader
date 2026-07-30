@@ -132,6 +132,21 @@ test('server forwards only allowlisted periodical worker log lines', () => {
   assert.match(workerSource, /PERIODICAL_WORKER_SAFE_LOG\.test\(line\)/);
 });
 
+test('server finalizes the previous Daily before syncing today and schedules the next boundary', () => {
+  const serverSource = fs.readFileSync(path.join(projectDir, 'server.js'), 'utf8');
+  const checkSource = serverSource.slice(
+    serverSource.indexOf('function checkPeriodicalBuilds('),
+    serverSource.indexOf('function scheduleNextPeriodicalFinalization('),
+  );
+  assert.ok(
+    checkSource.indexOf('finalizeDueIssues') < checkSource.indexOf('syncOpenDaily'),
+    'the previous Daily must enter finalizing before today is synchronized',
+  );
+  assert.match(checkSource, /scheduleNextPeriodicalFinalization\(\)/);
+  assert.match(serverSource, /getNextFinalizationWakeAt\(\)/);
+  assert.match(serverSource, /checkPeriodicalBuilds\('daily-boundary'\)/);
+});
+
 async function waitForRevision(databaseFile, expected, timeoutMs = 2500) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
