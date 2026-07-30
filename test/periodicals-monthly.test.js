@@ -857,6 +857,112 @@ test('a noncanonical non-Frozen Monthly identity is safely rebuilt once', async 
   }
 });
 
+test('a noncanonical Frozen Monthly is diagnosed without starving later due months', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05']);
+    seedRawMonthlyIssue(db, {
+      id: 'legacy-monthly:2026-03',
+      periodKey: '2026-03',
+      volumeNo: 1,
+      status: 'frozen',
+    });
+    const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: startupAt,
+      trigger: 'isolate-noncanonical-frozen',
+    });
+    assert.deepEqual(
+      scheduled.issues.map(item => [item.periodKey, item.action]),
+      [
+        ['2026-03', 'blocked'],
+        ['2026-04', 'queued'],
+        ['2026-05', 'queued'],
+      ],
+    );
+    const durableLaterMonths = db.prepare(`
+      SELECT issue.id, issue.period_key, issue.volume_no, issue.status,
+             job.id AS job_id, job.status AS job_status
+      FROM periodical_issues AS issue
+      INNER JOIN periodical_build_jobs AS job ON job.issue_id = issue.id
+      WHERE issue.cadence = 'monthly' AND issue.period_key IN ('2026-04', '2026-05')
+      ORDER BY issue.period_key
+    `).all().map(row => ({ ...row }));
+    assert.deepEqual(durableLaterMonths.map(row => ({
+      id: row.id,
+      period_key: row.period_key,
+      volume_no: row.volume_no,
+      status: row.status,
+      job_status: row.job_status,
+    })), [
+      {
+        id: 'periodical:monthly:2026-04',
+        period_key: '2026-04',
+        volume_no: 2,
+        status: 'finalizing',
+        job_status: 'queued',
+      },
+      {
+        id: 'periodical:monthly:2026-05',
+        period_key: '2026-05',
+        volume_no: 3,
+        status: 'finalizing',
+        job_status: 'queued',
+      },
+    ]);
+    assert.deepEqual({ ...db.prepare(`
+      SELECT status, error_code
+      FROM periodical_build_jobs
+      WHERE issue_id = 'legacy-monthly:2026-03'
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `).get() }, {
+      status: 'failed',
+      error_code: 'ERR_PERIODICAL_MONTHLY_IDENTITY_INVALID',
+    });
+    assert.deepEqual(periodicals.listIssues({ cadence: 'monthly' }).issues, []);
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-03' }),
+      error => error.statusCode === 503
+        && error.code === 'ERR_PERIODICAL_MONTHLY_IDENTITY_INVALID',
+    );
+
+    const repeated = periodicals.syncMonthlyRollup({
+      now: startupAt + 1,
+      trigger: 'repeat-isolated-noncanonical-frozen',
+    });
+    assert.deepEqual(
+      repeated.issues.map(item => [item.periodKey, item.action]),
+      [
+        ['2026-03', 'blocked'],
+        ['2026-04', 'noop'],
+        ['2026-05', 'noop'],
+      ],
+    );
+    assert.deepEqual(db.prepare(`
+      SELECT id FROM periodical_build_jobs
+      WHERE issue_id IN ('periodical:monthly:2026-04', 'periodical:monthly:2026-05')
+      ORDER BY issue_id
+    `).all().map(row => row.id), durableLaterMonths.map(row => row.job_id));
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count FROM periodical_build_jobs
+      WHERE issue_id = 'legacy-monthly:2026-03' AND status = 'failed'
+    `).get().count, 1);
+
+    const drained = await drainImmediateBuilds(periodicals, startupAt + 2);
+    assert.equal(drained.length, 2);
+    assert.equal(drained.every(job => job.status === 'succeeded'), true);
+    assert.deepEqual(
+      periodicals.listIssues({ cadence: 'monthly' }).issues.map(issue => issue.periodKey),
+      ['2026-05', '2026-04'],
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test('invalid Frozen Monthly snapshots are diagnosed, hidden, and do not starve later months', async t => {
   const cases = [
     {
@@ -1001,6 +1107,94 @@ test('forged Frozen Monthly input identities are diagnosed and hidden', async ()
     });
   } finally {
     db.close();
+  }
+});
+
+test('Frozen Monthly requires the complete canonical succeeded-job identity', async t => {
+  const cases = [
+    {
+      name: 'canonical score config',
+      corrupt(db, job) {
+        db.prepare(`
+          UPDATE periodical_build_jobs SET score_config_json = '{}' WHERE id = ?
+        `).run(job.id);
+      },
+    },
+    {
+      name: 'period-end as-of boundary',
+      corrupt(db, job) {
+        db.prepare(`
+          UPDATE periodical_build_jobs SET as_of_at = as_of_at + 1 WHERE id = ?
+        `).run(job.id);
+      },
+    },
+    {
+      name: 'period-end candidate cutoff boundary',
+      corrupt(db, job) {
+        db.prepare(`
+          UPDATE periodical_build_jobs
+          SET candidate_cutoff_at = candidate_cutoff_at - 1 WHERE id = ?
+        `).run(job.id);
+      },
+    },
+    {
+      name: 'canonical job id',
+      corrupt(db, job) {
+        db.prepare(`
+          UPDATE periodical_build_jobs SET id = ? WHERE id = ?
+        `).run(`legacy-${job.id}`, job.id);
+      },
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      const db = fixtureDatabase();
+      try {
+        const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+        seedFrozenMonths(db, ['2026-03']);
+        const buildAt = Date.parse('2026-04-01T00:05:00.000+08:00');
+        const scheduled = periodicals.syncMonthlyRollup({
+          now: buildAt,
+          trigger: 'seed-complete-job-identity',
+        });
+        assert.equal((await periodicals.runNextBuild({ now: buildAt + 1 })).status, 'succeeded');
+        const succeededJob = db.prepare(`
+          SELECT * FROM periodical_build_jobs
+          WHERE issue_id = ? AND status = 'succeeded'
+        `).get(scheduled.issueId);
+        fixture.corrupt(db, succeededJob);
+
+        assert.deepEqual(periodicals.listIssues({ cadence: 'monthly' }).issues, []);
+        assert.throws(
+          () => periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-03' }),
+          error => error.statusCode === 503
+            && error.code === 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID'
+            && error.validationCode === 'invalid_build_identity',
+        );
+        const detected = periodicals.syncMonthlyRollup({
+          now: buildAt + 2,
+          trigger: 'detect-corrupt-job-identity',
+        });
+        assert.equal(detected.action, 'blocked');
+        assert.equal(detected.validationCode, 'invalid_build_identity');
+        assert.equal(detected.errorCode, 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID');
+
+        const repeated = periodicals.syncMonthlyRollup({
+          now: buildAt + 3,
+          trigger: 'repeat-corrupt-job-identity',
+        });
+        assert.equal(repeated.action, 'blocked');
+        assert.equal(repeated.job.id, detected.job.id);
+        assert.equal(db.prepare(`
+          SELECT COUNT(*) AS count FROM periodical_build_jobs
+          WHERE issue_id = ? AND status = 'failed'
+            AND error_code = 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID'
+        `).get(scheduled.issueId).count, 1);
+      } finally {
+        db.close();
+      }
+    });
   }
 });
 
