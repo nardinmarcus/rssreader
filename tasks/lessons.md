@@ -2,6 +2,7 @@
 
 - Build cache keys from the same normalized query values used to execute the request. A raw invalid or out-of-range `limit` must not produce one result shape while colliding with the default-list cache key; prove the invalid-first then valid-request order in a regression test.
 - Before running the full suite in a fresh worktree, check for `node_modules` and install from the lockfile with `npm ci` when absent; a missing runtime package such as `express` is an environment failure, not evidence of a code regression.
+- Before `git rebase --continue`, reread `git status` and confirm a rebase is actually in progress; once rebase succeeds, keep later compatibility work in a normal follow-up commit instead of replaying a stale continuation command.
 - When streaming a deployment script through `ssh host 'bash -s'`, detach stdin for child commands such as `docker compose exec -T ... </dev/null` or run them in a separate SSH call; otherwise the child can consume the remaining script and suppress later verification steps.
 - Derive a container health probe's internal port from the live `PORT` environment or exposed-port metadata; assuming a framework default can report `ECONNREFUSED` against an otherwise healthy production container.
 - Tests that share one module-scoped temporary SQLite database must clean up globally queried states in `finally`; otherwise an earlier RED failure can pollute later tests and hide the actual missing behavior.
@@ -142,3 +143,14 @@
 - Regex lookahead does not make a greedy numeric prefix atomic: backtracking can turn an all-numeric Chinese lexeme such as `千万` or `万一` into a partial token. Scan code points without backtracking, then require a remaining nonnumeric Han suffix and rerun the full positive lexeme corpus.
 - Approximate Chinese markers such as `几/幾` must participate in the complete verbatim token grammar; otherwise evidence for `十` can accidentally authorize the more specific unsupported claim `十几` through a partial-token match.
 - A compatibility fixture that expects independent-source confirmation must not reuse one canonical URL across sources; syndication is intentionally one confirmation. Use a semantic complete-link cluster with distinct canonical URLs when asserting confirmation points.
+- Test fixtures that cross the real store boundary must seed every required stable ID through the production helper contract; an implicit ID can create a fixture failure before the intended SQLite assertion runs.
+- A concurrent SQLite test writer must use the same finite `busy_timeout` as the production store; otherwise a valid `BEGIN IMMEDIATE` held by the system under test becomes a zero-wait harness flake instead of exercising lifecycle behavior.
+- In zsh verification wrappers, never rely on an unquoted scalar to split a newline-separated file list; stream paths through `while IFS= read -r` so each syntax check receives exactly one file.
+- Before recording a custom-compiler RED, verify the production helper is imported; a fixture `ReferenceError` that merely drives the durable job to `failed` is not evidence of the intended behavior gap.
+- A legacy input-identity helper must pin every legacy algorithm version, including summary version; referencing the current canonical constant silently changes the rollback hash domain after an upstream algorithm merge.
+- A constrained-summary test fixture must use the exact supported numeric token; an allowed structural count `1` does not authorize the Chinese token `一`, and an accidental validation repair changes AI-call assertions.
+- Before asserting across a browser/API boundary, read the endpoint contract or capture its response shape; guessing an envelope key can turn valid runtime evidence into a misleading diagnostic NON_PASS.
+- A legacy no-op fixture must restore the exact legacy selection context as well as its hashes; current algorithm context paired with old hashes is a false compatibility proof.
+- A durable lease must exceed one complete provider adapter call, including internal retries and backoff; renewing only before a call cannot save a lease whose duration merely equals the nominal timeout.
+- A pre-orchestration compatibility matcher must require the exact legacy field set and no durable job history; projecting known keys lets future algorithm inputs masquerade as an old no-op.
+- Browser shadow evidence must query persisted child rows through the schema's exact table names; inspect `sqlite_master` before treating an ad hoc SQLite assertion as a product failure.

@@ -9,6 +9,7 @@ process.env.NAMOO_READER_DATA_DIR = testDataDir;
 
 const fetcher = require('../lib/fetcher');
 const deepseek = require('../lib/deepseek');
+const store = require('../lib/store');
 const jobs = require('../lib/background-jobs');
 
 after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
@@ -91,6 +92,68 @@ test('single-source jobs persist unexpected fetch failures instead of crashing',
     assert.equal(flushed, true);
   } finally {
     restore();
+  }
+});
+
+test('each successful RSS refresh durably coalesces an open-daily build while failed refreshes do not', async () => {
+  const syncCalls = [];
+  let shouldFail = false;
+  const restoreFetcher = stub(fetcher, {
+    loadDisk: () => {},
+    flushDisk: () => {},
+    getSourceById: id => ({ id, enabled: true, manual: false }),
+    fetchSource: async () => {
+      if (shouldFail) throw new Error('upstream unavailable');
+      return { status: 'ok', entries: [], changedEntries: [] };
+    },
+    recordSourceFailure: () => ({
+      status: 'error',
+      error: 'upstream unavailable',
+      entries: [],
+      changedEntries: [],
+    }),
+  });
+  const restorePeriodicals = stub(store.periodicals, {
+    syncOpenDaily(input) {
+      syncCalls.push(input);
+      return {
+        action: 'queued',
+        sourceInputHash: 'sensitive-source-input-hash',
+        inputHash: 'sensitive-input-hash',
+        job: {
+          id: 'periodical-job-safe',
+          status: 'queued',
+          leaseToken: 'sensitive-lease-token',
+        },
+      };
+    },
+  });
+  try {
+    const success = await jobs.runRefreshJob({
+      kind: 'refresh',
+      sourceId: 'one',
+      fetchOnly: true,
+    });
+    assert.equal(syncCalls.length, 1);
+    assert.equal(syncCalls[0].trigger, 'rss-refresh');
+    assert.equal(Number.isFinite(syncCalls[0].now), true);
+    assert.deepEqual(success.periodical, {
+      action: 'queued',
+      job: { id: 'periodical-job-safe', status: 'queued' },
+    });
+
+    shouldFail = true;
+    const failed = await jobs.runRefreshJob({
+      kind: 'refresh',
+      sourceId: 'one',
+      fetchOnly: true,
+    });
+    assert.equal(failed.refresh.status, 'error');
+    assert.equal(syncCalls.length, 1);
+    assert.equal(failed.periodical, null);
+  } finally {
+    restorePeriodicals();
+    restoreFetcher();
   }
 });
 

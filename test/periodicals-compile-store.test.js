@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
-const { createPeriodicalsModule } = require('../lib/periodicals');
+const { compileOpenDaily, createPeriodicalsModule } = require('../lib/periodicals');
 
 const NOW = Date.parse('2026-07-30T04:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -51,7 +51,7 @@ function fixtureDatabase() {
   return db;
 }
 
-test('shadow sync persists a Custom Source event and timestamp fallback through the read module', () => {
+test('shadow worker persists a Custom Source event and timestamp fallback through the read module', async () => {
   const db = fixtureDatabase();
   try {
     db.prepare(`
@@ -90,11 +90,13 @@ test('shadow sync persists a Custom Source event and timestamp fallback through 
       NOW - (10 * 60 * 1000),
     );
 
-    const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
-    const synced = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    const queued = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    const built = await periodicals.runNextBuild({ now: NOW });
     const stored = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
-    assert.equal(synced.issue.revision, 1);
+    assert.equal(queued.action, 'queued');
+    assert.equal(built.status, 'succeeded');
     assert.equal(stored.issue.status, 'open');
     assert.equal(stored.issue.summaryStatus, 'fallback');
     assert.equal(stored.issue.summaryVersion, 'constrained-summary-v1');
@@ -110,7 +112,7 @@ test('shadow sync persists a Custom Source event and timestamp fallback through 
   }
 });
 
-test('wall-clock movement is a no-op while a SQLite preference change replaces the open revision', () => {
+test('wall-clock movement is a no-op while a SQLite preference change replaces the open revision', async () => {
   const db = fixtureDatabase();
   try {
     db.prepare(`
@@ -133,13 +135,17 @@ test('wall-clock movement is a no-op while a SQLite preference change replaces t
         'stable-content-hash', ?, ?)
     `).run(NOW, NOW, NOW);
 
-    const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
-    const first = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
-    const wallClockOnly = periodicals.syncOpenDaily({
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
+    const first = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    const wallClockOnlyRequest = periodicals.syncOpenDaily({
       now: NOW + (60 * 60 * 1000),
       trigger: 'test',
     });
+    const wallClockOnly = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
+    assert.equal(wallClockOnlyRequest.action, 'noop');
     assert.equal(first.issue.revision, 1);
     assert.equal(wallClockOnly.issue.revision, 1);
     assert.equal(wallClockOnly.issue.contentHash, first.issue.contentHash);
@@ -156,11 +162,14 @@ test('wall-clock movement is a no-op while a SQLite preference change replaces t
       SET selection_context_json = ?
       WHERE cadence = 'daily' AND period_key = '2026-07-30'
     `).run(JSON.stringify(staleContext));
-    const algorithmChanged = periodicals.syncOpenDaily({
+    const algorithmChangedRequest = periodicals.syncOpenDaily({
       now: NOW + (2 * 60 * 60 * 1000),
       trigger: 'test',
     });
+    await periodicals.runNextBuild({ now: NOW + (2 * 60 * 60 * 1000) });
+    const algorithmChanged = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
+    assert.equal(algorithmChangedRequest.action, 'queued');
     assert.equal(algorithmChanged.issue.revision, 2);
 
     db.prepare(`
@@ -168,11 +177,14 @@ test('wall-clock movement is a no-op while a SQLite preference change replaces t
       SET editorial_priority = 'low', updated_at = '2026-07-30T05:00:00.000Z'
       WHERE source_id = 'custom-daily'
     `).run();
-    const preferenceChanged = periodicals.syncOpenDaily({
+    const preferenceChangedRequest = periodicals.syncOpenDaily({
       now: NOW + (3 * 60 * 60 * 1000),
       trigger: 'test',
     });
+    await periodicals.runNextBuild({ now: NOW + (3 * 60 * 60 * 1000) });
+    const preferenceChanged = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
+    assert.equal(preferenceChangedRequest.action, 'queued');
     assert.equal(preferenceChanged.issue.revision, 3);
     assert.equal(preferenceChanged.events.length, 0);
     assert.notEqual(preferenceChanged.issue.contentHash, first.issue.contentHash);
@@ -181,7 +193,7 @@ test('wall-clock movement is a no-op while a SQLite preference change replaces t
   }
 });
 
-test('rendered SQLite semantics change the source input identity and replace the open revision', () => {
+test('rendered SQLite semantics change the source input identity and replace the open revision', async () => {
   const db = fixtureDatabase();
   try {
     db.prepare(`
@@ -208,8 +220,10 @@ test('rendered SQLite semantics change the source input identity and replace the
       VALUES ('custom-entry', '原译名', '原译摘。')
     `).run();
 
-    const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
-    const first = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
+    const first = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
     db.prepare(`
       UPDATE entry_translations
@@ -225,10 +239,12 @@ test('rendered SQLite semantics change the source input identity and replace the
       WHERE id = 'custom-entry'
     `).run();
 
-    const replaced = periodicals.syncOpenDaily({
+    periodicals.syncOpenDaily({
       now: NOW + (60 * 60 * 1000),
       trigger: 'test',
     });
+    await periodicals.runNextBuild({ now: NOW + (60 * 60 * 1000) });
+    const replaced = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
     assert.equal(first.issue.revision, 1);
     assert.equal(replaced.issue.revision, 2);
@@ -241,7 +257,7 @@ test('rendered SQLite semantics change the source input identity and replace the
   }
 });
 
-test('reassigning an entry between equivalent SQLite sources replaces its evidence source identity', () => {
+test('reassigning an entry between equivalent SQLite sources replaces its evidence source identity', async () => {
   const db = fixtureDatabase();
   try {
     const insertSource = db.prepare(`
@@ -277,14 +293,18 @@ test('reassigning an entry between equivalent SQLite sources replaces its eviden
         'stable-content-hash', ?, ?)
     `).run(NOW, NOW, NOW);
 
-    const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
-    const first = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
+    const first = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
     db.prepare(`
       UPDATE entries SET source_id = 'source-b'
       WHERE id = 'reassigned-entry'
     `).run();
-    const replaced = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
+    const replaced = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
     assert.equal(first.issue.revision, 1);
     assert.equal(first.evidence[0].sourceId, 'source-a');
@@ -295,7 +315,7 @@ test('reassigning an entry between equivalent SQLite sources replaces its eviden
   }
 });
 
-test('shadow sync scores the current topic from the latest frozen daily SQLite evidence', () => {
+test('durable build scores the current topic from the latest frozen daily SQLite evidence', async () => {
   const db = fixtureDatabase();
   try {
     const insertSource = db.prepare(`
@@ -341,7 +361,9 @@ test('shadow sync scores the current topic from the latest frozen daily SQLite e
     );
 
     const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
-    const previous = periodicals.syncOpenDaily({ now: yesterday, trigger: 'test' });
+    periodicals.syncOpenDaily({ now: yesterday, trigger: 'test' });
+    await periodicals.runNextBuild({ now: yesterday });
+    const previous = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-29' });
     assert.match(previous.events[0].topicKey, /^[a-f0-9]{64}$/);
     db.prepare(`
       UPDATE periodical_issues
@@ -364,8 +386,9 @@ test('shadow sync scores the current topic from the latest frozen daily SQLite e
       );
     }
 
-    const current = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
-    const stored = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
+    const current = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
     const selectionContext = JSON.parse(db.prepare(`
       SELECT selection_context_json
       FROM periodical_issues
@@ -383,15 +406,15 @@ test('shadow sync scores the current topic from the latest frozen daily SQLite e
       sourceIncrease: 1,
       points: 2,
     });
-    assert.equal(stored.events[0].eventKey, current.events[0].eventKey);
-    assert.equal(stored.events[0].topicKey, current.events[0].topicKey);
-    assert.equal(stored.events[0].cluster.version, 'event-cluster-v1');
-    assert.equal(stored.events[0].cluster.reason, 'complete-link');
-    assert.equal(stored.evidence.length, 2);
-    assert.equal(stored.evidence.filter(item => item.isPrimary).length, 1);
-    assert.match(stored.events[0].whySelected, /2 个独立来源确认/);
-    assert.match(stored.events[0].whySelected, /过去 7 个冻结日报出现 1 天/);
-    assert.match(stored.events[0].whySelected, /单日峰值增加 1 个/);
+    assert.match(current.events[0].eventKey, /^[a-f0-9]{64}$/);
+    assert.match(current.events[0].topicKey, /^[a-f0-9]{64}$/);
+    assert.equal(current.events[0].cluster.version, 'event-cluster-v1');
+    assert.equal(current.events[0].cluster.reason, 'complete-link');
+    assert.equal(current.evidence.length, 2);
+    assert.equal(current.evidence.filter(item => item.isPrimary).length, 1);
+    assert.match(current.events[0].whySelected, /2 个独立来源确认/);
+    assert.match(current.events[0].whySelected, /过去 7 个冻结日报出现 1 天/);
+    assert.match(current.events[0].whySelected, /单日峰值增加 1 个/);
     assert.deepEqual(selectionContext.scoreConfig, {
       behavior: {
         enabled: false,
@@ -421,7 +444,7 @@ test('shadow sync scores the current topic from the latest frozen daily SQLite e
   }
 });
 
-test('shadow sync reads its source, candidate, and issue snapshot under BEGIN IMMEDIATE', () => {
+test('shadow publish rereads its source and candidate snapshot under BEGIN IMMEDIATE', async () => {
   const db = fixtureDatabase();
   try {
     const snapshotReadStates = [];
@@ -441,18 +464,20 @@ test('shadow sync reads its source, candidate, and issue snapshot under BEGIN IM
         return typeof value === 'function' ? value.bind(target) : value;
       },
     });
-    const periodicals = createPeriodicalsModule({ db: observedDb, mode: 'shadow' });
+    const periodicals = createPeriodicalsModule({ db: observedDb, mode: 'shadow', logger: () => {} });
 
     periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
 
-    assert.equal(snapshotReadStates.length >= 4, true);
-    assert.equal(snapshotReadStates.every(Boolean), true);
+    assert.equal(snapshotReadStates.length >= 6, true);
+    assert.equal(snapshotReadStates.includes(false), true, 'compiler input should be built outside publish transaction');
+    assert.equal(snapshotReadStates.slice(-3).every(Boolean), true, 'publish must reread SQLite under BEGIN IMMEDIATE');
   } finally {
     db.close();
   }
 });
 
-test('validated AI expression persists without changing revision, selection facts, or evidence', async () => {
+test('durable build publishes validated AI expression without changing selection facts or evidence', async () => {
   const db = fixtureDatabase();
   try {
     const insertSource = db.prepare(`
@@ -516,36 +541,55 @@ test('validated AI expression persists without changing revision, selection fact
       NOW,
     );
 
-    const aiAdapter = async request => ({
-      content: JSON.stringify({
-        overview: '本期聚焦 1 项有明确证据的进展。所有表达均受证据约束。',
-        events: request.evidencePackage.events.map(event => ({
-          id: event.id,
-          themeKey: 'products_tools',
-          title: '稳定事件获得证据确认',
-          summary: '现有证据说明该事件已经发生。',
-          evidenceIds: event.evidence.map(item => item.id),
-        })),
-        themes: [{ themeKey: 'products_tools', trendNote: '本期产品主题关注稳定进展。' }],
-      }),
-      provider: 'site-provider',
-      model: 'site-model',
-    });
+    let aiCalls = 0;
+    const aiAdapter = async request => {
+      aiCalls += 1;
+      return {
+        content: JSON.stringify({
+          overview: '本期聚焦 1 项有明确证据的进展。所有表达均受证据约束。',
+          events: request.evidencePackage.events.map(event => ({
+            id: event.id,
+            themeKey: 'products_tools',
+            title: '稳定事件获得证据确认',
+            summary: '现有证据说明该事件已经发生。',
+            evidenceIds: event.evidence.map(item => item.id),
+          })),
+          themes: [{ themeKey: 'products_tools', trendNote: '本期产品主题关注稳定进展。' }],
+        }),
+        provider: 'site-provider',
+        model: 'site-model',
+      };
+    };
     const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter });
-    const fallback = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
-    const generated = await periodicals.summarizeIssue({
-      cadence: 'daily',
-      periodKey: '2026-07-30',
+    const queued = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    let fallback;
+    const built = await periodicals.runNextBuild({
+      now: NOW + 10,
+      compileIssue(input) {
+        fallback = compileOpenDaily(input);
+        return fallback;
+      },
     });
-    const reread = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    const generated = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    const duplicate = periodicals.syncOpenDaily({
+      now: NOW + (60 * 60 * 1000),
+      trigger: 'hourly-sweep',
+    });
 
+    assert.equal(queued.action, 'queued');
+    assert.equal(built.status, 'succeeded');
     assert.equal(fallback.issue.summaryStatus, 'fallback');
     assert.equal(generated.issue.summaryStatus, 'generated');
-    assert.equal(reread.issue.summaryStatus, 'generated');
-    assert.equal(reread.issue.provider, 'site-provider');
-    assert.equal(reread.issue.model, 'site-model');
-    assert.equal(reread.issue.revision, fallback.issue.revision);
-    assert.notEqual(reread.issue.contentHash, fallback.issue.contentHash);
+    assert.equal(generated.issue.provider, 'site-provider');
+    assert.equal(generated.issue.model, 'site-model');
+    assert.equal(generated.issue.revision, fallback.issue.revision);
+    assert.notEqual(generated.issue.contentHash, fallback.issue.contentHash);
+    assert.equal(periodicals.getBuildJob(queued.job.id).provider, 'site-provider');
+    assert.equal(periodicals.getBuildJob(queued.job.id).model, 'site-model');
+    assert.equal(aiCalls, 1);
+    assert.equal(duplicate.action, 'noop');
+    assert.equal(await periodicals.runNextBuild({ now: NOW + (60 * 60 * 1000) }), null);
+    assert.equal(aiCalls, 1);
     assert.equal(fallback.events.length, 1);
     assert.equal(fallback.evidence.length, 2);
     assert.equal(fallback.events[0].score.confirmation.independentSourceCount, 2);
@@ -555,7 +599,7 @@ test('validated AI expression persists without changing revision, selection fact
       ['summary-entry', 'summary-entry-2'],
     );
     assert.deepEqual(
-      reread.events.map(event => ({
+      generated.events.map(event => ({
         id: event.id,
         eventKey: event.eventKey,
         topicKey: event.topicKey,
@@ -576,9 +620,9 @@ test('validated AI expression persists without changing revision, selection fact
         displayOrder: event.displayOrder,
       })),
     );
-    assert.deepEqual(reread.evidence, fallback.evidence);
+    assert.deepEqual(generated.evidence, fallback.evidence);
     assert.deepEqual(
-      reread.evidence.map(item => item.entryLink).sort(),
+      generated.evidence.map(item => item.entryLink).sort(),
       [
         'https://second-summary.example/posts/atlas-release',
         'https://summary.example/posts/atlas-release',

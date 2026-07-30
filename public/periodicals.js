@@ -12,21 +12,27 @@
   const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
   const STATUS_LABELS = { open: '更新中', finalizing: '正在定稿', frozen: '已冻结' };
 
+  function shanghaiDateTime(value) {
+    const timestamp = Number(value);
+    if (!Number.isFinite(timestamp)) return '';
+    const date = new Date(timestamp + SHANGHAI_OFFSET_MS);
+    return [
+      [
+        date.getUTCFullYear(),
+        String(date.getUTCMonth() + 1).padStart(2, '0'),
+        String(date.getUTCDate()).padStart(2, '0'),
+      ].join('-'),
+      [
+        String(date.getUTCHours()).padStart(2, '0'),
+        String(date.getUTCMinutes()).padStart(2, '0'),
+      ].join(':'),
+    ].join(' ');
+  }
+
   function evidenceMeta(item) {
     const priority = EDITORIAL_PRIORITY_LABELS[item.editorialPriority] || '普通';
-    const timestamp = Number(item.effectivePublishedAt);
-    if (!Number.isFinite(timestamp)) return `${priority}优先级`;
-    const date = new Date(timestamp + SHANGHAI_OFFSET_MS);
-    const day = [
-      date.getUTCFullYear(),
-      String(date.getUTCMonth() + 1).padStart(2, '0'),
-      String(date.getUTCDate()).padStart(2, '0'),
-    ].join('-');
-    const time = [
-      String(date.getUTCHours()).padStart(2, '0'),
-      String(date.getUTCMinutes()).padStart(2, '0'),
-    ].join(':');
-    return `${priority}优先级 · ${day} ${time}`;
+    const publishedAt = shanghaiDateTime(item.effectivePublishedAt);
+    return publishedAt ? `${priority}优先级 · ${publishedAt}` : `${priority}优先级`;
   }
   function validPeriodKey(cadence, value) {
     const key = String(value || '');
@@ -212,10 +218,15 @@
         const items = issues.map(issue => {
           const link = element('a', 'periodicals-list-item');
           link.href = `/periodicals/${cadence}/${issue.periodKey}`;
+          const status = issue.updateDelayed
+            ? '生成异常'
+            : (STATUS_LABELS[issue.status] || issue.status);
           link.append(
             element('strong', '', issue.periodKey),
-            element('span', '', `${issue.eventCount || 0} 个事件 · ${STATUS_LABELS[issue.status] || issue.status}`),
+            element('span', '', `${issue.eventCount || 0} 个事件 · ${status}`),
           );
+          const lastSuccessfulAt = shanghaiDateTime(issue.lastSuccessfulAt);
+          if (lastSuccessfulAt) link.append(element('span', '', `最后成功 ${lastSuccessfulAt}`));
           return link;
         });
         list.replaceChildren(...items);
@@ -244,6 +255,16 @@
           element('h1', '', `精选${CADENCE_LABELS[issue.cadence] || '期刊'}`),
           element('p', 'periodical-overview', issue.overview || '本期暂无概览。'),
         );
+        if (issue.updateDelayed) {
+          const lastSuccessfulAt = shanghaiDateTime(issue.lastSuccessfulAt);
+          header.append(element(
+            'p',
+            'periodical-update-delay',
+            lastSuccessfulAt
+              ? `本期更新暂时延迟 · 最后成功更新 ${lastSuccessfulAt}`
+              : '本期更新暂时延迟',
+          ));
+        }
 
         const directory = element('nav', 'periodical-directory');
         directory.setAttribute('aria-label', '本期目录');
