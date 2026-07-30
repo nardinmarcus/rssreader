@@ -9,6 +9,7 @@ const {
   compileOpenDaily,
   createPeriodicalsModule,
 } = require('../lib/periodicals');
+const { SUMMARY_VERSION } = require('../lib/periodical-summary');
 const { SOURCES } = require('../lib/sources');
 
 const NOW = Date.parse('2026-07-30T04:00:00.000Z');
@@ -113,7 +114,7 @@ function expectedInputHash(sourceInputHash, { legacy = false } = {}) {
     }),
     selectionVersion: 'importance-v1',
     scoreConfig: legacy ? LEGACY_SCORE_CONFIG : SCORE_CONFIG,
-    summaryVersion: 'fallback-v1',
+    summaryVersion: legacy ? 'fallback-v1' : SUMMARY_VERSION,
   });
 }
 
@@ -505,7 +506,7 @@ test('a recurring source snapshot after an intervening revision creates a fresh 
   }
 });
 
-test('an identical successful Issue with exact #5 hashes remains a no-op without job history', async () => {
+test('an identical successful Issue with legacy source hashes remains a no-op without job history', async () => {
   const db = fixtureDatabase();
   try {
     disableBuiltInSources(db);
@@ -517,7 +518,7 @@ test('an identical successful Issue with exact #5 hashes remains a no-op without
     const legacySourceInputHash = expectedSourceInputHash({ legacy: true });
     db.prepare(`
       UPDATE periodical_issues
-      SET source_input_hash = ?, input_hash = ?
+      SET source_input_hash = ?, input_hash = ?, summary_version = 'fallback-v1'
       WHERE id = 'periodical:daily:2026-07-30'
     `).run(
       legacySourceInputHash,
@@ -712,7 +713,74 @@ test('new input supersedes a running stale build before it can publish', async (
   }
 });
 
-test('failed atomic child replacement retains the last successful revision and exposes delay state', async () => {
+test('new input supersedes an in-flight generated summary before it can publish', async () => {
+  const db = fixtureDatabase();
+  let releaseSummary;
+  const summaryReleased = new Promise(resolve => { releaseSummary = resolve; });
+  let aiCalls = 0;
+  const responseFor = request => ({
+    content: JSON.stringify({
+      overview: '本期关注 1 项可复核进展。所有表达均来自现有证据。',
+      events: request.evidencePackage.events.map(event => ({
+        id: event.id,
+        themeKey: 'products_tools',
+        title: '受约束摘要',
+        summary: '现有证据支持该进展。',
+        evidenceIds: event.evidence.map(item => item.id),
+      })),
+      themes: [{ themeKey: 'products_tools', trendNote: '本期主题保持稳定。' }],
+    }),
+    provider: 'test-provider',
+    model: 'test-model',
+  });
+  try {
+    seedCandidate(db);
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      logger: () => {},
+      aiAdapter: async request => {
+        aiCalls += 1;
+        if (aiCalls === 1) await summaryReleased;
+        return responseFor(request);
+      },
+    });
+    const original = periodicals.syncOpenDaily({ now: NOW, trigger: 'rss-refresh' });
+    const staleRun = periodicals.runNextBuild({ now: () => NOW + 100 });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(aiCalls, 1, 'durable worker must summarize before publishing');
+
+    db.prepare(`
+      UPDATE entries
+      SET title = 'New durable input', content_hash = 'durable-content-v2', updated_at = ?
+      WHERE id = 'durable-entry'
+    `).run(NOW + 50);
+    const replacement = periodicals.syncOpenDaily({ now: NOW + 50, trigger: 'rss-refresh' });
+    assert.equal(replacement.action, 'queued');
+    assert.equal(periodicals.getBuildJob(original.job.id).status, 'superseded');
+
+    releaseSummary();
+    const stale = await staleRun;
+    assert.equal(stale.status, 'superseded');
+    assert.equal(db.prepare(`
+      SELECT revision FROM periodical_issues WHERE id = 'periodical:daily:2026-07-30'
+    `).get().revision, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM periodical_events').get().count, 0);
+
+    const fresh = await periodicals.runNextBuild({ now: NOW + 100 });
+    const issue = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    assert.equal(fresh.status, 'succeeded');
+    assert.equal(aiCalls, 2);
+    assert.equal(issue.issue.revision, 1);
+    assert.equal(issue.issue.summaryStatus, 'generated');
+    assert.equal(issue.evidence[0].entryTitle, 'New durable input');
+  } finally {
+    releaseSummary();
+    db.close();
+  }
+});
+
+test('failed atomic replacement retains the last successful revision and complete fallback', async () => {
   const db = fixtureDatabase();
   try {
     seedCandidate(db);
@@ -740,8 +808,14 @@ test('failed atomic child replacement retains the last successful revision and e
     const after = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
 
     assert.equal(failed.status, 'retry_wait');
+    assert.equal(before.issue.summaryStatus, 'fallback');
     assert.equal(after.issue.revision, 1);
     assert.equal(after.issue.contentHash, before.issue.contentHash);
+    assert.equal(after.issue.overview, before.issue.overview);
+    assert.equal(after.issue.summaryStatus, 'fallback');
+    assert.equal(after.issue.provider, null);
+    assert.equal(after.issue.model, null);
+    assert.deepEqual(after.themes, before.themes);
     assert.deepEqual(after.events, before.events);
     assert.deepEqual(after.evidence, before.evidence);
     assert.equal(after.issue.lastSuccessfulAt, NOW + 10);

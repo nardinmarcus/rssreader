@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
-const { createPeriodicalsModule } = require('../lib/periodicals');
+const { compileOpenDaily, createPeriodicalsModule } = require('../lib/periodicals');
 
 const NOW = Date.parse('2026-07-30T04:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -477,7 +477,7 @@ test('shadow publish rereads its source and candidate snapshot under BEGIN IMMED
   }
 });
 
-test('validated AI expression persists without changing revision, selection facts, or evidence', async () => {
+test('durable build publishes validated AI expression without changing selection facts or evidence', async () => {
   const db = fixtureDatabase();
   try {
     const insertSource = db.prepare(`
@@ -541,36 +541,55 @@ test('validated AI expression persists without changing revision, selection fact
       NOW,
     );
 
-    const aiAdapter = async request => ({
-      content: JSON.stringify({
-        overview: '本期聚焦 1 项有明确证据的进展。所有表达均受证据约束。',
-        events: request.evidencePackage.events.map(event => ({
-          id: event.id,
-          themeKey: 'products_tools',
-          title: '稳定事件获得证据确认',
-          summary: '现有证据说明该事件已经发生。',
-          evidenceIds: event.evidence.map(item => item.id),
-        })),
-        themes: [{ themeKey: 'products_tools', trendNote: '本期产品主题关注稳定进展。' }],
-      }),
-      provider: 'site-provider',
-      model: 'site-model',
-    });
+    let aiCalls = 0;
+    const aiAdapter = async request => {
+      aiCalls += 1;
+      return {
+        content: JSON.stringify({
+          overview: '本期聚焦 1 项有明确证据的进展。所有表达均受证据约束。',
+          events: request.evidencePackage.events.map(event => ({
+            id: event.id,
+            themeKey: 'products_tools',
+            title: '稳定事件获得证据确认',
+            summary: '现有证据说明该事件已经发生。',
+            evidenceIds: event.evidence.map(item => item.id),
+          })),
+          themes: [{ themeKey: 'products_tools', trendNote: '本期产品主题关注稳定进展。' }],
+        }),
+        provider: 'site-provider',
+        model: 'site-model',
+      };
+    };
     const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter });
-    const fallback = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
-    const generated = await periodicals.summarizeIssue({
-      cadence: 'daily',
-      periodKey: '2026-07-30',
+    const queued = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    let fallback;
+    const built = await periodicals.runNextBuild({
+      now: NOW + 10,
+      compileIssue(input) {
+        fallback = compileOpenDaily(input);
+        return fallback;
+      },
     });
-    const reread = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    const generated = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    const duplicate = periodicals.syncOpenDaily({
+      now: NOW + (60 * 60 * 1000),
+      trigger: 'hourly-sweep',
+    });
 
+    assert.equal(queued.action, 'queued');
+    assert.equal(built.status, 'succeeded');
     assert.equal(fallback.issue.summaryStatus, 'fallback');
     assert.equal(generated.issue.summaryStatus, 'generated');
-    assert.equal(reread.issue.summaryStatus, 'generated');
-    assert.equal(reread.issue.provider, 'site-provider');
-    assert.equal(reread.issue.model, 'site-model');
-    assert.equal(reread.issue.revision, fallback.issue.revision);
-    assert.notEqual(reread.issue.contentHash, fallback.issue.contentHash);
+    assert.equal(generated.issue.provider, 'site-provider');
+    assert.equal(generated.issue.model, 'site-model');
+    assert.equal(generated.issue.revision, fallback.issue.revision);
+    assert.notEqual(generated.issue.contentHash, fallback.issue.contentHash);
+    assert.equal(periodicals.getBuildJob(queued.job.id).provider, 'site-provider');
+    assert.equal(periodicals.getBuildJob(queued.job.id).model, 'site-model');
+    assert.equal(aiCalls, 1);
+    assert.equal(duplicate.action, 'noop');
+    assert.equal(await periodicals.runNextBuild({ now: NOW + (60 * 60 * 1000) }), null);
+    assert.equal(aiCalls, 1);
     assert.equal(fallback.events.length, 1);
     assert.equal(fallback.evidence.length, 2);
     assert.equal(fallback.events[0].score.confirmation.independentSourceCount, 2);
@@ -580,7 +599,7 @@ test('validated AI expression persists without changing revision, selection fact
       ['summary-entry', 'summary-entry-2'],
     );
     assert.deepEqual(
-      reread.events.map(event => ({
+      generated.events.map(event => ({
         id: event.id,
         eventKey: event.eventKey,
         topicKey: event.topicKey,
@@ -601,9 +620,9 @@ test('validated AI expression persists without changing revision, selection fact
         displayOrder: event.displayOrder,
       })),
     );
-    assert.deepEqual(reread.evidence, fallback.evidence);
+    assert.deepEqual(generated.evidence, fallback.evidence);
     assert.deepEqual(
-      reread.evidence.map(item => item.entryLink).sort(),
+      generated.evidence.map(item => item.entryLink).sort(),
       [
         'https://second-summary.example/posts/atlas-release',
         'https://summary.example/posts/atlas-release',

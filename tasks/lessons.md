@@ -146,3 +146,7 @@
 - Test fixtures that cross the real store boundary must seed every required stable ID through the production helper contract; an implicit ID can create a fixture failure before the intended SQLite assertion runs.
 - A concurrent SQLite test writer must use the same finite `busy_timeout` as the production store; otherwise a valid `BEGIN IMMEDIATE` held by the system under test becomes a zero-wait harness flake instead of exercising lifecycle behavior.
 - In zsh verification wrappers, never rely on an unquoted scalar to split a newline-separated file list; stream paths through `while IFS= read -r` so each syntax check receives exactly one file.
+- Before recording a custom-compiler RED, verify the production helper is imported; a fixture `ReferenceError` that merely drives the durable job to `failed` is not evidence of the intended behavior gap.
+- A legacy input-identity helper must pin every legacy algorithm version, including summary version; referencing the current canonical constant silently changes the rollback hash domain after an upstream algorithm merge.
+- A constrained-summary test fixture must use the exact supported numeric token; an allowed structural count `1` does not authorize the Chinese token `一`, and an accidental validation repair changes AI-call assertions.
+- Before asserting across a browser/API boundary, read the endpoint contract or capture its response shape; guessing an envelope key can turn valid runtime evidence into a misleading diagnostic NON_PASS.
