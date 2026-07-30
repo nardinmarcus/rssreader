@@ -152,3 +152,5 @@
 - Before asserting across a browser/API boundary, read the endpoint contract or capture its response shape; guessing an envelope key can turn valid runtime evidence into a misleading diagnostic NON_PASS.
 - A legacy no-op fixture must restore the exact legacy selection context as well as its hashes; current algorithm context paired with old hashes is a false compatibility proof.
 - A durable lease must exceed one complete provider adapter call, including internal retries and backoff; renewing only before a call cannot save a lease whose duration merely equals the nominal timeout.
+- A pre-orchestration compatibility matcher must require the exact legacy field set and no durable job history; projecting known keys lets future algorithm inputs masquerade as an old no-op.
+- Browser shadow evidence must query persisted child rows through the schema's exact table names; inspect `sqlite_master` before treating an ad hoc SQLite assertion as a product failure.

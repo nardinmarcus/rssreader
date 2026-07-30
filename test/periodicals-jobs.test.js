@@ -14,6 +14,7 @@ const { SOURCES } = require('../lib/sources');
 
 const NOW = Date.parse('2026-07-30T04:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;
+const RETRYING_ADAPTER_WORST_CASE_MS = (30 + 5 + 30) * 1000;
 const SCORE_CONFIG = Object.freeze({
   threshold: 40,
   maxEvents: 12,
@@ -44,6 +45,20 @@ const LEGACY_SCORE_CONFIG = Object.freeze({
   freshnessHalfLifeHours: 36,
   behaviorSignalEnabled: false,
 });
+
+function legacySelectionContext(overrides = {}) {
+  return {
+    canonicalizationVersion: CANONICALIZATION_VERSION,
+    candidateSnapshotVersion: 'periodical-candidate-v1',
+    urlCanonicalizationVersion: 'periodical-url-v1',
+    eventIdentityVersion: 'single-entry-event-v1',
+    scoreConfig: LEGACY_SCORE_CONFIG,
+    behavior: { enabled: false },
+    candidateCount: 1,
+    eligibleSourceCount: 1,
+    ...overrides,
+  };
+}
 
 function expectedCandidateSnapshotHash({ legacy = false } = {}) {
   return computeCanonicalHash({
@@ -524,16 +539,7 @@ test('an identical successful Issue with legacy source hashes remains a no-op wi
     `).run(
       legacySourceInputHash,
       expectedInputHash(legacySourceInputHash, { legacy: true }),
-      JSON.stringify({
-        canonicalizationVersion: CANONICALIZATION_VERSION,
-        candidateSnapshotVersion: 'periodical-candidate-v1',
-        urlCanonicalizationVersion: 'periodical-url-v1',
-        eventIdentityVersion: 'single-entry-event-v1',
-        scoreConfig: LEGACY_SCORE_CONFIG,
-        behavior: { enabled: false },
-        candidateCount: 1,
-        eligibleSourceCount: 1,
-      }),
+      JSON.stringify(legacySelectionContext()),
     );
 
     const duplicate = periodicals.syncOpenDaily({
@@ -545,6 +551,98 @@ test('an identical successful Issue with legacy source hashes remains a no-op wi
     assert.equal(duplicate.job, null);
     assert.equal(duplicate.revision, 1);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM periodical_build_jobs').get().count, 0);
+    assert.equal(db.prepare(`
+      SELECT revision FROM periodical_issues WHERE id = 'periodical:daily:2026-07-30'
+    `).get().revision, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test('legacy selection compatibility rejects event clustering and new algorithm fields', async (t) => {
+  const cases = [
+    ['changed event identity', { eventIdentityVersion: 'event-cluster-v1' }],
+    ['topic version', { topicVersion: 'periodical-topic-v1' }],
+    ['scoring history version', { scoringHistoryVersion: 'periodical-scoring-history-v1' }],
+    ['unknown algorithm version', { futureAlgorithmVersion: 'future-v1' }],
+  ];
+
+  for (const [name, overrides] of cases) {
+    await t.test(name, async () => {
+      const db = fixtureDatabase();
+      try {
+        disableBuiltInSources(db);
+        seedCandidate(db);
+        const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+        periodicals.syncOpenDaily({ now: NOW, trigger: 'baseline' });
+        await periodicals.runNextBuild({ now: NOW });
+        db.prepare('DELETE FROM periodical_build_jobs').run();
+        const legacySourceInputHash = expectedSourceInputHash({ legacy: true });
+        db.prepare(`
+          UPDATE periodical_issues
+          SET source_input_hash = ?, input_hash = ?, summary_version = 'fallback-v1',
+              selection_context_json = ?
+          WHERE id = 'periodical:daily:2026-07-30'
+        `).run(
+          legacySourceInputHash,
+          expectedInputHash(legacySourceInputHash, { legacy: true }),
+          JSON.stringify(legacySelectionContext(overrides)),
+        );
+
+        const changed = periodicals.syncOpenDaily({
+          now: NOW + (60 * 60 * 1000),
+          trigger: 'startup',
+        });
+        const jobs = db.prepare(`
+          SELECT status, source_input_hash, input_hash
+          FROM periodical_build_jobs
+          ORDER BY created_at, rowid
+        `).all();
+
+        assert.equal(changed.action, 'queued');
+        assert.equal(jobs.length, 1);
+        assert.equal(jobs[0].status, 'queued');
+        assert.equal(jobs[0].source_input_hash, expectedSourceInputHash());
+        assert.equal(db.prepare(`
+          SELECT revision FROM periodical_issues WHERE id = 'periodical:daily:2026-07-30'
+        `).get().revision, 1);
+      } finally {
+        db.close();
+      }
+    });
+  }
+});
+
+test('legacy selection compatibility is unavailable after durable job history exists', async () => {
+  const db = fixtureDatabase();
+  try {
+    disableBuiltInSources(db);
+    seedCandidate(db);
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'baseline' });
+    await periodicals.runNextBuild({ now: NOW });
+    const legacySourceInputHash = expectedSourceInputHash({ legacy: true });
+    db.prepare(`
+      UPDATE periodical_issues
+      SET source_input_hash = ?, input_hash = ?, summary_version = 'fallback-v1',
+          selection_context_json = ?
+      WHERE id = 'periodical:daily:2026-07-30'
+    `).run(
+      legacySourceInputHash,
+      expectedInputHash(legacySourceInputHash, { legacy: true }),
+      JSON.stringify(legacySelectionContext()),
+    );
+
+    const changed = periodicals.syncOpenDaily({
+      now: NOW + (60 * 60 * 1000),
+      trigger: 'startup',
+    });
+    const jobs = db.prepare(`
+      SELECT status FROM periodical_build_jobs ORDER BY created_at, rowid
+    `).all();
+
+    assert.equal(changed.action, 'queued');
+    assert.deepEqual(jobs.map(row => row.status), ['succeeded', 'queued']);
     assert.equal(db.prepare(`
       SELECT revision FROM periodical_issues WHERE id = 'periodical:daily:2026-07-30'
     `).get().revision, 1);
@@ -620,7 +718,7 @@ test('provider timeout fallback completes before the durable lease can be reclai
       logger: () => {},
       async aiAdapter() {
         aiCalls += 1;
-        clock += (60 * 1000) + 1;
+        clock += RETRYING_ADAPTER_WORST_CASE_MS + 1;
         const error = new Error('simulated provider timeout');
         error.name = 'TimeoutError';
         throw error;
