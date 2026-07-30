@@ -106,6 +106,7 @@ test('periodical index validates parameters and reads a paged allowlist projecti
     insertOpenIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, 200, 300, 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
     insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400, 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
     insertOpenIssue.run('periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 100, 800, 'Weekly overview', 'importance-v1', 'fallback-v1', 4, 4);
+    insertOpenIssue.run('periodical:weekly:2026-W32', 'weekly', '2026-W32', 2, 800, 1500, 'Hidden pending Weekly', 'importance-v1', 'fallback-v1', 5, 5);
     db.exec(`
       UPDATE periodical_issues
       SET status = 'frozen', frozen_at = period_end_at
@@ -140,6 +141,11 @@ test('periodical index validates parameters and reads a paged allowlist projecti
     assert.equal(nextResponse.status, 200);
     assert.deepEqual(next.issues.map(issue => issue.periodKey), ['2026-07-28']);
     assert.equal(next.nextCursor, null);
+
+    const weeklyResponse = await fetch(`${server.baseUrl}/api/periodicals?cadence=weekly`);
+    const weekly = await weeklyResponse.json();
+    assert.equal(weeklyResponse.status, 200);
+    assert.deepEqual(weekly.issues.map(issue => issue.periodKey), ['2026-W31']);
 
     for (const query of [
       '',

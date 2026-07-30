@@ -132,15 +132,19 @@ test('server forwards only allowlisted periodical worker log lines', () => {
   assert.match(workerSource, /PERIODICAL_WORKER_SAFE_LOG\.test\(line\)/);
 });
 
-test('server finalizes the previous Daily before syncing today and schedules the next boundary', () => {
+test('server finalizes the previous Daily, schedules Weekly, then syncs today', () => {
   const serverSource = fs.readFileSync(path.join(projectDir, 'server.js'), 'utf8');
   const checkSource = serverSource.slice(
     serverSource.indexOf('function checkPeriodicalBuilds('),
     serverSource.indexOf('function scheduleNextPeriodicalFinalization('),
   );
+  const finalizedAt = checkSource.indexOf('finalizeDueIssues');
+  const weeklyAt = checkSource.indexOf('syncWeeklyRollup');
+  const dailyAt = checkSource.indexOf('syncOpenDaily');
   assert.ok(
-    checkSource.indexOf('finalizeDueIssues') < checkSource.indexOf('syncOpenDaily'),
-    'the previous Daily must enter finalizing before today is synchronized',
+    finalizedAt >= 0 && weeklyAt >= 0 && dailyAt >= 0
+      && finalizedAt < weeklyAt && weeklyAt < dailyAt,
+    'the previous Daily must finalize before Weekly scheduling and today synchronization',
   );
   assert.match(checkSource, /scheduleNextPeriodicalFinalization\(\)/);
   assert.match(serverSource, /getNextFinalizationWakeAt\(\)/);

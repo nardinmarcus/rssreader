@@ -375,3 +375,85 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
   assert.equal(descendants(documentNode).some(node => node.tagName === 'DETAILS'), true);
   assert.equal(descendants(documentNode).some(node => node.tagName === 'SUMMARY'), true);
 });
+
+test('Weekly deep link renders its index, detail, rollup score, and Frozen evidence', async () => {
+  const index = {
+    issues: [{
+      cadence: 'weekly',
+      periodKey: '2026-W32',
+      volumeNo: 1,
+      status: 'frozen',
+      eventCount: 1,
+      lastSuccessfulAt: NOW,
+    }],
+    nextCursor: null,
+  };
+  const detail = {
+    issue: {
+      cadence: 'weekly',
+      periodKey: '2026-W32',
+      volumeNo: 1,
+      status: 'frozen',
+      overview: '本周从七份冻结日报汇总出 1 个事件。',
+      lastSuccessfulAt: NOW,
+    },
+    themes: [{
+      id: 'weekly-products',
+      themeKey: 'products_tools',
+      title: '产品与工具',
+      trendNote: '本周该主题收录 1 个跨日事件。',
+      displayOrder: 0,
+    }],
+    events: [{
+      id: 'weekly-event',
+      themeId: 'weekly-products',
+      title: 'Atlas 发布稳定更新',
+      summary: 'Frozen Daily 快照显示 Atlas 持续更新。',
+      whySelected: '最高日报重要性 80 分；top-3 日报均值 70 分；本周出现 4 天；覆盖 4 个来源。',
+      importanceScore: 74.8,
+      score: {
+        version: 'weekly-rollup-v1',
+        maxDailyScore: { value: 80, weight: 0.65, points: 52 },
+        meanTop3DailyScores: { value: 70, weight: 0.2, points: 14 },
+        occurrenceDays: { daysPresent: 4, periodDays: 7, points: 5 },
+        sourceBreadth: { distinctSources: 4, points: 3.8 },
+      },
+      displayOrder: 0,
+    }],
+    evidence: Array.from({ length: 4 }, (_, indexValue) => ({
+      eventId: 'weekly-event',
+      entryId: `weekly-entry-${indexValue}`,
+      sourceName: `Frozen Source ${indexValue + 1}`,
+      entryTitle: `Frozen Daily evidence ${indexValue + 1}`,
+      entryLink: `https://frozen-${indexValue + 1}.example/atlas`,
+      editorialPriority: 'high',
+      effectivePublishedAt: NOW - (indexValue * 60 * 60 * 1000),
+      timestampFallback: false,
+      displayOrder: indexValue,
+    })),
+  };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/weekly/2026-W32',
+    responses: [index, detail],
+  });
+
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  const indexText = flattenedText(browser.elements['#periodicals-list']);
+  const detailText = flattenedText(browser.elements['#periodicals-document']);
+  assert.equal(browser.fetchCount(), 2);
+  assert.match(indexText, /2026-W32/);
+  assert.match(indexText, /1 个事件 · 已冻结/);
+  assert.match(detailText, /周报 · 第 1 卷 · 2026-W32 · 已冻结/);
+  assert.match(detailText, /weekly-rollup-v1/);
+  assert.match(detailText, /最高日报分/);
+  assert.match(detailText, /Top-3 均值/);
+  assert.match(detailText, /出现天数/);
+  assert.match(detailText, /来源广度/);
+  assert.match(detailText, /4 个来源 · 4 条证据/);
+  assert.match(detailText, /最高日报重要性 80 分；top-3 日报均值 70 分/);
+  assert.match(detailText, /Frozen Source 1/);
+  assert.match(detailText, /Frozen Daily evidence 4/);
+});
