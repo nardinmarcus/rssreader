@@ -327,6 +327,7 @@ function seedFrozenDaily(db, {
 
 function seedRawMonthlyIssue(db, {
   periodKey,
+  storedPeriodKey = periodKey,
   volumeNo,
   id = `periodical:monthly:${periodKey}`,
   status = 'finalizing',
@@ -390,7 +391,7 @@ function seedRawMonthlyIssue(db, {
     )
   `).run(
     issue.id,
-    issue.periodKey,
+    storedPeriodKey,
     issue.volumeNo,
     issue.periodStartAt,
     issue.periodEndAt,
@@ -1349,6 +1350,124 @@ test('Monthly index validation stops after a bounded page of visible Frozen issu
     assert.equal(invalidSecondPage.nextCursor, invalidMonthKeys[59]);
     assert.deepEqual(indexQueryLimits, [30]);
     assert.equal(monthlyIdentityLookups, 30);
+  } finally {
+    db.close();
+  }
+});
+
+test('Monthly invalid-history continuation remains accepted and reaches older valid issues', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-04']);
+    const buildAt = Date.parse('2026-05-01T00:05:00.000+08:00');
+    periodicals.syncMonthlyRollup({ now: buildAt, trigger: 'seed-valid-continuation' });
+    assert.equal((await periodicals.runNextBuild({ now: buildAt + 1 })).status, 'succeeded');
+
+    Array.from({ length: 30 }, (_, index) => {
+      const date = new Date(Date.UTC(2040, 11 - index, 1));
+      const sourcePeriodKey = `${date.getUTCFullYear()}-${String(
+        date.getUTCMonth() + 1,
+      ).padStart(2, '0')}`;
+      seedRawMonthlyIssue(db, {
+        periodKey: sourcePeriodKey,
+        storedPeriodKey: `9999-X${String(99 - index).padStart(2, '0')}`,
+        id: `malformed-monthly-cursor:${index}`,
+        volumeNo: 1000 + index,
+        status: 'frozen',
+      });
+    });
+
+    const first = periodicals.listIssues({ cadence: 'monthly', limit: 1 });
+    assert.deepEqual(first.issues, []);
+    assert.equal(typeof first.nextCursor, 'string');
+    const second = periodicals.listIssues({
+      cadence: 'monthly',
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    assert.deepEqual(second.issues.map(issue => issue.periodKey), ['2026-04']);
+  } finally {
+    db.close();
+  }
+});
+
+test('Monthly mixed pagination never revalidates an already scanned raw row', async () => {
+  const db = fixtureDatabase();
+  let observing = false;
+  let validatedIssueIds = [];
+  const observedDb = new Proxy(db, {
+    get(target, property) {
+      if (property !== 'prepare') {
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return sql => {
+        const statement = target.prepare(sql);
+        const issueIdentityQuery = /^SELECT \* FROM periodical_issues WHERE id = \?$/
+          .test(String(sql).trim());
+        if (!issueIdentityQuery) return statement;
+        return new Proxy(statement, {
+          get(statementTarget, statementProperty) {
+            if (statementProperty === 'get') {
+              return (...args) => {
+                if (observing) validatedIssueIds.push(String(args[0]));
+                return statementTarget.get(...args);
+              };
+            }
+            const value = Reflect.get(statementTarget, statementProperty, statementTarget);
+            return typeof value === 'function' ? value.bind(statementTarget) : value;
+          },
+        });
+      };
+    },
+  });
+  try {
+    const periodicals = createPeriodicalsModule({
+      db: observedDb,
+      mode: 'shadow',
+      logger: () => {},
+    });
+    seedFrozenMonths(db, ['2026-01', '2026-04']);
+    const buildAt = Date.parse('2026-05-01T00:05:00.000+08:00');
+    periodicals.syncMonthlyRollup({ now: buildAt, trigger: 'seed-mixed-pagination' });
+    await drainImmediateBuilds(periodicals, buildAt + 1);
+    assert.deepEqual(db.prepare(`
+      SELECT period_key FROM periodical_issues
+      WHERE cadence = 'monthly' AND status = 'frozen'
+      ORDER BY period_key DESC
+    `).all().map(row => row.period_key), ['2026-04', '2026-01']);
+
+    Array.from({ length: 28 }, (_, index) => {
+      const date = new Date(Date.UTC(2045, 11 - index, 1));
+      const sourcePeriodKey = `${date.getUTCFullYear()}-${String(
+        date.getUTCMonth() + 1,
+      ).padStart(2, '0')}`;
+      seedRawMonthlyIssue(db, {
+        periodKey: sourcePeriodKey,
+        storedPeriodKey: `2026-03-X${String(99 - index).padStart(2, '0')}`,
+        id: `malformed-monthly-scan:${index}`,
+        volumeNo: 2000 + index,
+        status: 'frozen',
+      });
+    });
+
+    observing = true;
+    const first = periodicals.listIssues({ cadence: 'monthly', limit: 1 });
+    assert.deepEqual(first.issues.map(issue => issue.periodKey), ['2026-04']);
+    const firstValidatedIds = validatedIssueIds;
+
+    validatedIssueIds = [];
+    const second = periodicals.listIssues({
+      cadence: 'monthly',
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    assert.deepEqual(second.issues.map(issue => issue.periodKey), ['2026-01']);
+    assert.deepEqual(
+      validatedIssueIds.filter(issueId => firstValidatedIds.includes(issueId)),
+      [],
+    );
   } finally {
     db.close();
   }

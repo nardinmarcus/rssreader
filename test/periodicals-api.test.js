@@ -163,6 +163,51 @@ test('periodical index validates parameters and reads a paged allowlist projecti
     assert.equal(monthlyResponse.status, 200);
     assert.deepEqual(monthly.issues.map(issue => issue.periodKey), ['2026-06']);
 
+    const invalidHistoryDb = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const insertMalformedMonthly = invalidHistoryDb.prepare(`
+      INSERT INTO periodical_issues (
+        id, cadence, period_key, volume_no, period_start_at, period_end_at,
+        status, overview, selection_version, summary_version, created_at, updated_at
+      ) VALUES (?, 'monthly', ?, ?, ?, ?, 'finalizing', ?, ?, ?, ?, ?)
+    `);
+    for (let index = 0; index < 30; index += 1) {
+      insertMalformedMonthly.run(
+        `malformed-monthly-api:${index}`,
+        `9999-X${String(99 - index).padStart(2, '0')}`,
+        1000 + index,
+        1000 + index,
+        2000 + index,
+        'Invalid frozen history.',
+        'monthly-rollup-v1',
+        'constrained-summary-v1',
+        1000 + index,
+        1000 + index,
+      );
+    }
+    invalidHistoryDb.prepare(`
+      UPDATE periodical_issues
+      SET status = 'frozen', frozen_at = period_end_at
+      WHERE id LIKE 'malformed-monthly-api:%'
+    `).run();
+    invalidHistoryDb.close();
+
+    const invalidHistoryFirstResponse = await fetch(
+      `${server.baseUrl}/api/periodicals?cadence=monthly&limit=1`,
+    );
+    const invalidHistoryFirst = await invalidHistoryFirstResponse.json();
+    assert.equal(invalidHistoryFirstResponse.status, 200);
+    assert.deepEqual(invalidHistoryFirst.issues, []);
+    assert.match(invalidHistoryFirst.nextCursor, /^monthly-scan-v1\./);
+
+    const invalidHistorySecondResponse = await fetch(
+      `${server.baseUrl}/api/periodicals?cadence=monthly&limit=1&cursor=${
+        encodeURIComponent(invalidHistoryFirst.nextCursor)
+      }`,
+    );
+    const invalidHistorySecond = await invalidHistorySecondResponse.json();
+    assert.equal(invalidHistorySecondResponse.status, 200);
+    assert.deepEqual(invalidHistorySecond.issues.map(issue => issue.periodKey), ['2026-06']);
+
     for (const query of [
       '',
       '?cadence=yearly',
