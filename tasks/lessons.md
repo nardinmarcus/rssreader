@@ -144,3 +144,4 @@
 - Approximate Chinese markers such as `几/幾` must participate in the complete verbatim token grammar; otherwise evidence for `十` can accidentally authorize the more specific unsupported claim `十几` through a partial-token match.
 - A compatibility fixture that expects independent-source confirmation must not reuse one canonical URL across sources; syndication is intentionally one confirmation. Use a semantic complete-link cluster with distinct canonical URLs when asserting confirmation points.
 - Test fixtures that cross the real store boundary must seed every required stable ID through the production helper contract; an implicit ID can create a fixture failure before the intended SQLite assertion runs.
+- A concurrent SQLite test writer must use the same finite `busy_timeout` as the production store; otherwise a valid `BEGIN IMMEDIATE` held by the system under test becomes a zero-wait harness flake instead of exercising lifecycle behavior.

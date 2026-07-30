@@ -209,6 +209,7 @@ test('server startup check and hourly sweep wake durable periodical work', {
     assert.equal(await waitForRevision(databaseFile, 1), 1, 'startup check did not publish revision 1');
     const changedAt = Date.now();
     const changed = new DatabaseSync(databaseFile);
+    changed.exec('PRAGMA busy_timeout = 5000;');
     changed.prepare(`
       UPDATE entries
       SET summary = 'Hourly input.', content_hash = 'lifecycle-content-v2', updated_at = ?
