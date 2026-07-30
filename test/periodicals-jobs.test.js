@@ -2,11 +2,110 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DatabaseSync } = require('node:sqlite');
 const {
+  CANONICALIZATION_VERSION,
+  computeCanonicalHash,
+} = require('../lib/content-hashes');
+const {
   compileOpenDaily,
   createPeriodicalsModule,
 } = require('../lib/periodicals');
+const { SOURCES } = require('../lib/sources');
 
 const NOW = Date.parse('2026-07-30T04:00:00.000Z');
+const SCORE_CONFIG = Object.freeze({
+  threshold: 40,
+  maxEvents: 12,
+  sourceQuality: Object.freeze({ high: 30, normal: 20, low: 8 }),
+  confirmation: Object.freeze({ pointsPerAdditionalSource: 8, maxPoints: 25 }),
+  persistence: Object.freeze({
+    lookbackFrozenDailyIssues: 7,
+    pointsPerDay: 3.5,
+    maxPoints: 14,
+  }),
+  trend: Object.freeze({
+    lookbackFrozenDailyIssues: 7,
+    baseline: 'max-daily-independent-source-count',
+    pointsPerAdditionalSource: 2,
+    maxPoints: 6,
+  }),
+  freshness: Object.freeze({ maxPoints: 20, halfLifeHours: 36 }),
+  behavior: Object.freeze({
+    enabled: false,
+    maxPoints: 5,
+    starWeight: 2,
+    viewWeight: 0.5,
+  }),
+});
+const LEGACY_SCORE_CONFIG = Object.freeze({
+  threshold: 40,
+  maxEvents: 12,
+  freshnessHalfLifeHours: 36,
+  behaviorSignalEnabled: false,
+});
+
+function expectedCandidateSnapshotHash({ legacy = false } = {}) {
+  return computeCanonicalHash({
+    ...(legacy ? {
+      version: 'periodical-candidate-v1',
+      urlCanonicalizationVersion: 'periodical-url-v1',
+    } : {}),
+    source: {
+      id: 'durable-source',
+      name: 'Durable Source',
+      category: 'article',
+    },
+    entry: {
+      title: 'Durable orchestration',
+      titleZh: null,
+      link: 'https://durable-source.example/posts/one',
+      canonicalUrl: 'https://durable-source.example/posts/one',
+      summaryExcerpt: 'A durable candidate summary.',
+      contentHash: 'durable-content-v1',
+      timestampFallback: false,
+    },
+  });
+}
+
+function expectedSourceInputHash({ legacy = false } = {}) {
+  return computeCanonicalHash({
+    ...(legacy ? { canonicalizationVersion: CANONICALIZATION_VERSION } : {}),
+    cadence: 'daily',
+    periodKey: '2026-07-30',
+    candidates: [{
+      entryId: 'durable-entry',
+      contentHash: expectedCandidateSnapshotHash({ legacy }),
+      effectivePublishedAt: NOW - 1000,
+    }],
+    sources: [{
+      sourceId: 'durable-source',
+      enabled: true,
+      editorialPriority: 'high',
+      labels: ['产品'],
+    }],
+    behavior: legacy ? 'behavior-disabled' : { enabled: false },
+  });
+}
+
+function expectedInputHash(sourceInputHash, { legacy = false } = {}) {
+  return computeCanonicalHash({
+    sourceInputHash,
+    asOfAt: NOW,
+    ...(legacy ? {} : {
+      canonicalizationVersion: CANONICALIZATION_VERSION,
+      candidateSnapshotVersion: 'periodical-candidate-v1',
+      urlCanonicalizationVersion: 'periodical-url-v1',
+      titleNormalizationVersion: 'periodical-title-v1',
+      entityAnchorVersion: 'periodical-entity-v1',
+      actionAnchorVersion: 'periodical-action-v1',
+      eventIdentityVersion: 'event-cluster-v1',
+      topicVersion: 'periodical-topic-v1',
+      inputIdentityVersion: 'periodical-input-v1',
+    }),
+    selectionVersion: 'importance-v1',
+    scoreConfig: legacy ? LEGACY_SCORE_CONFIG : SCORE_CONFIG,
+    summaryVersion: 'fallback-v1',
+  });
+}
 
 function fixtureDatabase() {
   const db = new DatabaseSync(':memory:');
@@ -89,6 +188,36 @@ function seedCandidate(db, overrides = {}) {
     overrides.updatedAt || NOW - 1000,
   );
 }
+
+function disableBuiltInSources(db) {
+  const disable = db.prepare(`
+    INSERT INTO source_preferences (
+      source_id, enabled, editorial_priority, display_order, updated_at
+    ) VALUES (?, 0, ?, ?, '2026-07-30T04:00:00.000Z')
+  `);
+  SOURCES.forEach((source, index) => {
+    disable.run(source.id, source.editorialPriority || 'normal', index);
+  });
+}
+
+test('source identity contains only ordered SQLite facts while full input owns algorithm versions', () => {
+  const db = fixtureDatabase();
+  try {
+    disableBuiltInSources(db);
+    seedCandidate(db);
+    const queued = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      logger: () => {},
+    }).syncOpenDaily({ now: NOW, trigger: 'test' });
+    const sourceInputHash = expectedSourceInputHash();
+
+    assert.equal(queued.sourceInputHash, sourceInputHash);
+    assert.equal(queued.inputHash, expectedInputHash(sourceInputHash));
+  } finally {
+    db.close();
+  }
+});
 
 test('source input identity coalesces identical checks and enqueues only changed SQLite input', () => {
   const db = fixtureDatabase();
@@ -302,14 +431,24 @@ test('a recurring source snapshot after an intervening revision creates a fresh 
   }
 });
 
-test('an identical successful Issue from the compiler baseline remains a no-op without job history', async () => {
+test('an identical successful Issue with exact #5 hashes remains a no-op without job history', async () => {
   const db = fixtureDatabase();
   try {
+    disableBuiltInSources(db);
     seedCandidate(db);
     const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
     periodicals.syncOpenDaily({ now: NOW, trigger: 'baseline' });
     await periodicals.runNextBuild({ now: NOW });
     db.prepare('DELETE FROM periodical_build_jobs').run();
+    const legacySourceInputHash = expectedSourceInputHash({ legacy: true });
+    db.prepare(`
+      UPDATE periodical_issues
+      SET source_input_hash = ?, input_hash = ?
+      WHERE id = 'periodical:daily:2026-07-30'
+    `).run(
+      legacySourceInputHash,
+      expectedInputHash(legacySourceInputHash, { legacy: true }),
+    );
 
     const duplicate = periodicals.syncOpenDaily({
       now: NOW + (60 * 60 * 1000),
