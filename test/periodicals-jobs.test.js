@@ -518,11 +518,22 @@ test('an identical successful Issue with legacy source hashes remains a no-op wi
     const legacySourceInputHash = expectedSourceInputHash({ legacy: true });
     db.prepare(`
       UPDATE periodical_issues
-      SET source_input_hash = ?, input_hash = ?, summary_version = 'fallback-v1'
+      SET source_input_hash = ?, input_hash = ?, summary_version = 'fallback-v1',
+          selection_context_json = ?
       WHERE id = 'periodical:daily:2026-07-30'
     `).run(
       legacySourceInputHash,
       expectedInputHash(legacySourceInputHash, { legacy: true }),
+      JSON.stringify({
+        canonicalizationVersion: CANONICALIZATION_VERSION,
+        candidateSnapshotVersion: 'periodical-candidate-v1',
+        urlCanonicalizationVersion: 'periodical-url-v1',
+        eventIdentityVersion: 'single-entry-event-v1',
+        scoreConfig: LEGACY_SCORE_CONFIG,
+        behavior: { enabled: false },
+        candidateCount: 1,
+        eligibleSourceCount: 1,
+      }),
     );
 
     const duplicate = periodicals.syncOpenDaily({
@@ -592,6 +603,53 @@ test('SQLite claim, renew, stale lease recovery, and durable retry timing are fe
     const succeeded = await periodicals.runNextBuild({ now: NOW + 1200 });
     assert.equal(succeeded.status, 'succeeded');
     assert.equal(periodicals.hasActiveBuildJobs(), false);
+  } finally {
+    db.close();
+  }
+});
+
+test('provider timeout fallback completes before the durable lease can be reclaimed', async () => {
+  const db = fixtureDatabase();
+  let clock = NOW;
+  let aiCalls = 0;
+  try {
+    seedCandidate(db);
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      logger: () => {},
+      async aiAdapter() {
+        aiCalls += 1;
+        clock += (60 * 1000) + 1;
+        const error = new Error('simulated provider timeout');
+        error.name = 'TimeoutError';
+        throw error;
+      },
+    });
+    periodicals.syncOpenDaily({ now: clock, trigger: 'startup' });
+
+    await periodicals.runNextBuild({ now: () => clock });
+    const job = db.prepare(`
+      SELECT status, attempt_count, lease_token, lease_expires_at, next_retry_at
+      FROM periodical_build_jobs
+    `).get();
+    const issue = db.prepare(`
+      SELECT revision, summary_status
+      FROM periodical_issues
+      WHERE id = 'periodical:daily:2026-07-30'
+    `).get();
+
+    assert.deepEqual({ ...job }, {
+      status: 'succeeded',
+      attempt_count: 1,
+      lease_token: null,
+      lease_expires_at: null,
+      next_retry_at: null,
+    });
+    assert.deepEqual({ ...issue }, { revision: 1, summary_status: 'fallback' });
+    assert.equal(aiCalls, 1);
+    assert.equal(await periodicals.runNextBuild({ now: () => clock }), null);
+    assert.equal(aiCalls, 1);
   } finally {
     db.close();
   }

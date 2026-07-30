@@ -150,3 +150,5 @@
 - A legacy input-identity helper must pin every legacy algorithm version, including summary version; referencing the current canonical constant silently changes the rollback hash domain after an upstream algorithm merge.
 - A constrained-summary test fixture must use the exact supported numeric token; an allowed structural count `1` does not authorize the Chinese token `一`, and an accidental validation repair changes AI-call assertions.
 - Before asserting across a browser/API boundary, read the endpoint contract or capture its response shape; guessing an envelope key can turn valid runtime evidence into a misleading diagnostic NON_PASS.
+- A legacy no-op fixture must restore the exact legacy selection context as well as its hashes; current algorithm context paired with old hashes is a false compatibility proof.
+- A durable lease must exceed one complete provider adapter call, including internal retries and backoff; renewing only before a call cannot save a lease whose duration merely equals the nominal timeout.
