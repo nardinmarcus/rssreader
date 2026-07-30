@@ -8652,6 +8652,12 @@ body[data-periodicals-mode="off"] .periodicals-open {
   font-size: 15px;
   line-height: 1.75;
 }
+.periodical-update-delay {
+  margin: 12px 0 0;
+  color: var(--semantic-amber);
+  font-size: 12px;
+  font-weight: 650;
+}
 .periodical-directory {
   margin: 24px 0 34px;
   padding: 16px 18px;

@@ -236,6 +236,9 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       volumeNo: 1,
       status: 'open',
       eventCount: 1,
+      lastSuccessfulAt: NOW,
+      updateDelayed: true,
+      updateState: 'retry_wait',
     }],
     nextCursor: null,
   };
@@ -246,6 +249,9 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       volumeNo: 1,
       status: 'open',
       overview: '本期从 SQLite 候选中选出 1 个事件。所有事件保留证据快照。',
+      lastSuccessfulAt: NOW,
+      updateDelayed: true,
+      updateState: 'retry_wait',
     },
     themes: [{
       id: 'theme-products',
@@ -305,10 +311,15 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
 
   const documentNode = browser.elements['#periodicals-document'];
   const text = flattenedText(documentNode);
+  const indexText = flattenedText(browser.elements['#periodicals-list']);
   assert.equal(browser.fetchCount(), 2);
   assert.equal(documentNode.classList.contains('hidden'), false);
   assert.equal(browser.elements['#periodicals-empty'].classList.contains('hidden'), true);
   assert.match(text, /日报 · 第 1 卷 · 2026-07-30 · 更新中/);
+  assert.match(text, /本期更新暂时延迟/);
+  assert.match(text, /最后成功更新 2026-07-30 12:00/);
+  assert.match(indexText, /生成异常/);
+  assert.match(indexText, /最后成功 2026-07-30 12:00/);
   assert.match(text, /本期从 SQLite 候选中选出 1 个事件/);
   assert.match(text, /目录/);
   assert.match(text, /产品与工具/);

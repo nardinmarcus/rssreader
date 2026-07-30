@@ -12,6 +12,7 @@ const storePath = path.join(projectDir, 'lib', 'store.js');
 test('periodicals mode is documented as off by default', () => {
   const envExample = fs.readFileSync(path.join(projectDir, '.env.example'), 'utf8');
   assert.match(envExample, /^PERIODICALS_MODE=off$/m);
+  assert.match(envExample, /^PERIODICAL_SWEEP_INTERVAL_MS=3600000$/m);
 });
 
 function initializeStore(dataDir) {
@@ -75,6 +76,32 @@ test('periodical schema initializes twice without rewriting existing entry data'
       .filter(column => column.key === 1);
     assert.equal(candidateIndexKeys.some(column => column.name === 'source_id'), true);
     assert.equal(candidateIndexKeys.some(column => column.cid === -2), true, 'missing effective timestamp expression');
+
+    const buildJobColumns = new Set(db.prepare('PRAGMA table_info(periodical_build_jobs)').all()
+      .map(column => column.name));
+    for (const column of [
+      'source_input_hash',
+      'input_hash',
+      'as_of_at',
+      'selection_version',
+      'score_config_json',
+      'summary_version',
+      'status',
+      'attempt_count',
+      'lease_token',
+      'lease_expires_at',
+      'next_retry_at',
+      'error_code',
+      'candidate_count',
+      'source_count',
+    ]) assert.equal(buildJobColumns.has(column), true, `missing build job column ${column}`);
+    const buildJobSql = db.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = 'periodical_build_jobs'
+    `).get().sql;
+    for (const state of ['queued', 'running', 'retry_wait', 'succeeded', 'failed', 'superseded']) {
+      assert.match(buildJobSql, new RegExp(`'${state}'`));
+    }
 
     assert.deepEqual(
       { ...db.prepare('SELECT id, source_id, title, created_at, updated_at FROM entries WHERE id = ?').get('existing-entry') },

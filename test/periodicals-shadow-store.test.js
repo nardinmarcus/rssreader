@@ -74,16 +74,19 @@ function compileWithCacheState(cacheState) {
     if (cacheState === 'deleted') fs.rmSync(cachePath);
 
     const output = runStore(dataDir, 'shadow', `
-      const issue = store.periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
-      process.stdout.write(JSON.stringify(issue));
+      store.periodicals.syncOpenDaily({ now: Date.now(), trigger: 'test' });
+      store.periodicals.runNextBuild({ now: Date.now() }).then(() => {
+        const issue = store.periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+        process.stdout.write('RESULT:' + JSON.stringify(issue));
+      });
     `);
-    return JSON.parse(output);
+    return JSON.parse(output.slice(output.lastIndexOf('RESULT:') + 'RESULT:'.length));
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 }
 
-test('shadow startup compiles identical SQLite truth with polluted or deleted runtime cache', () => {
+test('shadow worker compiles identical SQLite truth with polluted or deleted runtime cache', () => {
   const polluted = compileWithCacheState('polluted');
   const deleted = compileWithCacheState('deleted');
 

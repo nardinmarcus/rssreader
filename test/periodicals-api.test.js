@@ -77,10 +77,7 @@ test('periodical index is public only when PERIODICALS_MODE is on', { timeout: 3
         assert.equal(response.status, expectedStatus, mode);
         if (mode === 'on') {
           const body = JSON.parse(text);
-          assert.equal(body.issues.length, 1);
-          assert.equal(body.issues[0].cadence, 'daily');
-          assert.equal(body.issues[0].status, 'open');
-          assert.equal(body.issues[0].eventCount, 0);
+          assert.deepEqual(body.issues, []);
           assert.equal(body.nextCursor, null);
         } else assert.equal(text.includes(mode), false);
       } finally {
@@ -121,11 +118,14 @@ test('periodical index validates parameters and reads a paged allowlist projecti
       'coverageStartedAt',
       'eventCount',
       'lastBuiltAt',
+      'lastSuccessfulAt',
       'periodEndAt',
       'periodKey',
       'periodStartAt',
       'revision',
       'status',
+      'updateDelayed',
+      'updateState',
       'volumeNo',
     ]);
 
@@ -222,6 +222,9 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
       summaryStatus: 'fallback',
       provider: null,
       model: null,
+      lastSuccessfulAt: 390,
+      updateDelayed: false,
+      updateState: 'succeeded',
     });
     assert.deepEqual(body.themes, [{
       id: 'theme-one',

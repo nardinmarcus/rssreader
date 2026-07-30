@@ -41,6 +41,7 @@ const FRESHNESS_SWEEP_INTERVAL_MS = parseInt(process.env.FRESHNESS_SWEEP_INTERVA
 const FRESHNESS_STARTUP_DELAY_MS = parseInt(process.env.FRESHNESS_STARTUP_DELAY_MS || `${2 * MINUTE_MS}`, 10);
 const FRESHNESS_SWEEP_BATCH_SIZE = parseInt(process.env.FRESHNESS_SWEEP_BATCH_SIZE || '3', 10);
 const FRESHNESS_SWEEP_MAX_COST = parseInt(process.env.FRESHNESS_SWEEP_MAX_COST || '6', 10);
+const PERIODICAL_SWEEP_INTERVAL_MS = parseInt(process.env.PERIODICAL_SWEEP_INTERVAL_MS || `${HOUR_MS}`, 10);
 const NEWS_REFRESH_INTERVAL_MS = parseInt(process.env.NEWS_REFRESH_INTERVAL_MS || `${30 * MINUTE_MS}`, 10);
 const ARTICLE_REFRESH_INTERVAL_MS = parseInt(process.env.ARTICLE_REFRESH_INTERVAL_MS || `${2 * HOUR_MS}`, 10);
 const PODCAST_REFRESH_INTERVAL_MS = parseInt(process.env.PODCAST_REFRESH_INTERVAL_MS || `${6 * HOUR_MS}`, 10);
@@ -63,8 +64,16 @@ const TEST_TRANSLATION_WORKER_PATH = process.env.NODE_ENV === 'test'
   : '';
 const TRANSLATION_WORKER_PATH = TEST_TRANSLATION_WORKER_PATH
   || path.join(__dirname, 'scripts', 'translation-worker.js');
+const TEST_PERIODICAL_WORKER_PATH = process.env.NODE_ENV === 'test'
+  ? String(process.env.PERIODICAL_WORKER_PATH || '').trim()
+  : '';
+const PERIODICAL_WORKER_PATH = TEST_PERIODICAL_WORKER_PATH
+  || path.join(__dirname, 'scripts', 'periodical-worker.js');
 const TRANSLATION_WORKER_RESTART_BASE_MS = 250;
 const TRANSLATION_WORKER_RESTART_MAX_MS = 5000;
+const PERIODICAL_WORKER_RESTART_BASE_MS = 250;
+const PERIODICAL_WORKER_RESTART_MAX_MS = 5000;
+const PERIODICAL_WORKER_SAFE_LOG = /^\[periodical-build\] issue=(?:periodical:(?:daily|weekly|monthly):[0-9-]+|-) job=(?:periodical-job:[a-f0-9]{64}|-) source=(?:[a-f0-9]{1,12}|-) input=(?:[a-f0-9]{1,12}|-) revision=\d+ candidates=\d+ events=\d+ state=(?:queued|running|retry_wait|succeeded|failed|superseded|noop|worker_failed|check_failed) durationMs=\d+$/;
 const DEFAULT_TITLE = 'Namoo Reader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -167,6 +176,9 @@ let aiLast = null;
 let translationWorker = null;
 let translationWorkerRestartTimer = null;
 let translationWorkerRestartAttempts = 0;
+let periodicalWorker = null;
+let periodicalWorkerRestartTimer = null;
+let periodicalWorkerRestartAttempts = 0;
 const aiQueuedSourceIds = new Set();
 let autoRewriteRunning = false;
 let autoRewriteLast = null;
@@ -261,6 +273,71 @@ function wakeTranslationWorker() {
 
 function wakeTranslationWorkerIfNeeded() {
   return store.hasActiveTranslationJobs() ? wakeTranslationWorker() : false;
+}
+
+function durablePeriodicalWorkRemains() {
+  try {
+    return store.periodicals.hasActiveBuildJobs();
+  } catch {
+    return true;
+  }
+}
+
+function schedulePeriodicalWorkerRestart() {
+  if (periodicalWorker || periodicalWorkerRestartTimer) return false;
+  const delay = Math.min(
+    PERIODICAL_WORKER_RESTART_MAX_MS,
+    PERIODICAL_WORKER_RESTART_BASE_MS * (2 ** Math.min(periodicalWorkerRestartAttempts, 8)),
+  );
+  periodicalWorkerRestartAttempts += 1;
+  periodicalWorkerRestartTimer = setTimeout(() => {
+    periodicalWorkerRestartTimer = null;
+    wakePeriodicalWorker();
+  }, delay);
+  return true;
+}
+
+function wakePeriodicalWorker() {
+  if (store.periodicals.mode === 'off') return false;
+  if (process.env.NODE_ENV === 'test' && process.env.PERIODICAL_WORKER_DISABLED === '1') return false;
+  if (periodicalWorker) return false;
+  if (periodicalWorkerRestartTimer) {
+    clearTimeout(periodicalWorkerRestartTimer);
+    periodicalWorkerRestartTimer = null;
+  }
+  const worker = fork(PERIODICAL_WORKER_PATH, [], {
+    cwd: __dirname,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'ignore', 'ipc'],
+  });
+  periodicalWorker = worker;
+  worker.stdout.on('data', chunk => {
+    periodicalWorkerRestartAttempts = 0;
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      if (PERIODICAL_WORKER_SAFE_LOG.test(line)) console.log(line);
+    }
+  });
+  let finished = false;
+  const finishWorker = (code, error = null) => {
+    if (finished) return;
+    finished = true;
+    if (error || code) {
+      console.warn('[periodical-build] issue=- job=- source=- input=- revision=0 candidates=0 events=0 state=worker_failed durationMs=0');
+    }
+    if (periodicalWorker === worker) periodicalWorker = null;
+    if (durablePeriodicalWorkRemains()) {
+      schedulePeriodicalWorkerRestart();
+    } else {
+      periodicalWorkerRestartAttempts = 0;
+    }
+  };
+  worker.on('error', error => finishWorker(1, error));
+  worker.on('exit', code => finishWorker(code));
+  return true;
+}
+
+function wakePeriodicalWorkerIfNeeded() {
+  return store.periodicals.hasActiveBuildJobs() ? wakePeriodicalWorker() : false;
 }
 
 const registerRateLimit = createRateLimiter({
@@ -2639,6 +2716,7 @@ function finishFetchJob({ result = null, error = null, code = 0, signal = '' } =
   refreshJob = null;
   reloadFetcherAfterWorker();
   wakeTranslationWorkerIfNeeded();
+  wakePeriodicalWorkerIfNeeded();
 }
 
 function finishAiJob({ result = null, error = null, code = 0, signal = '' } = {}) {
@@ -2738,6 +2816,9 @@ function startFetchJob(job = {}) {
       };
       const queued = queueAutoRewriteForRefresh(message.refresh, refreshJob);
       refreshLast.postProcessingQueued = Boolean(queued.started || queued.running);
+      if (message.periodical && message.periodical.action === 'queued') {
+        wakePeriodicalWorkerIfNeeded();
+      }
       return;
     }
     if (message.type === 'done') {
@@ -3021,6 +3102,29 @@ function scheduleFreshnessRefresh() {
     triggerFreshnessRefresh();
     setInterval(triggerFreshnessRefresh, interval);
   }, delay);
+}
+
+function checkPeriodicalBuilds(trigger) {
+  const startedAt = Date.now();
+  try {
+    const result = store.periodicals.syncOpenDaily({ now: startedAt, trigger });
+    wakePeriodicalWorkerIfNeeded();
+    return result;
+  } catch {
+    console.warn(`[periodical-build] issue=- job=- source=- input=- revision=0 candidates=0 events=0 state=check_failed durationMs=${Date.now() - startedAt}`);
+    return null;
+  }
+}
+
+function schedulePeriodicalBuilds() {
+  if (store.periodicals.mode === 'off') return;
+  checkPeriodicalBuilds('startup');
+  if (!Number.isFinite(PERIODICAL_SWEEP_INTERVAL_MS) || PERIODICAL_SWEEP_INTERVAL_MS < 0) {
+    return;
+  }
+  const minimum = process.env.NODE_ENV === 'test' ? 25 : MINUTE_MS;
+  const interval = Math.max(minimum, PERIODICAL_SWEEP_INTERVAL_MS);
+  setInterval(() => checkPeriodicalBuilds('hourly-sweep'), interval);
 }
 
 app.get('/api/periodicals', (req, res) => {
@@ -4223,6 +4327,9 @@ app.listen(PORT, HOST, () => {
   scheduleStartupRefresh();
   scheduleDailyRefresh();
   scheduleFreshnessRefresh();
+  if (process.env.NODE_ENV !== 'test' || process.env.PERIODICAL_WORKER_STARTUP === '1') {
+    schedulePeriodicalBuilds();
+  }
   if (process.env.NODE_ENV !== 'test' || process.env.TRANSLATION_WORKER_STARTUP === '1') {
     wakeTranslationWorker();
   }
