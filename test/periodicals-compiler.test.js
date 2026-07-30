@@ -102,6 +102,25 @@ test('freshness uses the exact age before rounding the persisted points', () => 
   assert.equal(result.events[0].importanceScore, 49.9);
 });
 
+test('empty candidate text receives a deterministic summary and overview states actual coverage start', () => {
+  const result = compileOpenDaily({
+    now: NOW,
+    coverageStartedAt: NOW - (60 * 60 * 1000),
+    sources: [highPrioritySource()],
+    candidates: [candidate({
+      titleZh: null,
+      summary: '',
+      content: '',
+    })],
+  });
+
+  assert.equal(result.events.length, 1);
+  assert.match(result.events[0].summary, /A deterministic release/);
+  assert.match(result.events[0].summary, /未提供可用摘要/);
+  assert.equal(result.evidence[0].summaryExcerpt, '');
+  assert.match(result.issue.overview, /精选规则于 2026-07-30 11:00（Asia\/Shanghai）启用/);
+});
+
 test('source eligibility and editorial priority are explicit while refresh priority is irrelevant', () => {
   const sources = [
     highPrioritySource(),

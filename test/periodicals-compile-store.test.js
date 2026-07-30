@@ -159,3 +159,93 @@ test('wall-clock movement is a no-op while a SQLite preference change replaces t
     db.close();
   }
 });
+
+test('rendered SQLite semantics change the source input identity and replace the open revision', () => {
+  const db = fixtureDatabase();
+  try {
+    db.prepare(`
+      INSERT INTO custom_sources (
+        id, name, feed_url, category, labels_json, created_at, updated_at
+      ) VALUES ('custom-daily', 'Original Source', 'https://custom.example/feed.xml',
+        'article', '["产品"]', ?, ?)
+    `).run(NOW - 1000, NOW - 1000);
+    db.prepare(`
+      INSERT INTO source_preferences (
+        source_id, enabled, editorial_priority, display_order, updated_at
+      ) VALUES ('custom-daily', 1, 'high', 0, '2026-07-30T04:00:00.000Z')
+    `).run();
+    db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, summary, content,
+        content_hash, created_at, updated_at
+      ) VALUES ('custom-entry', 'custom-daily', 'Original title',
+        'https://custom.example/posts/original', ?, 'Original summary.', '<p>Original body.</p>',
+        'stable-content-hash', ?, ?)
+    `).run(NOW, NOW, NOW);
+    db.prepare(`
+      INSERT INTO entry_translations (entry_id, title_zh, summary_zh)
+      VALUES ('custom-entry', '原译名', '原译摘。')
+    `).run();
+
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow' });
+    const first = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+
+    db.prepare(`
+      UPDATE entry_translations
+      SET title_zh = '新译名', summary_zh = '新译摘。'
+      WHERE entry_id = 'custom-entry'
+    `).run();
+    db.prepare(`
+      UPDATE custom_sources SET name = 'Renamed Source'
+      WHERE id = 'custom-daily'
+    `).run();
+    db.prepare(`
+      UPDATE entries SET link = 'https://custom.example/posts/renamed'
+      WHERE id = 'custom-entry'
+    `).run();
+
+    const replaced = periodicals.syncOpenDaily({
+      now: NOW + (60 * 60 * 1000),
+      trigger: 'test',
+    });
+
+    assert.equal(first.issue.revision, 1);
+    assert.equal(replaced.issue.revision, 2);
+    assert.equal(replaced.events[0].title, '新译名');
+    assert.equal(replaced.events[0].summary, '新译摘。');
+    assert.equal(replaced.evidence[0].sourceName, 'Renamed Source');
+    assert.equal(replaced.evidence[0].entryLink, 'https://custom.example/posts/renamed');
+  } finally {
+    db.close();
+  }
+});
+
+test('shadow sync reads its source, candidate, and issue snapshot under BEGIN IMMEDIATE', () => {
+  const db = fixtureDatabase();
+  try {
+    const snapshotReadStates = [];
+    const observedDb = new Proxy(db, {
+      get(target, property) {
+        if (property === 'prepare') {
+          return sql => {
+            if (/FROM (?:custom_sources|source_preferences|entries AS entry)/.test(sql)
+              || /SELECT volume_no[\s\S]+FROM periodical_issues/.test(sql)) {
+              snapshotReadStates.push(target.isTransaction);
+            }
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const periodicals = createPeriodicalsModule({ db: observedDb, mode: 'shadow' });
+
+    periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+
+    assert.equal(snapshotReadStates.length >= 4, true);
+    assert.equal(snapshotReadStates.every(Boolean), true);
+  } finally {
+    db.close();
+  }
+});
