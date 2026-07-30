@@ -109,9 +109,12 @@ test('periodical index validates parameters and reads a paged allowlist projecti
         status, overview, selection_version, summary_version, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)
     `);
-    insertOpenIssue.run('periodical:daily:2026-07-28', 'daily', '2026-07-28', 1, 100, 200, 'Old overview', 'importance-v1', 'fallback-v1', 1, 1);
-    insertOpenIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, 200, 300, 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
-    insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, 300, 400, 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
+    const july28StartAt = Date.parse('2026-07-28T00:00:00.000+08:00');
+    const july29StartAt = Date.parse('2026-07-29T00:00:00.000+08:00');
+    const july30StartAt = Date.parse('2026-07-30T00:00:00.000+08:00');
+    insertOpenIssue.run('periodical:daily:2026-07-28', 'daily', '2026-07-28', 1, july28StartAt, july29StartAt, 'Old overview', 'importance-v1', 'fallback-v1', 1, 1);
+    insertOpenIssue.run('periodical:daily:2026-07-29', 'daily', '2026-07-29', 2, july29StartAt, july30StartAt, 'Middle overview', 'importance-v1', 'fallback-v1', 2, 2);
+    insertOpenIssue.run('periodical:daily:2026-07-30', 'daily', '2026-07-30', 3, july30StartAt, Date.parse('2026-07-31T00:00:00.000+08:00'), 'Current overview', 'importance-v1', 'fallback-v1', 3, 3);
     insertOpenIssue.run('periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 100, 800, 'Weekly overview', 'importance-v1', 'fallback-v1', 4, 4);
     insertOpenIssue.run('periodical:weekly:2026-W32', 'weekly', '2026-W32', 2, 800, 1500, 'Hidden pending Weekly', 'importance-v1', 'fallback-v1', 5, 5);
     insertOpenIssue.run('periodical:monthly:2026-07', 'monthly', '2026-07', 2, 800, 1500, 'Hidden pending Monthly', 'monthly-rollup-v1', 'fallback-v1', 7, 7);

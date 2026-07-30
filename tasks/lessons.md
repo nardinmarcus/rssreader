@@ -158,3 +158,5 @@
 - A durable lease must exceed one complete provider adapter call, including internal retries and backoff; renewing only before a call cannot save a lease whose duration merely equals the nominal timeout.
 - A pre-orchestration compatibility matcher must require the exact legacy field set and no durable job history; projecting known keys lets future algorithm inputs masquerade as an old no-op.
 - Browser shadow evidence must query persisted child rows through the schema's exact table names; inspect `sqlite_master` before treating an ad hoc SQLite assertion as a product failure.
+- A Frozen rollup read must bind recomputed snapshot source/input hashes and the cadence-derived expected volume, not merely match issue hashes to a mutable succeeded job; scheduling diagnostics, index visibility, and detail reads must enforce the same identity invariant.
+- Fail-closed public filtering must not become an unbounded synchronous history scan; use bounded keyset batches, stop after collecting `limit + 1` valid rows, and instrument both SQL limits and validation count in regressions.

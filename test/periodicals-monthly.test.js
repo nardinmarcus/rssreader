@@ -951,19 +951,145 @@ test('invalid Frozen Monthly snapshots are diagnosed, hidden, and do not starve 
   }
 });
 
-test('a later Frozen volume cannot force an earlier catch-up month to take a larger volume', () => {
+test('forged Frozen Monthly input identities are diagnosed and hidden', async () => {
   const db = fixtureDatabase();
   try {
     const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
-    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05']);
-    seedRawMonthlyIssue(db, {
-      periodKey: '2026-05',
-      volumeNo: 1,
-      status: 'frozen',
+    seedFrozenMonths(db, ['2026-03']);
+    const buildAt = Date.parse('2026-04-01T00:05:00.000+08:00');
+    const scheduled = periodicals.syncMonthlyRollup({
+      now: buildAt,
+      trigger: 'seed-valid-frozen-monthly',
     });
+    assert.equal((await periodicals.runNextBuild({ now: buildAt + 1 })).status, 'succeeded');
+
+    const forgedSourceInputHash = 'd'.repeat(64);
+    const forgedInputHash = 'e'.repeat(64);
+    db.exec('DROP TRIGGER reject_frozen_periodical_issue_update');
+    db.prepare(`
+      UPDATE periodical_issues
+      SET source_input_hash = ?, input_hash = ?
+      WHERE id = ?
+    `).run(forgedSourceInputHash, forgedInputHash, scheduled.issueId);
+    db.prepare(`
+      UPDATE periodical_build_jobs
+      SET source_input_hash = ?, input_hash = ?
+      WHERE issue_id = ? AND status = 'succeeded'
+    `).run(forgedSourceInputHash, forgedInputHash, scheduled.issueId);
+
+    const detected = periodicals.syncMonthlyRollup({
+      now: buildAt + 2,
+      trigger: 'detect-forged-input-identity',
+    });
+    assert.equal(detected.action, 'blocked');
+    assert.equal(detected.errorCode, 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID');
+    assert.deepEqual(periodicals.listIssues({ cadence: 'monthly' }).issues, []);
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-03' }),
+      error => error.statusCode === 503
+        && error.code === 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID',
+    );
+    assert.deepEqual({ ...db.prepare(`
+      SELECT status, error_code
+      FROM periodical_build_jobs
+      WHERE issue_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 1
+    `).get(scheduled.issueId) }, {
+      status: 'failed',
+      error_code: 'ERR_PERIODICAL_MONTHLY_FROZEN_INVALID',
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test('Monthly index validation stops after a bounded page of visible Frozen issues', async () => {
+  const db = fixtureDatabase();
+  let observing = false;
+  const indexQueryLimits = [];
+  let monthlyIdentityLookups = 0;
+  const observedDb = new Proxy(db, {
+    get(target, property) {
+      if (property !== 'prepare') {
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+      return sql => {
+        const statement = target.prepare(sql);
+        const indexQuery = /LEFT JOIN periodical_events AS event/.test(sql);
+        const issueIdentityQuery = /^SELECT \* FROM periodical_issues WHERE id = \?$/
+          .test(String(sql).trim());
+        if (!indexQuery && !issueIdentityQuery) return statement;
+        return new Proxy(statement, {
+          get(statementTarget, statementProperty) {
+            if (indexQuery && statementProperty === 'all') {
+              return (...args) => {
+                if (observing) indexQueryLimits.push(Number(args.at(-1)));
+                return statementTarget.all(...args);
+              };
+            }
+            if (issueIdentityQuery && statementProperty === 'get') {
+              return (...args) => {
+                if (observing && String(args[0]).startsWith('periodical:monthly:')) {
+                  monthlyIdentityLookups += 1;
+                }
+                return statementTarget.get(...args);
+              };
+            }
+            const value = Reflect.get(statementTarget, statementProperty, statementTarget);
+            return typeof value === 'function' ? value.bind(statementTarget) : value;
+          },
+        });
+      };
+    },
+  });
+  try {
+    const periodicals = createPeriodicalsModule({
+      db: observedDb,
+      mode: 'shadow',
+      logger: () => {},
+    });
+    seedFrozenMonths(db, ['2026-01', '2026-02', '2026-03', '2026-04']);
+    const buildAt = Date.parse('2026-05-01T00:05:00.000+08:00');
+    periodicals.syncMonthlyRollup({ now: buildAt, trigger: 'seed-index-history' });
+    const drained = await drainImmediateBuilds(periodicals, buildAt + 1);
+    assert.equal(drained.length, 4);
+    assert.equal(drained.every(job => job.status === 'succeeded'), true);
+
+    observing = true;
+    const page = periodicals.listIssues({ cadence: 'monthly', limit: 1 });
+    assert.deepEqual(page.issues.map(issue => issue.periodKey), ['2026-04']);
+    assert.equal(page.nextCursor, '2026-04');
+    assert.equal(indexQueryLimits.length, 1);
+    assert.equal(indexQueryLimits[0] > 0 && indexQueryLimits[0] <= 100, true);
+    assert.equal(monthlyIdentityLookups <= 2, true);
+  } finally {
+    db.close();
+  }
+});
+
+test('a later Frozen volume cannot force an earlier catch-up month to take a larger volume', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-05']);
+    const buildAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+    const may = periodicals.syncMonthlyRollup({
+      now: buildAt,
+      trigger: 'seed-valid-later-month',
+    });
+    assert.equal(may.periodKey, '2026-05');
+    assert.equal((await periodicals.runNextBuild({ now: buildAt + 1 })).status, 'succeeded');
+    assert.equal(periodicals.getIssue({
+      cadence: 'monthly',
+      periodKey: '2026-05',
+    }).issue.volumeNo, 1);
+
+    seedFrozenMonths(db, ['2026-03', '2026-04'], { startVolume: 32 });
 
     const scheduled = periodicals.syncMonthlyRollup({
-      now: Date.parse('2026-06-01T00:05:00.000+08:00'),
+      now: buildAt + 2,
       trigger: 'reject-reordered-volume-history',
     });
     assert.equal(scheduled.action, 'blocked');
@@ -982,6 +1108,12 @@ test('a later Frozen volume cannot force an earlier catch-up month to take a lar
       status: 'failed',
       error_code: 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER',
     });
+    assert.deepEqual(periodicals.listIssues({ cadence: 'monthly' }).issues, []);
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-05' }),
+      error => error.statusCode === 503
+        && error.code === 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER',
+    );
   } finally {
     db.close();
   }
