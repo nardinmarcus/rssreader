@@ -457,3 +457,86 @@ test('Weekly deep link renders its index, detail, rollup score, and Frozen evide
   assert.match(detailText, /Frozen Source 1/);
   assert.match(detailText, /Frozen Daily evidence 4/);
 });
+
+test('Monthly deep link renders its index, detail, rollup score, and Frozen evidence', async () => {
+  const index = {
+    issues: [{
+      cadence: 'monthly',
+      periodKey: '2026-07',
+      volumeNo: 1,
+      status: 'frozen',
+      eventCount: 1,
+      lastSuccessfulAt: NOW,
+    }],
+    nextCursor: null,
+  };
+  const detail = {
+    issue: {
+      cadence: 'monthly',
+      periodKey: '2026-07',
+      volumeNo: 1,
+      status: 'frozen',
+      overview: '本月从冻结日报汇总出一个事件。所有证据均受冻结边界约束。',
+      lastSuccessfulAt: NOW,
+    },
+    themes: [{
+      id: 'monthly-products',
+      themeKey: 'products_tools',
+      title: '产品与工具',
+      trendNote: '本月该主题收录一个跨日事件。',
+      displayOrder: 0,
+    }],
+    events: [{
+      id: 'monthly-event',
+      themeId: 'monthly-products',
+      title: 'Atlas 发布稳定更新',
+      summary: 'Frozen Daily 快照显示 Atlas 持续更新。',
+      whySelected: '最高日报重要性 80 分；top-3 日报均值 70 分；本月出现 4 天；覆盖 4 个来源。',
+      importanceScore: 74.8,
+      score: {
+        version: 'monthly-rollup-v1',
+        maxDailyScore: { value: 80, weight: 0.65, points: 52 },
+        meanTop3DailyScores: { value: 70, weight: 0.2, points: 14 },
+        occurrenceDays: { daysPresent: 4, periodDays: 31, points: 5 },
+        sourceBreadth: { distinctSources: 4, points: 3.8 },
+      },
+      displayOrder: 0,
+    }],
+    evidence: Array.from({ length: 4 }, (_, indexValue) => ({
+      eventId: 'monthly-event',
+      entryId: `monthly-entry-${indexValue}`,
+      sourceName: `Frozen Source ${indexValue + 1}`,
+      entryTitle: `Frozen Daily evidence ${indexValue + 1}`,
+      entryLink: `https://frozen-${indexValue + 1}.example/atlas`,
+      editorialPriority: 'high',
+      effectivePublishedAt: NOW - (indexValue * 60 * 60 * 1000),
+      timestampFallback: false,
+      displayOrder: indexValue,
+    })),
+  };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/monthly/2026-07',
+    responses: [index, detail],
+  });
+
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  const indexText = flattenedText(browser.elements['#periodicals-list']);
+  const detailText = flattenedText(browser.elements['#periodicals-document']);
+  assert.equal(browser.fetchCount(), 2);
+  assert.match(indexText, /2026-07/);
+  assert.match(indexText, /1 个事件 · 已冻结/);
+  assert.match(detailText, /月报 · 第 1 卷 · 2026-07 · 已冻结/);
+  assert.match(detailText, /monthly-rollup-v1/);
+  assert.match(detailText, /最高日报分/);
+  assert.match(detailText, /Top-3 均值/);
+  assert.match(detailText, /出现天数/);
+  assert.match(detailText, /4\/31 天/);
+  assert.match(detailText, /来源广度/);
+  assert.match(detailText, /4 个来源 · 4 条证据/);
+  assert.match(detailText, /本月出现 4 天/);
+  assert.match(detailText, /Frozen Source 1/);
+  assert.match(detailText, /Frozen Daily evidence 4/);
+});

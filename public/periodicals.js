@@ -135,7 +135,7 @@
     }
 
     function scoreComponents(score = {}) {
-      if (score.version === 'weekly-rollup-v1') {
+      if (/^(?:weekly|monthly)-rollup-v1$/.test(String(score.version || ''))) {
         const maximum = score.maxDailyScore || {};
         const topThree = score.meanTop3DailyScores || {};
         const occurrence = score.occurrenceDays || {};
@@ -310,8 +310,10 @@
               element('strong', 'periodical-score', displayScore(event.importanceScore)),
             );
             const eventEvidence = evidence.filter(value => value.eventId === event.id);
-            const weeklyScore = event.score && event.score.version === 'weekly-rollup-v1';
-            const sourceCount = Number(weeklyScore
+            const rollupScore = /^(?:weekly|monthly)-rollup-v1$/.test(String(
+              event.score && event.score.version || '',
+            ));
+            const sourceCount = Number(rollupScore
               ? event.score && event.score.sourceBreadth && event.score.sourceBreadth.distinctSources
               : event.score && event.score.confirmation
                 && event.score.confirmation.independentSourceCount) || 0;
@@ -331,7 +333,7 @@
               element(
                 'p',
                 'periodical-event-source-count',
-                `${sourceCount} 个${weeklyScore ? '' : '独立'}来源 · ${eventEvidence.length} 条证据`,
+                `${sourceCount} 个${rollupScore ? '' : '独立'}来源 · ${eventEvidence.length} 条证据`,
               ),
               element('p', 'periodical-event-summary', event.summary),
               element('p', 'periodical-event-why', event.whySelected),
