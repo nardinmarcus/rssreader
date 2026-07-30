@@ -12,6 +12,7 @@ const {
 const { SOURCES } = require('../lib/sources');
 
 const NOW = Date.parse('2026-07-30T04:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SCORE_CONFIG = Object.freeze({
   threshold: 40,
   maxEvents: 12,
@@ -86,10 +87,18 @@ function expectedSourceInputHash({ legacy = false } = {}) {
   });
 }
 
+function expectedScoringHistoryHash(frozenDailyHistory = []) {
+  return computeCanonicalHash({
+    version: 'periodical-scoring-history-v1',
+    frozenDailyHistory,
+  });
+}
+
 function expectedInputHash(sourceInputHash, { legacy = false } = {}) {
   return computeCanonicalHash({
     sourceInputHash,
     asOfAt: NOW,
+    ...(legacy ? {} : { scoringHistoryHash: expectedScoringHistoryHash() }),
     ...(legacy ? {} : {
       canonicalizationVersion: CANONICALIZATION_VERSION,
       candidateSnapshotVersion: 'periodical-candidate-v1',
@@ -99,6 +108,7 @@ function expectedInputHash(sourceInputHash, { legacy = false } = {}) {
       actionAnchorVersion: 'periodical-action-v1',
       eventIdentityVersion: 'event-cluster-v1',
       topicVersion: 'periodical-topic-v1',
+      scoringHistoryVersion: 'periodical-scoring-history-v1',
       inputIdentityVersion: 'periodical-input-v1',
     }),
     selectionVersion: 'importance-v1',
@@ -273,6 +283,70 @@ test('source input identity coalesces identical checks and enqueues only changed
     assert.notEqual(changed.job.id, first.job.id);
     assert.notEqual(changed.sourceInputHash, first.sourceInputHash);
     assert.notEqual(changed.inputHash, first.inputHash);
+  } finally {
+    db.close();
+  }
+});
+
+test('new frozen scoring history queues a build without changing the source identity', async () => {
+  const db = fixtureDatabase();
+  try {
+    disableBuiltInSources(db);
+    const title = 'Atlas releases Alpha platform for enterprise teams';
+    seedCandidate(db, { title });
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+
+    const first = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    await periodicals.runNextBuild({ now: NOW });
+
+    const yesterday = NOW - DAY_MS;
+    db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, summary, content,
+        content_hash, created_at, updated_at
+      ) VALUES (?, 'durable-source', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'durable-entry-yesterday',
+      title,
+      'https://durable-source.example/posts/yesterday',
+      yesterday,
+      'Yesterday Atlas evidence.',
+      '<p>Yesterday Atlas evidence.</p>',
+      'durable-content-yesterday',
+      yesterday,
+      yesterday,
+    );
+    periodicals.syncOpenDaily({ now: yesterday, trigger: 'test' });
+    await periodicals.runNextBuild({ now: yesterday });
+    db.prepare(`
+      UPDATE periodical_issues
+      SET status = 'frozen', frozen_at = period_end_at, updated_at = period_end_at
+      WHERE id = 'periodical:daily:2026-07-29'
+    `).run();
+
+    const changed = periodicals.syncOpenDaily({
+      now: NOW + (60 * 60 * 1000),
+      trigger: 'hourly-sweep',
+    });
+    const queuedRows = db.prepare(`
+      SELECT
+        issue.revision,
+        COUNT(job.id) AS job_count,
+        SUM(job.status IN ('queued', 'running', 'retry_wait')) AS active_count
+      FROM periodical_issues AS issue
+      JOIN periodical_build_jobs AS job ON job.issue_id = issue.id
+      WHERE issue.id = 'periodical:daily:2026-07-30'
+    `).get();
+
+    assert.deepEqual({ ...queuedRows }, { revision: 1, job_count: 2, active_count: 1 });
+    assert.equal(changed.action, 'queued');
+    assert.equal(changed.sourceInputHash, first.sourceInputHash);
+    assert.notEqual(changed.inputHash, first.inputHash);
+
+    await periodicals.runNextBuild({ now: NOW + (60 * 60 * 1000) });
+    const rebuilt = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+    assert.equal(rebuilt.issue.revision, 2);
+    assert.deepEqual(rebuilt.events[0].score.persistence, { daysPresent: 1, points: 3.5 });
   } finally {
     db.close();
   }
