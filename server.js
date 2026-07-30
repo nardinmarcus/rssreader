@@ -3109,6 +3109,7 @@ function checkPeriodicalBuilds(trigger) {
   const startedAt = Date.now();
   try {
     store.periodicals.finalizeDueIssues({ now: startedAt });
+    store.periodicals.syncWeeklyRollup({ now: startedAt, trigger });
     const result = store.periodicals.syncOpenDaily({ now: startedAt, trigger });
     wakePeriodicalWorkerIfNeeded();
     scheduleNextPeriodicalFinalization();

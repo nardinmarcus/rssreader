@@ -135,6 +135,18 @@
     }
 
     function scoreComponents(score = {}) {
+      if (score.version === 'weekly-rollup-v1') {
+        const maximum = score.maxDailyScore || {};
+        const topThree = score.meanTop3DailyScores || {};
+        const occurrence = score.occurrenceDays || {};
+        const breadth = score.sourceBreadth || {};
+        return [
+          ['最高日报分', maximum.points, `最高 ${displayScore(maximum.value)}`],
+          ['Top-3 均值', topThree.points, `均值 ${displayScore(topThree.value)}`],
+          ['出现天数', occurrence.points, `${Number(occurrence.daysPresent) || 0}/${Number(occurrence.periodDays) || 7} 天`],
+          ['来源广度', breadth.points, `${Number(breadth.distinctSources) || 0} 个来源`],
+        ];
+      }
       const sourceQuality = score.sourceQuality || {};
       const confirmation = score.confirmation || {};
       const persistence = score.persistence || {};
@@ -298,10 +310,11 @@
               element('strong', 'periodical-score', displayScore(event.importanceScore)),
             );
             const eventEvidence = evidence.filter(value => value.eventId === event.id);
-            const independentSourceCount = Number(
-              event.score && event.score.confirmation
-                && event.score.confirmation.independentSourceCount,
-            ) || 0;
+            const weeklyScore = event.score && event.score.version === 'weekly-rollup-v1';
+            const sourceCount = Number(weeklyScore
+              ? event.score && event.score.sourceBreadth && event.score.sourceBreadth.distinctSources
+              : event.score && event.score.confirmation
+                && event.score.confirmation.independentSourceCount) || 0;
             const evidenceDetails = element('details', 'periodical-evidence-details');
             evidenceDetails.append(element(
               'summary',
@@ -318,7 +331,7 @@
               element(
                 'p',
                 'periodical-event-source-count',
-                `${independentSourceCount} 个独立来源 · ${eventEvidence.length} 条证据`,
+                `${sourceCount} 个${weeklyScore ? '' : '独立'}来源 · ${eventEvidence.length} 条证据`,
               ),
               element('p', 'periodical-event-summary', event.summary),
               element('p', 'periodical-event-why', event.whySelected),
