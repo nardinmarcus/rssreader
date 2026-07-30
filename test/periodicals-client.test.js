@@ -259,13 +259,14 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       themeId: 'theme-products',
       title: '一次确定性的发布',
       summary: '事件摘要。',
-      whySelected: '来源质量（高）计 30 分；时效性计 19.8 分。',
-      importanceScore: 49.8,
+      whySelected: '来源质量（高）计 30 分；获得 2 个独立来源确认（8 分）；相关主题过去 7 个冻结日报出现 1 天（3.5 分）；独立来源较近 7 日单日峰值增加 1 个（2 分）；时效性计 19.8 分。',
+      importanceScore: 63.3,
       score: {
+        version: 'importance-v1',
         sourceQuality: { priority: 'high', points: 30 },
-        confirmation: { independentSourceCount: 1, points: 0 },
-        persistence: { daysPresent: 0, points: 0 },
-        trend: { sourceIncrease: 0, points: 0 },
+        confirmation: { independentSourceCount: 2, points: 8 },
+        persistence: { daysPresent: 1, points: 3.5 },
+        trend: { baselineSourceCount: 1, sourceIncrease: 1, points: 2 },
         freshness: { ageHours: 0.5, points: 19.8 },
         behavior: { enabled: false, points: 0 },
       },
@@ -281,6 +282,16 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       effectivePublishedAt: NOW - (30 * 60 * 1000),
       timestampFallback: false,
       displayOrder: 0,
+    }, {
+      eventId: 'event-one',
+      entryId: 'entry-two',
+      sourceName: 'Second Source',
+      entryTitle: 'A second independent report',
+      entryLink: 'https://second.example/releases/one',
+      editorialPriority: 'normal',
+      effectivePublishedAt: NOW - (20 * 60 * 1000),
+      timestampFallback: false,
+      displayOrder: 1,
     }],
   };
   const browser = fakeBrowser({
@@ -302,11 +313,20 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
   assert.match(text, /目录/);
   assert.match(text, /产品与工具/);
   assert.match(text, /一次确定性的发布/);
-  assert.match(text, /49\.8 分/);
-  assert.match(text, /来源质量（高）计 30 分；时效性计 19\.8 分/);
+  assert.match(text, /63\.3 分/);
+  assert.match(text, /2 个独立来源/);
+  assert.match(text, /评分分量/);
+  assert.match(text, /importance-v1/);
+  assert.match(text, /独立确认/);
+  assert.match(text, /近期持续/);
+  assert.match(text, /趋势增量/);
+  assert.match(text, /来源质量（高）计 30 分；获得 2 个独立来源确认/);
   assert.match(text, /High Source/);
+  assert.match(text, /Second Source/);
   assert.match(text, /A deterministic release/);
   assert.match(text, /高优先级 · 2026-07-30 11:30/);
   const links = descendants(documentNode).filter(node => node.tagName === 'A');
   assert.equal(links.some(link => link.href === 'https://example.com/releases/one'), true);
+  assert.equal(descendants(documentNode).some(node => node.tagName === 'DETAILS'), true);
+  assert.equal(descendants(documentNode).some(node => node.tagName === 'SUMMARY'), true);
 });
