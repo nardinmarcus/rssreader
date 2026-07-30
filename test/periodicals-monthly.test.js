@@ -963,6 +963,67 @@ test('a noncanonical Frozen Monthly is diagnosed without starving later due mont
   }
 });
 
+test('a noncanonical Frozen volume conflict blocks the complete Monthly write set', () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    seedFrozenMonths(db, ['2026-03', '2026-04', '2026-05']);
+    seedRawMonthlyIssue(db, {
+      id: 'legacy-monthly:2026-03',
+      periodKey: '2026-03',
+      volumeNo: 2,
+      status: 'frozen',
+    });
+    const startupAt = Date.parse('2026-06-01T00:05:00.000+08:00');
+
+    const blocked = periodicals.syncMonthlyRollup({
+      now: startupAt,
+      trigger: 'reject-noncanonical-volume-conflict',
+    });
+    assert.equal(blocked.action, 'blocked');
+    assert.equal(blocked.errorCode, 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER');
+    assert.equal(blocked.validationCode, 'volume_order');
+    assert.deepEqual(db.prepare(`
+      SELECT id, period_key, volume_no, status
+      FROM periodical_issues
+      WHERE cadence = 'monthly'
+      ORDER BY period_key
+    `).all().map(row => ({ ...row })), [{
+      id: 'legacy-monthly:2026-03',
+      period_key: '2026-03',
+      volume_no: 2,
+      status: 'frozen',
+    }]);
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM periodical_build_jobs
+      WHERE issue_id IN ('periodical:monthly:2026-04', 'periodical:monthly:2026-05')
+    `).get().count, 0);
+    assert.deepEqual(periodicals.listIssues({ cadence: 'monthly' }).issues, []);
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-03' }),
+      error => error.statusCode === 503
+        && error.code === 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER',
+    );
+
+    const repeated = periodicals.syncMonthlyRollup({
+      now: startupAt + 1,
+      trigger: 'repeat-noncanonical-volume-conflict',
+    });
+    assert.equal(repeated.action, 'blocked');
+    assert.equal(repeated.job.id, blocked.job.id);
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM periodical_build_jobs
+      WHERE issue_id = 'legacy-monthly:2026-03'
+        AND status = 'failed'
+        AND error_code = 'ERR_PERIODICAL_MONTHLY_VOLUME_ORDER'
+    `).get().count, 1);
+  } finally {
+    db.close();
+  }
+});
+
 test('invalid Frozen Monthly snapshots are diagnosed, hidden, and do not starve later months', async t => {
   const cases = [
     {
@@ -1258,6 +1319,36 @@ test('Monthly index validation stops after a bounded page of visible Frozen issu
     assert.equal(indexQueryLimits.length, 1);
     assert.equal(indexQueryLimits[0] > 0 && indexQueryLimits[0] <= 100, true);
     assert.equal(monthlyIdentityLookups <= 2, true);
+
+    const invalidMonthKeys = Array.from({ length: 95 }, (_, index) => {
+      const date = new Date(Date.UTC(2035, 11 - index, 1));
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+    });
+    invalidMonthKeys.forEach((periodKey, index) => seedRawMonthlyIssue(db, {
+      periodKey,
+      volumeNo: 1000 + index,
+      status: 'frozen',
+    }));
+
+    indexQueryLimits.length = 0;
+    monthlyIdentityLookups = 0;
+    const invalidFirstPage = periodicals.listIssues({ cadence: 'monthly', limit: 1 });
+    assert.deepEqual(invalidFirstPage.issues, []);
+    assert.equal(invalidFirstPage.nextCursor, invalidMonthKeys[29]);
+    assert.deepEqual(indexQueryLimits, [30]);
+    assert.equal(monthlyIdentityLookups, 30);
+
+    indexQueryLimits.length = 0;
+    monthlyIdentityLookups = 0;
+    const invalidSecondPage = periodicals.listIssues({
+      cadence: 'monthly',
+      limit: 1,
+      cursor: invalidFirstPage.nextCursor,
+    });
+    assert.deepEqual(invalidSecondPage.issues, []);
+    assert.equal(invalidSecondPage.nextCursor, invalidMonthKeys[59]);
+    assert.deepEqual(indexQueryLimits, [30]);
+    assert.equal(monthlyIdentityLookups, 30);
   } finally {
     db.close();
   }
