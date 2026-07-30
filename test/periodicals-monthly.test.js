@@ -461,6 +461,53 @@ test('enablement after midnight on the first day still skips that partial month'
   }
 });
 
+test('a sweep after multiple missed boundaries recovers complete months oldest first', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    let dailyVolume = 1;
+    seedFrozenDaily(db, { periodKey: '2026-02-15', volumeNo: dailyVolume });
+    dailyVolume += 1;
+    for (const monthKey of ['2026-03', '2026-04', '2026-05']) {
+      naturalMonthKeys(monthKey).forEach(periodKey => {
+        seedFrozenDaily(db, { periodKey, volumeNo: dailyVolume });
+        dailyVolume += 1;
+      });
+    }
+
+    const sweepAt = Date.parse('2026-06-01T00:00:00.000+08:00');
+    for (const [index, monthKey] of ['2026-03', '2026-04', '2026-05'].entries()) {
+      const scheduled = periodicals.syncMonthlyRollup({
+        now: sweepAt + (index * 2),
+        trigger: 'missed-month-boundaries',
+      });
+      assert.equal(scheduled.action, 'queued');
+      assert.equal(scheduled.issueId, `periodical:monthly:${monthKey}`);
+      assert.equal((await periodicals.runNextBuild({
+        now: sweepAt + (index * 2) + 1,
+      })).status, 'succeeded');
+    }
+
+    assert.deepEqual(db.prepare(`
+      SELECT period_key, volume_no
+      FROM periodical_issues
+      WHERE cadence = 'monthly'
+      ORDER BY period_start_at
+    `).all().map(row => ({ ...row })), [
+      { period_key: '2026-03', volume_no: 1 },
+      { period_key: '2026-04', volume_no: 2 },
+      { period_key: '2026-05', volume_no: 3 },
+    ]);
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM periodical_issues
+      WHERE id = 'periodical:monthly:2026-02'
+    `).get().count, 0);
+  } finally {
+    db.close();
+  }
+});
+
 test('invalid Daily chains stay retry_wait and never expose a Monthly placeholder', async t => {
   const cases = [
     {
@@ -703,21 +750,24 @@ test('a repaired old Monthly input chain creates a replacement job after month r
 
     seedFrozenDaily(db, { periodKey: '2026-04-15', volumeNo: 15 });
     const laterSweepAt = Date.parse('2026-06-30T16:05:00.000Z');
-    assert.equal(periodicals.syncMonthlyRollup({
+    const replacement = periodicals.syncMonthlyRollup({
       now: laterSweepAt,
       trigger: 'month-rollover',
-    }).issueId, 'periodical:monthly:2026-06');
-
-    const replacement = await periodicals.runNextBuild({ now: laterSweepAt + 1 });
-    assert.equal(periodicals.getBuildJob(pending.job.id).status, 'superseded');
+    });
+    assert.equal(replacement.action, 'queued');
     assert.equal(replacement.issueId, 'periodical:monthly:2026-04');
-    assert.equal(replacement.status, 'queued');
-    assert.notEqual(replacement.id, pending.job.id);
-    assert.equal((await periodicals.runNextBuild({ now: laterSweepAt + 2 })).status, 'succeeded');
+    assert.equal(periodicals.getBuildJob(pending.job.id).status, 'superseded');
+    assert.notEqual(replacement.job.id, pending.job.id);
+    assert.equal((await periodicals.runNextBuild({ now: laterSweepAt + 1 })).status, 'succeeded');
     assert.equal(
       periodicals.getIssue({ cadence: 'monthly', periodKey: '2026-04' }).issue.status,
       'frozen',
     );
+    assert.equal(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM periodical_issues
+      WHERE cadence = 'monthly' AND period_key > '2026-04'
+    `).get().count, 0);
   } finally {
     db.close();
   }

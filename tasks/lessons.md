@@ -1,5 +1,6 @@
 # Deployment lessons
 
+- Cadence recovery must select the oldest eligible period that is not yet Frozen, not only the most recently completed period; test startup after multiple missed boundaries so durable work and cadence-local volume numbers cannot skip or reorder history.
 - When extracting a cadence-shared rollup pipeline, preserve existing cadence-specific prose exactly; deterministic overview text is both a user-facing contract and part of the frozen content hash, so run the established cadence regression before adding new cadence cases.
 - Build cache keys from the same normalized query values used to execute the request. A raw invalid or out-of-range `limit` must not produce one result shape while colliding with the default-list cache key; prove the invalid-first then valid-request order in a regression test.
 - Before running the full suite in a fresh worktree, check for `node_modules` and install from the lockfile with `npm ci` when absent; a missing runtime package such as `express` is an environment failure, not evidence of a code regression.
