@@ -1,14 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { mkdtempSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createPeriodicalsModule } = require('../lib/periodicals');
 
 const PERIOD_END = Date.parse('2026-07-29T16:00:00.000Z');
 const OPEN_BUILD_AT = PERIOD_END - (60 * 60 * 1000);
 const FINALIZATION_DEADLINE = PERIOD_END + (15 * 60 * 1000);
+const FINALIZATION_CHILD_TIMEOUT_MS = 10_000;
 
-function fixtureDatabase() {
-  const db = new DatabaseSync(':memory:');
+function fixtureDatabase(databasePath = ':memory:') {
+  const db = new DatabaseSync(databasePath);
   db.exec(`
     PRAGMA foreign_keys = ON;
     CREATE TABLE entries (
@@ -105,6 +110,105 @@ function assertFrozenMutationRejected(db, sql, parameters = []) {
   }
 }
 
+function assertChildProcessPassed(child) {
+  if (!child.error && child.status === 0) return;
+  const detail = [
+    child.error && `${child.error.code}: ${child.error.message}`,
+    child.stderr,
+    child.stdout,
+  ].filter(Boolean).join('\n');
+  throw new Error(`child finalization failed: ${detail}`);
+}
+
+function freezeQueuedFinalizationInChild(databasePath) {
+  const child = spawnSync(process.execPath, [
+    '-e',
+    `
+      const { DatabaseSync } = require('node:sqlite');
+      const { createPeriodicalsModule } = require(process.argv[2]);
+      (async () => {
+        const db = new DatabaseSync(process.argv[1]);
+        db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+        const periodicals = createPeriodicalsModule({
+          db,
+          mode: 'shadow',
+          logger: () => {},
+        });
+        const job = await periodicals.runNextBuild({ now: Number(process.argv[3]) });
+        if (!job || job.status !== 'succeeded') {
+          throw new Error(\`unexpected finalization status: \${job && job.status}\`);
+        }
+        db.close();
+      })().catch(error => {
+        console.error(error);
+        process.exitCode = 1;
+      });
+    `,
+    databasePath,
+    require.resolve('../lib/periodicals'),
+    String(FINALIZATION_DEADLINE),
+  ], {
+    encoding: 'utf8',
+    timeout: FINALIZATION_CHILD_TIMEOUT_MS,
+  });
+  assertChildProcessPassed(child);
+}
+
+function interleavingReadDatabase(db, onIssueRead) {
+  let armed = false;
+  return {
+    exec(sql) {
+      return db.exec(sql);
+    },
+    prepare(sql) {
+      const statement = db.prepare(sql);
+      if (!armed || !/FROM periodical_issues\s+WHERE cadence = \? AND period_key = \?/.test(sql)) {
+        return statement;
+      }
+      return {
+        get(...parameters) {
+          const issue = statement.get(...parameters);
+          if (armed) {
+            armed = false;
+            onIssueRead();
+          }
+          return issue;
+        },
+      };
+    },
+    get isTransaction() {
+      return db.isTransaction;
+    },
+    arm() {
+      armed = true;
+    },
+  };
+}
+
+function faultingExecDatabase(db) {
+  let nextFailure = null;
+  return {
+    exec(sql) {
+      if (sql === nextFailure) {
+        nextFailure = null;
+        const error = new Error(`injected cleanup failure: ${sql}`);
+        error.code = 'SQLITE_IOERR';
+        throw error;
+      }
+      return db.exec(sql);
+    },
+    prepare(sql) {
+      return db.prepare(sql);
+    },
+    get isTransaction() {
+      return db.isTransaction;
+    },
+    failNext(sql) {
+      nextFailure = sql;
+    },
+  };
+}
+
 test('Shanghai midnight moves the previous successful Daily into finalizing without hiding its revision', async () => {
   const db = fixtureDatabase();
   try {
@@ -125,6 +229,198 @@ test('Shanghai midnight moves the previous successful Daily into finalizing with
   } finally {
     db.close();
   }
+});
+
+test('detail read uses one SQLite snapshot across a concurrent finalizing-to-frozen commit', async () => {
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'namoo-periodical-read-snapshot-'));
+  const databasePath = path.join(dataDir, 'qmreader.sqlite');
+  const db = fixtureDatabase(databasePath);
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    periodicals.syncOpenDaily({ now: OPEN_BUILD_AT, trigger: 'test' });
+    await periodicals.runNextBuild({ now: OPEN_BUILD_AT });
+    periodicals.finalizeDueIssues({ now: PERIOD_END + 1 });
+    const completeFinalizingRevision = periodicals.getIssue({
+      cadence: 'daily',
+      periodKey: '2026-07-29',
+    });
+
+    let childFinalizations = 0;
+    const interleavingDb = interleavingReadDatabase(db, () => {
+      childFinalizations += 1;
+      freezeQueuedFinalizationInChild(databasePath);
+    });
+    const concurrentReader = createPeriodicalsModule({
+      db: interleavingDb,
+      mode: 'shadow',
+      logger: () => {},
+    });
+    interleavingDb.arm();
+
+    const observed = concurrentReader.getIssue({
+      cadence: 'daily',
+      periodKey: '2026-07-29',
+    });
+    const committedFrozenRevision = periodicals.getIssue({
+      cadence: 'daily',
+      periodKey: '2026-07-29',
+    });
+
+    assert.equal(childFinalizations, 1);
+    assert.deepEqual(observed, completeFinalizingRevision);
+    assert.equal(committedFrozenRevision.issue.status, 'frozen');
+    assert.equal(
+      committedFrozenRevision.issue.revision,
+      completeFinalizingRevision.issue.revision + 1,
+    );
+  } finally {
+    db.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('detail read owns only its savepoint for success and missing Issue paths', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    periodicals.syncOpenDaily({ now: OPEN_BUILD_AT, trigger: 'test' });
+    await periodicals.runNextBuild({ now: OPEN_BUILD_AT });
+
+    periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-29' });
+    assert.equal(db.isTransaction, false);
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-28' }),
+      error => error.statusCode === 404,
+    );
+    assert.equal(db.isTransaction, false);
+
+    db.exec('BEGIN');
+    db.prepare(`
+      UPDATE custom_sources SET name = 'uncommitted outer write'
+      WHERE id = 'final-source'
+    `).run();
+    periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-29' });
+    assert.equal(db.isTransaction, true);
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-28' }),
+      error => error.statusCode === 404,
+    );
+    assert.equal(db.isTransaction, true);
+    db.exec('ROLLBACK');
+    assert.equal(db.isTransaction, false);
+    assert.equal(
+      db.prepare("SELECT name FROM custom_sources WHERE id = 'final-source'").get().name,
+      'Final Source',
+    );
+  } finally {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    db.close();
+  }
+});
+
+test('frozen hash mismatch releases a top-level snapshot and preserves a caller transaction', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      aiAdapter: generatedSummary,
+      logger: () => {},
+    });
+    periodicals.syncOpenDaily({ now: OPEN_BUILD_AT, trigger: 'test' });
+    await periodicals.runNextBuild({ now: OPEN_BUILD_AT });
+    periodicals.finalizeDueIssues({ now: PERIOD_END + 1 });
+    await periodicals.runNextBuild({ now: PERIOD_END + 2 });
+    db.exec(`
+      DROP TRIGGER reject_frozen_periodical_event_update;
+      UPDATE periodical_events SET summary = 'corrupted frozen summary';
+    `);
+
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-29' }),
+      error => error.code === 'ERR_PERIODICAL_CONTENT_HASH_MISMATCH',
+    );
+    assert.equal(db.isTransaction, false);
+
+    db.exec('BEGIN');
+    assert.throws(
+      () => periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-29' }),
+      error => error.code === 'ERR_PERIODICAL_CONTENT_HASH_MISMATCH',
+    );
+    assert.equal(db.isTransaction, true);
+    db.exec('ROLLBACK');
+    assert.equal(db.isTransaction, false);
+  } finally {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    db.close();
+  }
+});
+
+test('snapshot cleanup failure is a causal 503 and never ends the caller transaction', async t => {
+  for (const cleanupStatement of [
+    'ROLLBACK TO periodical_issue_read',
+    'RELEASE periodical_issue_read',
+  ]) {
+    await t.test(cleanupStatement, async () => {
+      const db = fixtureDatabase();
+      try {
+        const faultingDb = faultingExecDatabase(db);
+        const periodicals = createPeriodicalsModule({
+          db: faultingDb,
+          mode: 'shadow',
+          logger: () => {},
+        });
+        periodicals.syncOpenDaily({ now: OPEN_BUILD_AT, trigger: 'test' });
+        await periodicals.runNextBuild({ now: OPEN_BUILD_AT });
+
+        db.exec('BEGIN');
+        db.prepare(`
+          UPDATE custom_sources SET name = 'uncommitted outer write'
+          WHERE id = 'final-source'
+        `).run();
+        faultingDb.failNext(cleanupStatement);
+        let observedError;
+        assert.throws(
+          () => periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-28' }),
+          error => {
+            observedError = error;
+            return error.statusCode === 503
+              && error.code === 'ERR_PERIODICAL_READ_SNAPSHOT_CLEANUP';
+          },
+        );
+        assert.equal(observedError.cause.statusCode, 404);
+        assert.match(observedError.cleanupErrors[0].message, /injected cleanup failure/);
+        assert.equal(db.isTransaction, true);
+
+        db.exec('ROLLBACK');
+        assert.equal(db.isTransaction, false);
+        assert.equal(
+          db.prepare("SELECT name FROM custom_sources WHERE id = 'final-source'").get().name,
+          'Final Source',
+        );
+      } finally {
+        if (db.isTransaction) db.exec('ROLLBACK');
+        db.close();
+      }
+    });
+  }
+});
+
+test('a timed-out finalization child is a NON_PASS', () => {
+  const child = spawnSync(process.execPath, [
+    '-e',
+    'setInterval(() => {}, 1000)',
+  ], {
+    encoding: 'utf8',
+    timeout: 50,
+  });
+
+  assert.equal(child.error && child.error.code, 'ETIMEDOUT');
+  assert.throws(
+    () => assertChildProcessPassed(child),
+    /child finalization failed: ETIMEDOUT/,
+  );
 });
 
 test('a successful final build freezes the previous Daily with period-end scoring', async () => {
