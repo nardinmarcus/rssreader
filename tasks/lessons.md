@@ -130,3 +130,4 @@
 - In zsh, delimit variables inside exact Git refspecs as `${candidate}:refs/heads/main`; `$candidate:refs/...` can invoke parameter modifiers and corrupt the local source ref. After a local refspec rejection, prove the remote ref stayed unchanged before issuing a corrected push.
 - Before deleting a sealed mode-`0500` artifact snapshot, restore owner write permission on its exact directories and verify the root no longer exists; per-file `find -delete` errors must never be followed by an unconditional success marker.
 - Markdown hard-break spaces still fail `git diff --check`; prefer paragraph or list structure without trailing spaces, and run the staged diff check before committing documentation-only changes.
+- `gh pr view --repo <owner/name>` still requires an explicit PR number, URL, or branch; pass the newly created PR number when rereading a mutation instead of assuming repository scope selects it.
