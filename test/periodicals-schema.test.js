@@ -60,7 +60,21 @@ test('periodical schema initializes twice without rewriting existing entry data'
       'idx_periodical_evidence_event_order',
       'idx_periodical_issue_inputs_issue_order',
       'idx_periodical_build_jobs_status_wake',
+      'idx_entries_periodical_candidates',
     ]) assert.equal(indexes.has(index), true, `missing index ${index}`);
+
+    const candidateIndexSql = db.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_entries_periodical_candidates'
+    `).get().sql;
+    assert.match(
+      candidateIndexSql,
+      /CASE\s+WHEN\s+published_ts\s*>\s*0\s+THEN\s+published_ts\s+ELSE\s+created_at\s+END/i,
+    );
+    const candidateIndexKeys = db.prepare('PRAGMA index_xinfo(idx_entries_periodical_candidates)').all()
+      .filter(column => column.key === 1);
+    assert.equal(candidateIndexKeys.some(column => column.name === 'source_id'), true);
+    assert.equal(candidateIndexKeys.some(column => column.cid === -2), true, 'missing effective timestamp expression');
 
     assert.deepEqual(
       { ...db.prepare('SELECT id, source_id, title, created_at, updated_at FROM entries WHERE id = ?').get('existing-entry') },
