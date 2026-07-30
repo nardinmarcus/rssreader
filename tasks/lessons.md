@@ -145,3 +145,4 @@
 - A compatibility fixture that expects independent-source confirmation must not reuse one canonical URL across sources; syndication is intentionally one confirmation. Use a semantic complete-link cluster with distinct canonical URLs when asserting confirmation points.
 - Test fixtures that cross the real store boundary must seed every required stable ID through the production helper contract; an implicit ID can create a fixture failure before the intended SQLite assertion runs.
 - A concurrent SQLite test writer must use the same finite `busy_timeout` as the production store; otherwise a valid `BEGIN IMMEDIATE` held by the system under test becomes a zero-wait harness flake instead of exercising lifecycle behavior.
+- In zsh verification wrappers, never rely on an unquoted scalar to split a newline-separated file list; stream paths through `while IFS= read -r` so each syntax check receives exactly one file.
