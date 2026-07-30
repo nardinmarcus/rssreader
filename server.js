@@ -1816,6 +1816,10 @@ function renderIndex(req, entry = null) {
   const { title, tags } = socialMetaTags(req, entry);
   const umami = umamiScriptTag();
   return INDEX_TEMPLATE
+    .replace(
+      '<body data-periodicals-mode="off">',
+      `<body data-periodicals-mode="${store.periodicals.isPublic ? 'on' : 'off'}">`,
+    )
     .replace(/src="\/purify\.min\.js(?:\?v=[^"]*)?"/, `src="/purify.min.js?v=${escapeHtml(DOMPURIFY_VERSION)}"`)
     .replace(/<link rel="alternate" type="application\/rss\+xml" title="[^"]*" href="[^"]*" \/>/, rssAlternateTag(req))
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
@@ -1903,6 +1907,12 @@ app.get('/', (req, res) => {
   if (entry) return res.redirect(301, entryPublicUrl(req, entry));
   res.setHeader('Cache-Control', 'no-cache');
   res.type('html').send(renderIndex(req, entry));
+});
+
+app.get(['/periodicals', '/periodicals/:cadence/:periodKey'], (req, res) => {
+  if (!store.periodicals.isPublic) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'no-cache');
+  return res.type('html').send(renderIndex(req));
 });
 
 app.get(/^\/articles\/.+$/, (req, res) => {
@@ -3012,6 +3022,38 @@ function scheduleFreshnessRefresh() {
     setInterval(triggerFreshnessRefresh, interval);
   }, delay);
 }
+
+app.get('/api/periodicals', (req, res) => {
+  if (!store.periodicals.isPublic) return res.status(404).json({ error: 'Not found' });
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json(store.periodicals.listIssues({
+      cadence: req.query.cadence,
+      cursor: req.query.cursor,
+      limit: req.query.limit,
+    }));
+  } catch (error) {
+    return sendError(res, error, 'periodical index unavailable');
+  }
+});
+
+app.get('/api/periodicals/:cadence/:periodKey', (req, res) => {
+  if (!store.periodicals.isPublic) return res.status(404).json({ error: 'Not found' });
+  try {
+    const result = store.periodicals.getIssue(req.params);
+    if (result.issue.status !== 'frozen') {
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(result);
+    }
+    const etag = `"${result.issue.contentHash}"`;
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    res.setHeader('ETag', etag);
+    if (req.get('if-none-match') === etag) return res.status(304).end();
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, 'periodical detail unavailable');
+  }
+});
 
 app.get('/api/sources', (req, res) => {
   const isAdmin = Boolean(req.user && req.user.role === 'admin');

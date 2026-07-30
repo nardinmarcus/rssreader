@@ -114,15 +114,18 @@ test('service worker precaches the minimal reading shell and never claims /api',
   const sw = readPublic('sw.js');
   const html = readPublic('index.html');
   const appVersion = html.match(/<script src="\/app\.js\?v=([^"]+)"/)?.[1];
+  const periodicalsVersion = html.match(/<script src="\/periodicals\.js\?v=([^"]+)"/)?.[1];
   const stylesVersion = html.match(/<link rel="stylesheet" href="\/styles\.css\?v=([^"]+)"/)?.[1];
   const lucideVersion = html.match(/<script src="\/lucide-icons\.js\?v=([^"]+)"/)?.[1];
 
-  assert.ok(appVersion && stylesVersion && lucideVersion);
+  assert.ok(appVersion && periodicalsVersion && stylesVersion && lucideVersion);
   assert.equal(appVersion, contentHash('app.js'));
+  assert.equal(periodicalsVersion, contentHash('periodicals.js'));
   assert.equal(stylesVersion, contentHash('styles.css'));
   assert.equal(lucideVersion, contentHash('lucide-icons.js'));
 
   assert.match(sw, new RegExp(`/app\\.js\\?v=${appVersion}`));
+  assert.match(sw, new RegExp(`/periodicals\\.js\\?v=${periodicalsVersion}`));
   assert.match(sw, new RegExp(`/styles\\.css\\?v=${stylesVersion}`));
   assert.match(sw, new RegExp(`/lucide-icons\\.js\\?v=${lucideVersion}`));
   assert.match(sw, /\/manifest\.webmanifest/);

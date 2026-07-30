@@ -31,7 +31,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=d5e3a5dff057" />
+  <link rel="stylesheet" href="/styles.css?v=e3b60ec96de4" />
   <!-- social-meta:start -->
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
@@ -46,7 +46,7 @@
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Namoo Reader","url":"https://rss.namooca.com/","description":"围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。"}</script>
   <!-- social-meta:end -->
 </head>
-<body>
+<body data-periodicals-mode="off">
   <div id="app">
     <!-- ===== Sidebar ===== -->
     <aside id="sidebar" aria-label="主导航">
@@ -54,6 +54,10 @@
         <button id="brand-home" class="brand-home" type="button" title="返回全部" aria-label="返回全部">
           <img class="brand-logo" src="/favicon.svg" alt="" />
           <span class="brand-name">Namoo Reader</span>
+        </button>
+        <button id="periodicals-open" class="periodicals-open hidden" type="button" title="精选期刊" aria-label="精选期刊">
+          <span class="periodicals-open-icon" data-qm-icon="book-open-text"></span>
+          <span class="periodicals-open-label">精选</span>
         </button>
         <button id="submit-link-open" class="submit-link-open sidebar-submit-link" type="button" title="提交链接" aria-label="提交链接">
           <span class="submit-icon" data-qm-icon="plus"></span>
@@ -158,6 +162,17 @@
       </div>
       <div id="asset-activity-strip" class="asset-activity-strip hidden"></div>
       <div id="entry-list" class="entry-list"></div>
+      <section id="periodicals-nav" class="periodicals-nav hidden" aria-label="精选期刊导航">
+        <header class="periodicals-nav-head">
+          <h1>精选期刊</h1>
+          <div id="periodicals-tabs" class="periodicals-tabs" role="tablist" aria-label="期刊周期">
+            <button type="button" role="tab" data-periodical-cadence="daily" aria-selected="true" tabindex="0">日报</button>
+            <button type="button" role="tab" data-periodical-cadence="weekly" aria-selected="false" tabindex="-1">周报</button>
+            <button type="button" role="tab" data-periodical-cadence="monthly" aria-selected="false" tabindex="-1">月报</button>
+          </div>
+        </header>
+        <div id="periodicals-list" class="periodicals-list" aria-live="polite"></div>
+      </section>
     </section>
 
     <div id="list-resizer" class="pane-resizer" role="separator" aria-orientation="vertical" aria-label="调整文章列表宽度" tabindex="0"></div>
@@ -615,6 +630,10 @@
         </div>
         <div id="contributor-list" class="my-comments-list"></div>
       </section>
+      <article id="periodicals-reader" class="periodicals-reader hidden" aria-live="polite">
+        <div id="periodicals-empty" class="periodicals-empty">精选期刊正在准备第一期</div>
+        <div id="periodicals-document" class="periodicals-document hidden"></div>
+      </article>
     </section>
 
     <div id="context-resizer" class="context-resizer" role="separator" aria-orientation="vertical" aria-label="调整文章和右侧栏宽度" tabindex="0"></div>
@@ -880,5 +899,6 @@
   <script src="/purify.min.js"></script>
   <script src="/lucide-icons.js?v=3f59b770ca41"></script>
   <script src="/app.js?v=435675b27b4d"></script>
+  <script src="/periodicals.js?v=8e5846338888"></script>
 </body>
 </html>

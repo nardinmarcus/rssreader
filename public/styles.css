@@ -8498,6 +8498,110 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-weight: 620;
 }
 
+/* ============ Curated periodicals read skeleton ============ */
+.periodicals-open {
+  flex: none;
+  min-width: 62px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 700;
+}
+.periodicals-open:hover,
+.periodicals-open[aria-current="page"] {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.periodicals-open-icon .app-icon {
+  --icon-size: 15px;
+}
+body[data-periodicals-mode="off"] .periodicals-open {
+  display: none !important;
+}
+
+#app.periodicals-mode {
+  --agent-width: 0;
+  --context-resizer-width: 0;
+  grid-template-columns: var(--sidebar-width) var(--entry-width) 4px minmax(500px, 1fr) 0 0;
+}
+#app.periodicals-mode #agent-pane,
+#app.periodicals-mode #context-resizer,
+#app.periodicals-mode #context-open-rail {
+  display: none;
+}
+#app.periodicals-mode #entry-pane > :not(#periodicals-nav) {
+  display: none;
+}
+#app.periodicals-mode #reader-pane > :not(#periodicals-reader) {
+  display: none;
+}
+#app.periodicals-mode #periodicals-nav,
+#app.periodicals-mode #periodicals-reader {
+  display: flex;
+}
+
+.periodicals-nav {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+.periodicals-nav-head {
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.periodicals-nav-head h1 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+.periodicals-tabs {
+  display: flex;
+  gap: 6px;
+}
+.periodicals-tabs [role="tab"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.periodicals-tabs [role="tab"][aria-selected="true"] {
+  border-color: var(--border);
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+.periodicals-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+.periodicals-reader {
+  min-width: 0;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+.periodicals-empty {
+  max-width: 360px;
+  color: var(--text-2);
+  font-size: 15px;
+  text-align: center;
+}
+
 #entry-pane .pane-header {
   min-height: 56px;
   box-sizing: border-box;
