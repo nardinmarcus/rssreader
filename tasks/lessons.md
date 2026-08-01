@@ -175,3 +175,5 @@
 - `gh api -f` selects POST unless the method is explicitly GET; tracker bootstrap probes must use `-X GET` or query parameters in the URL, then reread Issue/assignee/comment state before claiming a failed request was non-mutating.
 - Production-scale SQLite identity checks must stream rows in deterministic primary-key order; `.all()` can turn a logically read-only verifier into an out-of-memory failure when Entry bodies dominate the database.
 - Keep the production SQLite mount read-only during online backup, but allow the separate temporary copy directory to create SQLite auxiliary files while checking it; a read-only copy bind can fail before `query_only` is applied even though the source backup is sound.
+- A SQLite evidence receipt must bind one atomic online-backup snapshot, not separately sampled main/WAL file hashes; record source-file metadata only as drift detection, then hash and verify the closed single-file snapshot.
+- Exact migration preservation cannot reuse a semantic canonicalizer that normalizes newlines or Unicode; hash SQLite values with explicit storage-type tags and unmodified value bytes in deterministic primary-key order.

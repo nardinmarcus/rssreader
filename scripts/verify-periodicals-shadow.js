@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -17,7 +16,7 @@ function parseArgs(argv) {
     databaseCopy: null,
     confirmReadOnlyCopy: false,
     receiptFile: null,
-    requireClean: false,
+    requireClean: true,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -67,47 +66,54 @@ function candidateIdentity() {
   return { head, tree, clean: !dirty };
 }
 
-async function hashFile(file) {
-  const hash = crypto.createHash('sha256');
-  await new Promise((resolve, reject) => {
-    const input = fs.createReadStream(file);
-    input.on('data', chunk => hash.update(chunk));
-    input.once('error', reject);
-    input.once('end', resolve);
-  });
-  return hash.digest('hex');
+function sameCandidateIdentity(left, right) {
+  return Boolean(left && right)
+    && left.clean === true
+    && right.clean === true
+    && left.head === right.head
+    && left.tree === right.tree;
+}
+
+function pathIsInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
+  const projectDir = path.resolve(__dirname, '..');
   const databaseFile = realPathIfPresent(options.databaseCopy);
   const activeDatabaseFile = realPathIfPresent(resolveDataPaths().databaseFile);
   if (databaseFile === activeDatabaseFile) {
     throw cliError('ERR_PERIODICAL_LIVE_DATABASE_REFUSED');
   }
+  const receiptFile = options.receiptFile ? path.resolve(options.receiptFile) : null;
+  if (receiptFile && pathIsInside(projectDir, receiptFile)) {
+    throw cliError('ERR_PERIODICAL_RECEIPT_INSIDE_WORKTREE');
+  }
 
-  const candidate = candidateIdentity();
-  if (options.requireClean && !candidate.clean) {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const candidateStart = candidateIdentity();
+  if (!candidateStart.clean) {
     throw cliError('ERR_PERIODICAL_CANDIDATE_DIRTY');
   }
-  const databaseCopyBefore = await hashFile(databaseFile);
-  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
   const verification = await verifyDatabaseCopy(databaseFile);
-  const databaseCopyAfter = await hashFile(databaseFile);
-  if (databaseCopyBefore !== databaseCopyAfter) {
-    throw cliError('ERR_PERIODICAL_DATABASE_COPY_CHANGED');
+  const candidateEnd = candidateIdentity();
+  if (!sameCandidateIdentity(candidateStart, candidateEnd)) {
+    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
   }
   const receipt = {
     ...verification,
-    candidate,
-    databaseCopy: {
-      sha256: databaseCopyAfter,
-      bytes: fs.statSync(databaseFile).size,
-    },
+    candidate: candidateEnd,
   };
   const output = `${JSON.stringify(receipt, null, 2)}\n`;
-  if (options.receiptFile) {
-    fs.writeFileSync(path.resolve(options.receiptFile), output, { encoding: 'utf8', flag: 'wx' });
+  if (receiptFile) {
+    fs.writeFileSync(receiptFile, output, { encoding: 'utf8', flag: 'wx' });
+  }
+  const candidateFinal = candidateIdentity();
+  if (!sameCandidateIdentity(candidateStart, candidateFinal)) {
+    if (receiptFile) fs.unlinkSync(receiptFile);
+    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
   }
   process.stdout.write(output);
 }
@@ -121,4 +127,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseArgs };
+module.exports = { main, parseArgs, sameCandidateIdentity };

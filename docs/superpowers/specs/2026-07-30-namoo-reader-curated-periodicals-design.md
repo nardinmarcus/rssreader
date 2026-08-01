@@ -210,6 +210,8 @@ inputHash = SHA256(canonical(
 
 Canonical JSON 沿用仓库现有的稳定键顺序和 Unicode 规范化方式。普通巡检不会仅因墙钟前进就重建开放日报；有新文章、来源偏好变化或已启用的行为信号变化时才产生新修订。日终定稿无条件以 `periodEndAt` 重算一次。相同完整输入不创建新修订、不重复调用 AI。
 
+为使 shadow 审计能重算这条身份链，日报的 `selection_context_json` 同时持久化按稳定 ID 排序的 `candidateSnapshot` 与 `sourceSnapshot` preimage。Candidate snapshot 保存 `entryId`、候选内容哈希和有效发布时间；Source snapshot 保存稳定 ID、构建时名称、分类、启用状态、编辑优先级和标签。公开渲染仍只读取冻结 Evidence；这些 preimage 只用于构建身份与审计，不以 runtime cache 代替。
+
 ## 9. 事件合并
 
 ### 9.1 规范化
@@ -345,7 +347,7 @@ AI 可以依据已选事件证据把每个事件归入且只归入一个主题�
 | `selection_version` | TEXT | 例如 `importance-v1` |
 | `summary_version` | TEXT | Prompt、Schema 与验证规则身份 |
 | `source_input_hash` | TEXT | 不含墙钟的候选、来源和有效行为输入身份 |
-| `selection_context_json` | TEXT | 权重、阈值、行为开关、候选/来源快照摘要 |
+| `selection_context_json` | TEXT | 权重、阈值、行为开关，以及可重算 `source_input_hash` 的完整候选/来源 snapshot preimage |
 | `input_hash` | TEXT | 本修订完整输入身份 |
 | `content_hash` | TEXT | 当前完整渲染语义内容身份 |
 | `summary_status` | TEXT | `generated` 或 `fallback` |

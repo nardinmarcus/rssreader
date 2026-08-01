@@ -107,6 +107,30 @@ test('shadow worker persists a Custom Source event and timestamp fallback throug
     assert.equal(stored.evidence[0].editorialPriority, 'high');
     assert.equal(stored.evidence[0].effectivePublishedAt, NOW - (10 * 60 * 1000));
     assert.equal(stored.evidence[0].timestampFallback, true);
+
+    const selectionContext = JSON.parse(db.prepare(`
+      SELECT selection_context_json
+      FROM periodical_issues
+      WHERE cadence = 'daily' AND period_key = '2026-07-30'
+    `).get().selection_context_json);
+    assert.deepEqual(selectionContext.sourceSnapshot.find(source => (
+      source.sourceId === 'custom-daily'
+    )), {
+      sourceId: 'custom-daily',
+      name: 'Custom Daily',
+      category: 'article',
+      enabled: true,
+      editorialPriority: 'high',
+      labels: ['产品'],
+    });
+    assert.equal(selectionContext.sourceSnapshot.length > 1, true);
+    assert.equal(selectionContext.candidateSnapshot.length, 1);
+    assert.equal(selectionContext.candidateSnapshot[0].entryId, 'custom-entry');
+    assert.equal(
+      selectionContext.candidateSnapshot[0].effectivePublishedAt,
+      NOW - (10 * 60 * 1000),
+    );
+    assert.match(selectionContext.candidateSnapshot[0].contentHash, /^[a-f0-9]{64}$/);
   } finally {
     db.close();
   }

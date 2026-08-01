@@ -7,7 +7,7 @@
 - 生产 `PERIODICALS_MODE` 保持 `off`。禁止在生产启用 `on`，也禁止为了验证而修改生产 SQLite。
 - 生产数据只能通过 SQLite 在线备份取得；源目录必须只读挂载，迁移和 shadow 构建只在本地隔离副本中执行。
 - `on` 只能在本地或其他隔离环境验证。模式切换前后必须比较 Source 与 Entry 的持久化摘要。
-- 收据只允许包含候选 SHA/tree、数据库副本 SHA-256、行数、规范化摘要、计数、时间戳和安全错误码。不得包含正文、完整 Prompt、Key、Cookie、session token、用户 ID 或 provider 原始响应。
+- 收据只允许包含候选 SHA/tree、原子 SQLite snapshot SHA-256、行数、精确值摘要、计数、时间戳和安全错误码。不得包含正文、完整 Prompt、Key、Cookie、session token、用户 ID 或 provider 原始响应。
 - 任一检查不完整、候选不干净、哈希漂移、命令失败或收据无法解析时，该候选为 NON-PASS。
 
 ## 1. 冻结候选
@@ -32,8 +32,8 @@ git merge-base --is-ancestor origin/main HEAD
 2. 将权限为 `0700` 的独立临时目录挂载为 `/copy`。
 3. 以 `readOnly: true` 打开 `/source/qmreader.sqlite`，先执行 `PRAGMA query_only = ON`，只把在线备份写入 `/copy/qmreader.sqlite`。
 4. 在副本上执行 `PRAGMA quick_check` 与 `PRAGMA foreign_key_check`；不得在源库上执行迁移。
-5. 将副本权限收紧为 `0600`，记录 SHA-256 后传到本机受限临时目录。
-6. 本地哈希与远端哈希一致后，删除远端临时副本及其 WAL/SHM；不得删除或移动生产文件。
+5. 将副本权限收紧为 `0600`，记录传输文件 SHA-256 后传到本机受限临时目录。这个哈希只证明传输一致，不是后续逻辑收据的根身份。
+6. 本地传输哈希与远端一致后，删除远端临时副本及其 WAL/SHM；不得删除或移动生产文件。
 
 生产镜像、容器或宿主缺少上述只读备份能力时停止，不得退化为复制正在运行的裸 SQLite/WAL 文件。
 
@@ -49,11 +49,13 @@ npm run verify:periodicals-shadow -- \
   --receipt /new/private/path/migration-copy.json
 ```
 
-命令会拒绝当前 `NAMOO_READER_DATA_DIR` 指向的活动数据库。它只读打开输入，在线备份到系统临时目录，在工作副本上执行两次 additive migration，并验证：
+命令会拒绝当前 `NAMOO_READER_DATA_DIR` 指向的活动数据库，并且始终要求候选 worktree 干净。它只读打开输入，先用 SQLite online backup 生成闭合单文件 snapshot；若 `data_version` 或 main/非空 WAL 元数据在备份期间漂移则 fail closed。命令关闭 snapshot 句柄、收紧为只读后才计算字节 SHA-256，并在其第二份工作副本上执行两次 additive migration。候选 HEAD/tree/clean 在实现加载后、验证后和输出前重复核对。
+
+它验证：
 
 - 每次 `quick_check=ok`、`foreign_key_check` 为空；
-- `source_preferences`、`custom_sources`、`entries`、`users`、密码摘要、`user_entry_states`、`entry_stats` 的行数和规范化 SHA-256 完全一致；
-- 每条 Evidence 都关联 SQLite Entry，Evidence/Entry 的 Source ID 一致，Source ID 来自内建或 SQLite 自定义 Source，构建时 Source snapshot 结构有效；
+- `source_preferences`、`custom_sources`、`entries`、`users`、密码摘要、`user_entry_states`、`entry_stats` 的行数和 SQLite type-tagged 原始值 SHA-256 完全一致；CRLF、Unicode 组合形式或 SQLite 类型变化都必须改变摘要；
+- 每条 Evidence 都关联 SQLite Entry，Evidence/Entry 的 Source ID 一致，Source ID 来自内建或 SQLite 自定义 Source；日报必须由持久化的 Candidate/Source snapshot 重算 `sourceInputHash` 与候选内容哈希，周/月 Evidence 必须匹配其绑定冻结日报；每期 `contentHash` 必须能从 SQLite 文档重算；
 - 输出不包含数据库路径或受保护字段。
 
 ## 4. off / shadow / on 部署隔离
@@ -63,11 +65,12 @@ npm run verify:periodicals-shadow -- \
 按 `off → shadow → on → off` 严格串行启动，每一步：
 
 1. 记录镜像 ID、候选 HEAD/tree、模式、容器启动时间和随机端口。
-2. 用上节命令对隔离 SQLite 生成模式前/后收据，比较 Source 偏好与 Entry 摘要。
-3. `off`：无期刊任务、公开路由/API 为 404。
-4. `shadow`：任务和 Issue 只写 SQLite，公开路由/API 仍为 404。
-5. `on`：只在该隔离容器中，公开路由/API 为 200；品牌头部“精选”是普通页面唯一新增可见元素。
-6. 切回 `off` 后公开路由/API 再次为 404，Source/Entry 摘要仍不变。
+2. 每次模式切换前先停止隔离容器，使该阶段 SQLite 状态闭合；再用上节命令生成原子 snapshot 收据，验证完成后才启动下一模式。运行中取证只允许由同一命令执行 online backup，任何来源漂移都记为 NON-PASS。
+3. 比较各阶段 Source 偏好与 Entry 的精确逻辑摘要，它们必须相同；期刊 Issue/job/evidence 的 durable 摘要允许按模式预期变化，但每次变化都必须由对应阶段的 atomic snapshot 收据解释。
+4. `off`：无期刊任务、公开路由/API 为 404。
+5. `shadow`：任务和 Issue 只写 SQLite，公开路由/API 仍为 404。
+6. `on`：只在该隔离容器中，公开路由/API 为 200；品牌头部“精选”是普通页面唯一新增可见元素。
+7. 切回 `off` 后公开路由/API 再次为 404，Source/Entry 摘要仍不变。
 
 管理端 `GET /api/admin/periodicals-status` 在三种模式均应可观测，但必须要求管理员身份。输出包含各 cadence 最新 Issue、Issue 状态计数、fallback/candidate/Event 聚合、任务状态、最老任务、最近成功和安全错误码聚合。
 
