@@ -43,7 +43,10 @@ test('startup renders cached entries while refresh polling stays status-only', (
   const refreshLoop = init.match(/if \(data\.refreshing[^]*?\n\s*\}/)[0];
   const postInitialRender = init.slice(init.indexOf('await openEntryFromUrl({ entriesLoaded: true });'));
 
-  assert.match(init, /renderAgent\(\);\s*await openEntryFromUrl\(\{ entriesLoaded: true \}\);/);
+  assert.match(
+    init,
+    /renderAgent\(\);\s*if \(!isPeriodicalWorkspacePath\(\)\) \{\s*await openEntryFromUrl\(\{ entriesLoaded: true \}\);\s*\}/,
+  );
   assert.match(refreshLoop, /const d = await loadSources\(\);/);
   assert.match(refreshLoop, /if \(!d\.refreshing\) \{\s*await reload\(\{ keepReader: true, clearUrl: false \}\);\s*break;\s*\}/);
   assert.doesNotMatch(postInitialRender, /loadEntries\(\)|renderList\(\)|renderSidebar\(\)|updateListTitle\(\)/);

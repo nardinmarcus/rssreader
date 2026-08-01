@@ -8531,6 +8531,8 @@ body[data-periodicals-mode="off"] .periodicals-open {
 #app.periodicals-mode {
   --agent-width: 0;
   --context-resizer-width: 0;
+  max-width: 100vw;
+  overflow-x: hidden;
   grid-template-columns: var(--sidebar-width) var(--entry-width) 4px minmax(500px, 1fr) 0 0;
 }
 #app.periodicals-mode #agent-pane,
@@ -8583,6 +8585,15 @@ body[data-periodicals-mode="off"] .periodicals-open {
   background: var(--bg-2);
   color: var(--text-0);
 }
+.periodicals-tabs [role="tab"]:focus-visible,
+.periodicals-list-item:focus-visible,
+.periodicals-load-more:focus-visible,
+.periodicals-back:focus-visible,
+.periodical-evidence-link:focus-visible,
+.periodical-evidence-external:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .periodicals-list {
   min-height: 0;
   flex: 1;
@@ -8608,6 +8619,21 @@ body[data-periodicals-mode="off"] .periodicals-open {
   color: var(--text-3);
   font-size: 11px;
 }
+.periodicals-load-more {
+  width: calc(100% - 24px);
+  min-height: 44px;
+  margin: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-weight: 700;
+}
+.periodicals-load-more:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .periodicals-reader {
   min-width: 0;
   min-height: 100%;
@@ -8615,6 +8641,9 @@ body[data-periodicals-mode="off"] .periodicals-open {
   justify-content: center;
   overflow-y: auto;
   padding: 32px;
+}
+.periodicals-back {
+  display: none;
 }
 .periodicals-empty {
   max-width: 360px;
@@ -8657,6 +8686,16 @@ body[data-periodicals-mode="off"] .periodicals-open {
   color: var(--semantic-amber);
   font-size: 12px;
   font-weight: 650;
+}
+.periodical-issue-state,
+.periodical-summary-fallback {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+.periodical-summary-fallback {
+  color: var(--semantic-amber);
 }
 .periodical-directory {
   margin: 24px 0 34px;
@@ -8794,10 +8833,26 @@ body[data-periodicals-mode="off"] .periodicals-open {
   white-space: nowrap;
 }
 .periodical-evidence-meta,
-.periodical-evidence-fallback {
+.periodical-evidence-fallback,
+.periodical-evidence-unavailable,
+.periodical-evidence-snapshot,
+.periodical-evidence-external {
   grid-column: 2;
   color: var(--text-3);
   font-size: 11px;
+}
+.periodical-evidence-unavailable {
+  color: var(--semantic-amber);
+  font-weight: 700;
+}
+.periodical-evidence-snapshot {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+.periodical-evidence-external {
+  width: fit-content;
+  color: var(--accent);
 }
 
 #entry-pane .pane-header {
@@ -10916,4 +10971,220 @@ body[data-periodicals-mode="off"] .periodicals-open {
   color: var(--text-3);
   font-size: 10px;
   font-weight: 620;
+}
+
+/* Periodicals keep the desktop workspace intact, then compact only at the
+   two explicit responsive boundaries from the approved product design. */
+@media (max-width: 1180px) and (min-width: 861px) {
+  #app.periodicals-mode {
+    --sidebar-width: 64px;
+    --entry-width: minmax(272px, 320px);
+    grid-template-columns: var(--sidebar-width) var(--entry-width) 4px minmax(0, 1fr) 0 0 !important;
+  }
+
+  #app.periodicals-mode #sidebar .brand {
+    min-height: 140px;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 11px 10px 8px;
+  }
+
+  #app.periodicals-mode #sidebar .brand-home,
+  #app.periodicals-mode #sidebar .periodicals-open,
+  #app.periodicals-mode #sidebar .sidebar-submit-link {
+    width: 44px;
+    min-width: 44px;
+    height: 38px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  #app.periodicals-mode #sidebar #sidebar-toggle,
+  #app.periodicals-mode #sidebar .brand-name,
+  #app.periodicals-mode #sidebar .periodicals-open-label,
+  #app.periodicals-mode #sidebar .sidebar-submit-link .submit-label,
+  #app.periodicals-mode #sidebar .sidebar-type-meta,
+  #app.periodicals-mode #sidebar .view-label,
+  #app.periodicals-mode #sidebar .count,
+  #app.periodicals-mode #sidebar .sidebar-source-heading,
+  #app.periodicals-mode #sidebar .feed-item .fname,
+  #app.periodicals-mode #sidebar .feed-item .fcount,
+  #app.periodicals-mode #sidebar .group-label,
+  #app.periodicals-mode #sidebar .account-card .account-text {
+    display: none !important;
+  }
+
+  #app.periodicals-mode #sidebar .sidebar-primary-nav,
+  #app.periodicals-mode #sidebar .sidebar-secondary-nav,
+  #app.periodicals-mode #sidebar .sidebar-type-nav {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  #app.periodicals-mode #sidebar .sidebar-primary-nav .view-btn,
+  #app.periodicals-mode #sidebar .sidebar-secondary-nav .view-btn,
+  #app.periodicals-mode #sidebar .sidebar-type-btn,
+  #app.periodicals-mode #sidebar .sidebar-category-tab,
+  #app.periodicals-mode #sidebar .feed-item {
+    width: 44px;
+    min-height: 38px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  #app.periodicals-mode #sidebar .views,
+  #app.periodicals-mode #sidebar .sidebar-scroll {
+    padding-inline: 10px;
+  }
+
+  #app.periodicals-mode #sidebar .sidebar-category-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  #app.periodicals-mode #sidebar .feed-drag-handle,
+  #app.periodicals-mode #sidebar .sidebar-source-tools {
+    display: none;
+  }
+
+  #app.periodicals-mode #sidebar .account-strip {
+    flex-direction: column-reverse;
+    gap: 4px;
+    padding: 7px 10px;
+  }
+
+  #app.periodicals-mode #sidebar .account-area,
+  #app.periodicals-mode #sidebar .account-card {
+    width: 44px;
+  }
+}
+
+@media (max-width: 860px) {
+  #app.periodicals-mode {
+    --sidebar-width: 64px;
+    width: 100vw;
+    max-width: 100vw;
+    overflow-x: hidden;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0 0 0 0 !important;
+  }
+
+  #app.periodicals-mode #sidebar .periodicals-open {
+    width: 44px;
+    min-width: 44px;
+    height: 38px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  #app.periodicals-mode #sidebar .periodicals-open-label {
+    display: none;
+  }
+
+  #app.periodicals-mode #entry-pane {
+    display: flex !important;
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  #app.periodicals-mode #reader-pane,
+  #app.periodicals-mode #list-resizer {
+    display: none !important;
+  }
+
+  #app.periodicals-mode.periodical-detail-open {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  #app.periodicals-mode.periodical-detail-open #sidebar,
+  #app.periodicals-mode.periodical-detail-open #entry-pane,
+  #app.periodicals-mode.periodical-detail-open #list-resizer {
+    display: none !important;
+  }
+
+  #app.periodicals-mode.periodical-detail-open #reader-pane {
+    width: 100%;
+    max-width: 100vw;
+    display: block !important;
+    grid-column: 1 / -1;
+    overflow-x: hidden;
+  }
+
+  #app.periodicals-mode.periodical-detail-open #periodicals-reader {
+    width: 100%;
+    max-width: 100vw;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow-x: hidden;
+    padding: 0;
+  }
+
+  #app.periodicals-mode.periodical-detail-open .periodicals-back {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    margin: 12px 16px 0;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-1);
+    color: var(--text-1);
+    font-weight: 700;
+  }
+
+  .periodicals-tabs [role="tab"] {
+    min-height: 44px;
+  }
+
+  .periodicals-document {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 18px 16px 56px;
+    overflow-x: hidden;
+  }
+
+  .periodical-document-header h1 {
+    font-size: clamp(26px, 8vw, 32px);
+  }
+
+  .periodical-directory,
+  .periodical-event {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .periodical-event {
+    padding: 16px;
+  }
+
+  .periodical-event-heading {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .periodical-score-components,
+  .periodical-evidence {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .periodical-evidence-meta,
+  .periodical-evidence-fallback,
+  .periodical-evidence-unavailable,
+  .periodical-evidence-snapshot,
+  .periodical-evidence-external {
+    grid-column: 1;
+  }
+
+  .periodical-evidence-link {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
 }

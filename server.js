@@ -1987,8 +1987,11 @@ app.get('/', (req, res) => {
   res.type('html').send(renderIndex(req, entry));
 });
 
-app.get(['/periodicals', '/periodicals/:cadence/:periodKey'], (req, res) => {
+app.get(['/periodicals', '/periodicals/:cadence', '/periodicals/:cadence/:periodKey'], (req, res) => {
   if (!store.periodicals.isPublic) return res.status(404).type('text/plain').send('Not found');
+  if (req.params.cadence && !['daily', 'weekly', 'monthly'].includes(req.params.cadence)) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
   res.setHeader('Cache-Control', 'no-cache');
   return res.type('html').send(renderIndex(req));
 });
@@ -3157,6 +3160,16 @@ app.get('/api/periodicals', (req, res) => {
     }));
   } catch (error) {
     return sendError(res, error, 'periodical index unavailable');
+  }
+});
+
+app.get('/api/periodicals/:cadence/:periodKey/evidence-availability', (req, res) => {
+  if (!store.periodicals.isPublic) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    return res.json(store.periodicals.getEvidenceAvailability(req.params));
+  } catch (error) {
+    return sendError(res, error, 'periodical evidence availability unavailable');
   }
 });
 

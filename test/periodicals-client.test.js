@@ -12,11 +12,12 @@ function fakeElement(classes = [], tagName = 'DIV') {
   const values = new Set(classes);
   const listeners = new Map();
   const attributes = new Map();
-  return {
+  const node = {
     attributes,
     children: [],
     className: '',
     dataset: {},
+    scrollTop: 0,
     tagName,
     classList: {
       add: value => values.add(value),
@@ -25,15 +26,19 @@ function fakeElement(classes = [], tagName = 'DIV') {
     },
     addEventListener: (type, listener) => listeners.set(type, listener),
     append(...children) { this.children.push(...children); },
-    dispatch: type => listeners.get(type)?.({ preventDefault() {} }),
+    dispatch(type, event = {}) {
+      return listeners.get(type)?.({ preventDefault() {}, ...event });
+    },
+    focus() { this.focused = true; },
     removeAttribute: name => attributes.delete(name),
     replaceChildren(...children) { this.children = children; },
     setAttribute: (name, value) => attributes.set(name, String(value)),
     textContent: '',
   };
+  return node;
 }
 
-function fakeBrowser({ mode, pathname, responses = [] }) {
+function fakeBrowser({ mode, pathname, responses = [], historyState = null, width = 1280, online = true }) {
   const elements = {
     '#app': fakeElement(),
     '#periodicals-open': fakeElement(['hidden']),
@@ -42,6 +47,7 @@ function fakeBrowser({ mode, pathname, responses = [] }) {
     '#periodicals-empty': fakeElement(['hidden']),
     '#periodicals-document': fakeElement(['hidden']),
     '#periodicals-list': fakeElement(),
+    '#periodicals-back': fakeElement(['hidden'], 'BUTTON'),
   };
   const tabs = ['daily', 'weekly', 'monthly'].map(cadence => {
     const tab = fakeElement();
@@ -49,7 +55,10 @@ function fakeBrowser({ mode, pathname, responses = [] }) {
     return tab;
   });
   const assigned = [];
+  const pushed = [];
   const documentListeners = new Map();
+  const rootListeners = new Map();
+  const fetched = [];
   let fetchCount = 0;
   const document = {
     body: { dataset: { periodicalsMode: mode } },
@@ -66,22 +75,58 @@ function fakeBrowser({ mode, pathname, responses = [] }) {
     querySelectorAll: selector => selector === '#periodicals-tabs [role="tab"]' ? tabs : [],
     title: 'Namoo Reader',
   };
+  const location = {
+    assign: nextPathname => assigned.push(nextPathname),
+    pathname,
+  };
+  const history = {
+    state: historyState,
+    pushState(state, _title, nextPathname) {
+      this.state = state;
+      location.pathname = String(nextPathname);
+      pushed.push(String(nextPathname));
+    },
+    replaceState(state, _title, nextPathname) {
+      this.state = state;
+      if (nextPathname) location.pathname = String(nextPathname);
+    },
+    back() { this.backCalls = (this.backCalls || 0) + 1; },
+  };
+  const root = {
+    addEventListener(type, listener) {
+      const listeners = rootListeners.get(type) || [];
+      listeners.push(listener);
+      rootListeners.set(type, listeners);
+    },
+    dispatchEvent(event) {
+      return Promise.all((rootListeners.get(event.type) || []).map(listener => listener(event)));
+    },
+    document,
+    fetch: async (url, options) => {
+      fetchCount += 1;
+      fetched.push([url, options]);
+      const payload = responses[fetchCount - 1] || { issues: [], nextCursor: null };
+      if (payload instanceof Error) throw payload;
+      return {
+        ok: payload.ok !== false,
+        status: payload.status || 200,
+        json: async () => payload.body || payload,
+      };
+    },
+    history,
+    innerWidth: width,
+    location,
+    matchMedia: query => ({ matches: /max-width:\s*860px/.test(query) && width <= 860 }),
+    navigator: { onLine: online },
+  };
   return {
     assigned,
     elements,
+    fetched,
     fetchCount: () => fetchCount,
-    root: {
-      document,
-      fetch: async () => {
-        fetchCount += 1;
-        const payload = responses[fetchCount - 1] || { issues: [], nextCursor: null };
-        return { ok: true, json: async () => payload };
-      },
-      location: {
-        assign: pathname => assigned.push(pathname),
-        pathname,
-      },
-    },
+    pushed,
+    tabs,
+    root,
   };
 }
 
@@ -113,6 +158,34 @@ test('periodical client parses canonical routes and rejects invalid period keys'
   assert.equal(parsePeriodicalPath('/periodicals/weekly/2021-W53').invalid, true);
   assert.equal(parsePeriodicalPath('/periodicals/yearly/2026').invalid, true);
   assert.equal(parsePeriodicalPath('/articles/example'), null);
+});
+
+test('cadence tabs auto-activate with Arrow keys, Home, and End', async () => {
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals',
+    responses: Array.from({ length: 4 }, () => ({ issues: [], nextCursor: null })),
+  });
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  await browser.tabs[0].dispatch('keydown', { key: 'ArrowRight' });
+  assert.equal(browser.tabs[1].focused, true);
+  assert.equal(browser.tabs[1].attributes.get('aria-selected'), 'true');
+  assert.equal(browser.tabs[0].attributes.get('tabindex'), '-1');
+
+  await browser.tabs[1].dispatch('keydown', { key: 'End' });
+  assert.equal(browser.tabs[2].focused, true);
+  assert.equal(browser.tabs[2].attributes.get('aria-selected'), 'true');
+
+  await browser.tabs[2].dispatch('keydown', { key: 'Home' });
+  assert.equal(browser.tabs[0].focused, true);
+  assert.equal(browser.tabs[0].attributes.get('aria-selected'), 'true');
+  assert.deepEqual(browser.pushed, [
+    '/periodicals/weekly',
+    '/periodicals/monthly',
+    '/periodicals/daily',
+  ]);
 });
 
 test('periodical controller loads only the SQLite index for root and legal deep links', async () => {
@@ -190,6 +263,193 @@ test('periodical controller loads and renders SQLite detail for a legal deep lin
   ]);
 });
 
+test('periodical controller joins frozen evidence with the current SQLite availability projection', async () => {
+  const requests = [];
+  const rendered = [];
+  const detail = {
+    issue: { cadence: 'daily', periodKey: '2026-07-30', status: 'frozen' },
+    themes: [],
+    events: [],
+    evidence: [
+      { eventId: 'event-one', entryId: 'entry-active', summaryExcerpt: 'Active snapshot.' },
+      { eventId: 'event-one', entryId: 'entry-deleted', summaryExcerpt: 'Deleted snapshot.' },
+    ],
+  };
+  const controller = createPeriodicalsController({
+    request: async (url, options) => {
+      requests.push([url, options]);
+      if (url.includes('evidence-availability')) {
+        return {
+          evidence: [
+            { eventId: 'event-one', entryId: 'entry-active', entryAvailable: true },
+            { eventId: 'event-one', entryId: 'entry-deleted', entryAvailable: false },
+          ],
+        };
+      }
+      if (url.startsWith('/api/periodicals?')) {
+        return { issues: [detail.issue], nextCursor: null };
+      }
+      return detail;
+    },
+    view: {
+      enter() {},
+      renderIndex() {},
+      renderIssue: value => rendered.push(value),
+    },
+  });
+
+  assert.equal(await controller.open('/periodicals/daily/2026-07-30'), true);
+  assert.deepEqual(requests, [
+    ['/api/periodicals?cadence=daily&limit=30', { cache: 'no-store' }],
+    ['/api/periodicals/daily/2026-07-30', { cache: 'no-cache' }],
+    ['/api/periodicals/daily/2026-07-30/evidence-availability', { cache: 'no-store' }],
+  ]);
+  assert.deepEqual(
+    rendered[0].evidence.map(item => [item.entryId, item.entryAvailable, item.summaryExcerpt]),
+    [
+      ['entry-active', true, 'Active snapshot.'],
+      ['entry-deleted', false, 'Deleted snapshot.'],
+    ],
+  );
+});
+
+test('periodical controller appends reverse-chronological pages through the opaque cursor', async () => {
+  const requests = [];
+  const rendered = [];
+  const firstPage = Array.from({ length: 30 }, (_, index) => ({
+    cadence: 'monthly',
+    periodKey: `2024-${String(12 - (index % 12)).padStart(2, '0')}`,
+  }));
+  const controller = createPeriodicalsController({
+    request: async (url, options) => {
+      requests.push([url, options]);
+      if (url.includes('cursor=')) {
+        return {
+          issues: [{ cadence: 'monthly', periodKey: '2022-06' }],
+          nextCursor: null,
+        };
+      }
+      return { issues: firstPage, nextCursor: 'monthly-scan-v1.opaque+/=' };
+    },
+    view: {
+      enter() {},
+      renderEmpty() {},
+      renderError() {},
+      renderIndex: (_cadence, issues, meta) => rendered.push([issues.length, meta.nextCursor]),
+      renderIssue() {},
+    },
+  });
+
+  await controller.open('/periodicals/monthly/2024-12');
+  assert.equal(await controller.loadMore(), true);
+  assert.deepEqual(requests.filter(([url]) => url.startsWith('/api/periodicals?')), [
+    ['/api/periodicals?cadence=monthly&limit=30', { cache: 'no-store' }],
+    ['/api/periodicals?cadence=monthly&limit=30&cursor=monthly-scan-v1.opaque%2B%2F%3D', { cache: 'no-store' }],
+  ]);
+  assert.deepEqual(rendered, [
+    [30, 'monthly-scan-v1.opaque+/='],
+    [31, null],
+  ]);
+});
+
+test('periodical controller rebuilds cursor depth from SQLite before restoring both scroll positions', async () => {
+  const requests = [];
+  const rendered = [];
+  const restored = [];
+  const controller = createPeriodicalsController({
+    request: async (url, options) => {
+      requests.push([url, options]);
+      if (url.includes('cursor=cursor-one')) {
+        return {
+          issues: [{ cadence: 'daily', periodKey: '2026-07-29' }],
+          nextCursor: null,
+        };
+      }
+      if (url.startsWith('/api/periodicals?')) {
+        return {
+          issues: [{ cadence: 'daily', periodKey: '2026-07-30' }],
+          nextCursor: 'cursor-one',
+        };
+      }
+      return { issue: { cadence: 'daily', periodKey: '2026-07-30' } };
+    },
+    view: {
+      enter() {},
+      renderEmpty() {},
+      renderError() {},
+      renderIndex: (_cadence, issues) => rendered.push(issues.map(issue => issue.periodKey)),
+      renderIssue() {},
+      restoreScroll: value => restored.push(value),
+    },
+  });
+
+  await controller.open('/periodicals/daily/2026-07-30', {
+    restore: {
+      lastCursor: 'cursor-one',
+      listScroll: 240,
+      documentScroll: 720,
+    },
+  });
+
+  assert.deepEqual(requests.map(([url]) => url), [
+    '/api/periodicals?cadence=daily&limit=30',
+    '/api/periodicals?cadence=daily&limit=30&cursor=cursor-one',
+    '/api/periodicals/daily/2026-07-30',
+  ]);
+  assert.deepEqual(rendered, [
+    ['2026-07-30'],
+    ['2026-07-30', '2026-07-29'],
+  ]);
+  assert.deepEqual(restored, [{ listScroll: 240, documentScroll: 720 }]);
+});
+
+test('periodical controller keeps index and document failures distinct, including 404', async () => {
+  const indexRendered = [];
+  const indexController = createPeriodicalsController({
+    request: async () => {
+      const error = new Error('index unavailable');
+      error.status = 503;
+      throw error;
+    },
+    view: {
+      enter() {},
+      renderIndexError: error => indexRendered.push(['index-error', error.status]),
+    },
+  });
+  assert.equal(await indexController.open('/periodicals/daily'), true);
+  assert.deepEqual(indexRendered, [['index-error', 503]]);
+  assert.deepEqual(indexController.getState(), {
+    cadence: 'daily',
+    periodKey: '',
+    lastCursor: null,
+    nextCursor: null,
+  });
+
+  const documentRendered = [];
+  let requestCount = 0;
+  const detailController = createPeriodicalsController({
+    request: async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return {
+          issues: [{ cadence: 'daily', periodKey: '2026-07-30' }],
+          nextCursor: null,
+        };
+      }
+      const error = new Error('missing');
+      error.status = 404;
+      throw error;
+    },
+    view: {
+      enter() {},
+      renderIndex: () => documentRendered.push(['index']),
+      renderDocumentError: error => documentRendered.push(['document-error', error.status]),
+    },
+  });
+  assert.equal(await detailController.open('/periodicals/daily/2026-07-30'), true);
+  assert.deepEqual(documentRendered, [['index'], ['document-error', 404]]);
+});
+
 test('periodical mount gates the trigger and enters only the minimal empty workspace', async () => {
   const off = fakeBrowser({ mode: 'off', pathname: '/periodicals' });
   assert.equal(mountPeriodicals(off.root), false);
@@ -213,7 +473,7 @@ test('periodical mount gates the trigger and enters only the minimal empty works
   assert.equal(workspace.elements['#periodicals-nav'].classList.contains('hidden'), false);
   assert.equal(workspace.elements['#periodicals-reader'].classList.contains('hidden'), false);
   assert.equal(workspace.elements['#periodicals-empty'].classList.contains('hidden'), false);
-  assert.equal(workspace.elements['#periodicals-empty'].textContent, '精选期刊正在准备第一期');
+  assert.equal(workspace.elements['#periodicals-empty'].textContent, '暂无精选周报');
   assert.equal(workspace.elements['#periodicals-open'].attributes.get('aria-current'), 'page');
 
   workspace.root.document.dispatchEvent({
@@ -226,6 +486,163 @@ test('periodical mount gates the trigger and enters only the minimal empty works
   assert.equal(workspace.elements['#periodicals-nav'].classList.contains('hidden'), true);
   assert.equal(workspace.elements['#periodicals-reader'].classList.contains('hidden'), true);
   assert.equal(workspace.elements['#periodicals-open'].attributes.has('aria-current'), false);
+});
+
+test('periodical workspace loads the next cursor and persists independent list and document scroll', async () => {
+  const issue = {
+    cadence: 'daily',
+    periodKey: '2026-07-30',
+    status: 'open',
+    eventCount: 0,
+  };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/daily/2026-07-30',
+    responses: [
+      { issues: [issue], nextCursor: '2026-07-30' },
+      { issue, themes: [], events: [], evidence: [] },
+      {
+        issues: [{ ...issue, periodKey: '2026-07-29' }],
+        nextCursor: null,
+      },
+    ],
+  });
+
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+  const loadMore = descendants(browser.elements['#periodicals-list'])
+    .find(node => node.className === 'periodicals-load-more');
+  assert.ok(loadMore);
+  await loadMore.dispatch('click');
+  assert.match(flattenedText(browser.elements['#periodicals-list']), /2026-07-29/);
+
+  browser.elements['#periodicals-list'].scrollTop = 240;
+  browser.elements['#periodicals-list'].dispatch('scroll');
+  browser.elements['#periodicals-reader'].scrollTop = 720;
+  browser.elements['#periodicals-reader'].dispatch('scroll');
+
+  assert.deepEqual(browser.root.history.state.periodicals, {
+    cadence: 'daily',
+    periodKey: '2026-07-30',
+    lastCursor: '2026-07-30',
+    nextCursor: null,
+    listScroll: 240,
+    documentScroll: 720,
+  });
+});
+
+test('popstate restores cadence, period, cursor depth, and both scroll containers', async () => {
+  const daily = { cadence: 'daily', periodKey: '2026-07-30', status: 'open' };
+  const weekly = { cadence: 'weekly', periodKey: '2026-W31', status: 'frozen' };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/daily/2026-07-30',
+    responses: [
+      { issues: [daily], nextCursor: null },
+      { issue: daily, themes: [], events: [], evidence: [] },
+      { issues: [weekly], nextCursor: 'weekly-cursor' },
+      { issues: [{ ...weekly, periodKey: '2026-W30' }], nextCursor: null },
+      { issue: weekly, themes: [], events: [], evidence: [] },
+    ],
+  });
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  browser.root.location.pathname = '/periodicals/weekly/2026-W31';
+  const state = {
+    periodicals: {
+      cadence: 'weekly',
+      periodKey: '2026-W31',
+      lastCursor: 'weekly-cursor',
+      nextCursor: null,
+      listScroll: 180,
+      documentScroll: 560,
+    },
+  };
+  browser.root.history.state = state;
+  await browser.root.dispatchEvent({ type: 'popstate', state });
+
+  assert.equal(browser.tabs[1].attributes.get('aria-selected'), 'true');
+  assert.match(flattenedText(browser.elements['#periodicals-list']), /2026-W30/);
+  assert.match(flattenedText(browser.elements['#periodicals-document']), /2026-W31/);
+  assert.equal(browser.elements['#periodicals-list'].scrollTop, 180);
+  assert.equal(browser.elements['#periodicals-reader'].scrollTop, 560);
+});
+
+test('mobile cadence routes stay list-first and enter detail only after selecting an issue', async () => {
+  const issue = { cadence: 'daily', periodKey: '2026-07-30', status: 'open' };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/daily',
+    width: 390,
+    responses: [
+      { issues: [issue], nextCursor: null },
+      { issues: [issue], nextCursor: null },
+      { issue, themes: [], events: [], evidence: [] },
+    ],
+  });
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  assert.equal(browser.fetchCount(), 1);
+  assert.equal(browser.elements['#app'].classList.contains('periodical-detail-open'), false);
+  const issueLink = descendants(browser.elements['#periodicals-list'])
+    .find(node => node.className === 'periodicals-list-item');
+  await issueLink.dispatch('click');
+  assert.equal(browser.fetchCount(), 3);
+  assert.deepEqual(browser.fetched, [
+    ['/api/periodicals?cadence=daily&limit=30', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }],
+    ['/api/periodicals?cadence=daily&limit=30', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }],
+    ['/api/periodicals/daily/2026-07-30', {
+      cache: 'no-cache',
+      headers: { Accept: 'application/json' },
+    }],
+  ]);
+  assert.equal(browser.elements['#app'].classList.contains('periodical-detail-open'), true);
+  assert.equal(browser.elements['#periodicals-back'].classList.contains('hidden'), false);
+
+  browser.elements['#periodicals-back'].dispatch('click');
+  assert.equal(browser.root.history.backCalls, 1);
+});
+
+test('desktop canonicalizes the current issue into the URL and remembers selection per cadence', async () => {
+  const dailyLatest = { cadence: 'daily', periodKey: '2026-07-30', volumeNo: 2, status: 'open' };
+  const dailySelected = { cadence: 'daily', periodKey: '2026-07-29', volumeNo: 1, status: 'frozen' };
+  const weekly = { cadence: 'weekly', periodKey: '2026-W31', volumeNo: 1, status: 'frozen' };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals',
+    responses: [
+      { issues: [dailyLatest, dailySelected], nextCursor: null },
+      { issue: dailyLatest, themes: [], events: [], evidence: [] },
+      { issues: [dailyLatest, dailySelected], nextCursor: null },
+      { issue: dailySelected, themes: [], events: [], evidence: [] },
+      { issues: [weekly], nextCursor: null },
+      { issue: weekly, themes: [], events: [], evidence: [] },
+      { issues: [dailyLatest, dailySelected], nextCursor: null },
+      { issue: dailySelected, themes: [], events: [], evidence: [] },
+    ],
+  });
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+  assert.equal(browser.root.location.pathname, '/periodicals/daily/2026-07-30');
+
+  const selectedLink = descendants(browser.elements['#periodicals-list'])
+    .find(node => node.href === '/periodicals/daily/2026-07-29');
+  await selectedLink.dispatch('click');
+  await browser.tabs[1].dispatch('click');
+  assert.equal(browser.root.location.pathname, '/periodicals/weekly/2026-W31');
+  await browser.tabs[0].dispatch('click');
+
+  assert.equal(browser.root.location.pathname, '/periodicals/daily/2026-07-29');
+  assert.equal(browser.pushed.at(-1), '/periodicals/daily/2026-07-29');
+  assert.match(flattenedText(browser.elements['#periodicals-list']), /第 1 卷/);
 });
 
 test('finalizing renders the exact state while preserving the last successful revision', async () => {
@@ -262,6 +679,104 @@ test('finalizing renders the exact state while preserving the last successful re
   );
 });
 
+test('periodical workspace renders the complete cadence, build, empty, and fault state matrix', async () => {
+  const issue = overrides => ({
+    cadence: 'daily',
+    periodKey: '2026-07-30',
+    volumeNo: 1,
+    status: 'open',
+    eventCount: 0,
+    updateState: 'succeeded',
+    lastSuccessfulAt: NOW,
+    overview: '本期概览。',
+    ...overrides,
+  });
+  const cases = [
+    {
+      name: 'weekly cadence empty',
+      pathname: '/periodicals/weekly',
+      responses: [{ issues: [], nextCursor: null }],
+      expected: /暂无精选周报/,
+    },
+    {
+      name: 'collecting',
+      value: issue({ updateState: 'running', lastSuccessfulAt: null }),
+      expected: /正在收集本期内容/,
+    },
+    {
+      name: 'below threshold',
+      value: issue({}),
+      expected: /本期尚未达到入选门槛/,
+    },
+    {
+      name: 'delayed',
+      value: issue({ updateDelayed: true, updateState: 'retry_wait' }),
+      expected: /本期更新延迟 · 最后成功更新 2026-07-30 12:00/,
+    },
+    {
+      name: 'finalizing',
+      value: issue({ status: 'finalizing', updateState: 'running' }),
+      expected: /正在定稿/,
+    },
+    {
+      name: 'frozen empty periodical',
+      pathname: '/periodicals/monthly/2026-07',
+      value: issue({ cadence: 'monthly', periodKey: '2026-07', status: 'frozen' }),
+      expected: /本期无入选事件 · 已冻结/,
+    },
+    {
+      name: 'fallback summary',
+      value: issue({ summaryStatus: 'fallback' }),
+      expected: /本期使用规则摘要/,
+    },
+    {
+      name: 'index error',
+      responses: [{ ok: false, status: 503, body: { error: 'index' } }],
+      expected: /期刊索引暂时不可用/,
+    },
+    {
+      name: 'offline shell',
+      online: false,
+      responses: [],
+      expected: /^ 需要连接网络 $/,
+    },
+    {
+      name: 'document 404',
+      value: issue({}),
+      detailResponse: { ok: false, status: 404, body: { error: 'missing' } },
+      expected: /未找到这期精选期刊/,
+    },
+    {
+      name: 'document error',
+      value: issue({}),
+      detailResponse: { ok: false, status: 503, body: { error: 'detail' } },
+      expected: /期刊正文暂时不可用/,
+    },
+  ];
+
+  for (const current of cases) {
+    const pathname = current.pathname || '/periodicals/daily/2026-07-30';
+    const responses = current.responses || [
+      { issues: [current.value], nextCursor: null },
+      current.detailResponse || { issue: current.value, themes: [], events: [], evidence: [] },
+    ];
+    const browser = fakeBrowser({
+      mode: 'on',
+      pathname,
+      responses,
+      online: current.online !== false,
+    });
+    const mounted = mountPeriodicals(browser.root);
+    await mounted.ready;
+    const text = [
+      flattenedText(browser.elements['#periodicals-list']),
+      flattenedText(browser.elements['#periodicals-empty']),
+      flattenedText(browser.elements['#periodicals-document']),
+    ].join(' ');
+    assert.match(text, current.expected, current.name);
+  }
+});
+
 test('periodical mount renders an explainable issue with score reasons and SQLite evidence', async () => {
   const index = {
     issues: [{
@@ -281,6 +796,9 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       cadence: 'daily',
       periodKey: '2026-07-30',
       volumeNo: 1,
+      periodStartAt: Date.parse('2026-07-30T00:00:00.000+08:00'),
+      periodEndAt: Date.parse('2026-07-31T00:00:00.000+08:00'),
+      coverageStartedAt: Date.parse('2026-07-30T00:00:00.000+08:00'),
       status: 'open',
       overview: '本期从 SQLite 候选中选出 1 个事件。所有事件保留证据快照。',
       lastSuccessfulAt: NOW,
@@ -316,8 +834,11 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       eventId: 'event-one',
       entryId: 'entry-one',
       sourceName: 'High Source',
+      sourceLabels: ['AI', '产品'],
       entryTitle: 'A deterministic release',
       entryLink: 'https://example.com/releases/one',
+      entryAvailable: true,
+      summaryExcerpt: 'Active frozen evidence snapshot.',
       editorialPriority: 'high',
       effectivePublishedAt: NOW - (30 * 60 * 1000),
       timestampFallback: false,
@@ -328,6 +849,8 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
       sourceName: 'Second Source',
       entryTitle: 'A second independent report',
       entryLink: 'https://second.example/releases/one',
+      entryAvailable: false,
+      summaryExcerpt: 'Deleted frozen evidence snapshot.',
       editorialPriority: 'normal',
       effectivePublishedAt: NOW - (20 * 60 * 1000),
       timestampFallback: false,
@@ -350,9 +873,10 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
   assert.equal(documentNode.classList.contains('hidden'), false);
   assert.equal(browser.elements['#periodicals-empty'].classList.contains('hidden'), true);
   assert.match(text, /日报 · 第 1 卷 · 2026-07-30 · 更新中/);
-  assert.match(text, /本期更新暂时延迟/);
+  assert.match(text, /覆盖 2026-07-30/);
+  assert.match(text, /本期更新延迟/);
   assert.match(text, /最后成功更新 2026-07-30 12:00/);
-  assert.match(indexText, /生成异常/);
+  assert.match(indexText, /更新延迟/);
   assert.match(indexText, /最后成功 2026-07-30 12:00/);
   assert.match(text, /本期从 SQLite 候选中选出 1 个事件/);
   assert.match(text, /目录/);
@@ -367,11 +891,21 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
   assert.match(text, /趋势增量/);
   assert.match(text, /来源质量（高）计 30 分；获得 2 个独立来源确认/);
   assert.match(text, /High Source/);
+  assert.match(text, /AI、产品/);
   assert.match(text, /Second Source/);
   assert.match(text, /A deterministic release/);
+  assert.match(text, /原文已不可用 · 冻结快照/);
+  assert.match(text, /Deleted frozen evidence snapshot/);
   assert.match(text, /高优先级 · 2026-07-30 11:30/);
   const links = descendants(documentNode).filter(node => node.tagName === 'A');
+  assert.equal(links.some(link => link.href === '/articles/entry-one'), true);
+  assert.equal(links.some(link => link.href === '/articles/entry-two'), false);
   assert.equal(links.some(link => link.href === 'https://example.com/releases/one'), true);
+  assert.equal(
+    links.filter(link => /^https:/.test(link.href))
+      .every(link => link.target === '_blank' && link.rel === 'noopener noreferrer'),
+    true,
+  );
   assert.equal(descendants(documentNode).some(node => node.tagName === 'DETAILS'), true);
   assert.equal(descendants(documentNode).some(node => node.tagName === 'SUMMARY'), true);
 });
@@ -435,7 +969,13 @@ test('Weekly deep link renders its index, detail, rollup score, and Frozen evide
   const browser = fakeBrowser({
     mode: 'on',
     pathname: '/periodicals/weekly/2026-W32',
-    responses: [index, detail],
+    responses: [index, detail, {
+      evidence: detail.evidence.map(item => ({
+        eventId: item.eventId,
+        entryId: item.entryId,
+        entryAvailable: true,
+      })),
+    }],
   });
 
   const mounted = mountPeriodicals(browser.root);
@@ -443,7 +983,21 @@ test('Weekly deep link renders its index, detail, rollup score, and Frozen evide
 
   const indexText = flattenedText(browser.elements['#periodicals-list']);
   const detailText = flattenedText(browser.elements['#periodicals-document']);
-  assert.equal(browser.fetchCount(), 2);
+  assert.equal(browser.fetchCount(), 3);
+  assert.deepEqual(browser.fetched, [
+    ['/api/periodicals?cadence=weekly&limit=30', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }],
+    ['/api/periodicals/weekly/2026-W32', {
+      cache: 'no-cache',
+      headers: { Accept: 'application/json' },
+    }],
+    ['/api/periodicals/weekly/2026-W32/evidence-availability', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }],
+  ]);
   assert.match(indexText, /2026-W32/);
   assert.match(indexText, /1 个事件 · 已冻结/);
   assert.match(detailText, /周报 · 第 1 卷 · 2026-W32 · 已冻结/);
@@ -517,7 +1071,13 @@ test('Monthly deep link renders its index, detail, rollup score, and Frozen evid
   const browser = fakeBrowser({
     mode: 'on',
     pathname: '/periodicals/monthly/2026-07',
-    responses: [index, detail],
+    responses: [index, detail, {
+      evidence: detail.evidence.map(item => ({
+        eventId: item.eventId,
+        entryId: item.entryId,
+        entryAvailable: true,
+      })),
+    }],
   });
 
   const mounted = mountPeriodicals(browser.root);
@@ -525,7 +1085,21 @@ test('Monthly deep link renders its index, detail, rollup score, and Frozen evid
 
   const indexText = flattenedText(browser.elements['#periodicals-list']);
   const detailText = flattenedText(browser.elements['#periodicals-document']);
-  assert.equal(browser.fetchCount(), 2);
+  assert.equal(browser.fetchCount(), 3);
+  assert.deepEqual(browser.fetched, [
+    ['/api/periodicals?cadence=monthly&limit=30', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }],
+    ['/api/periodicals/monthly/2026-07', {
+      cache: 'no-cache',
+      headers: { Accept: 'application/json' },
+    }],
+    ['/api/periodicals/monthly/2026-07/evidence-availability', {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    }],
+  ]);
   assert.match(indexText, /2026-07/);
   assert.match(indexText, /1 个事件 · 已冻结/);
   assert.match(detailText, /月报 · 第 1 卷 · 2026-07 · 已冻结/);

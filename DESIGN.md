@@ -247,6 +247,12 @@ Namoo Reader 是桌面应用式的阅读和创作工作区，不是营销型网�
 - 阅读区占据剩余空间，正文内部仍以阅读行宽约束，不横向铺满。
 - AI 上下文栏桌面基准宽度约 300px，可折叠；它是辅助区，不压缩正文到不可读宽度。
 
+### Selected Periodicals Workspace
+
+精选期刊只通过品牌头部的唯一“精选”触发器进入，不增加 Source、订阅类型或订阅组节点。1181px 以上保持不变的 Source sidebar、Periodical navigation 与 Periodical document 三栏，AI context 及其分隔线不占列；861–1180px 使用现有 64px 图标轨与导航/正文并列；860px 以下切换为列表—详情模式。
+
+日报、周报和月报使用标准 tab/tabpanel 关系；URL 与 history state 共同恢复 cadence、period key、分页游标以及列表/正文滚动。期刊索引、正文和 evidence availability 只读取 SQLite 投影并保持 network-only；Service Worker 只缓存阅读 shell，不缓存任何业务 API。
+
 ### Reader
 
 阅读器由标题与来源、阅读工具栏、正文/创作/翻译内容和讨论区域构成。正文默认最大宽度 70ch，图片自适应容器；代码块和表格在空间不足时独立横向滚动。沉浸模式隐藏其他工作区，只保留阅读器。

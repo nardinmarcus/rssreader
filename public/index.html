@@ -31,7 +31,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=265fd8959412" />
+  <link rel="stylesheet" href="/styles.css?v=209aea12c1fd" />
   <!-- social-meta:start -->
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
@@ -166,12 +166,12 @@
         <header class="periodicals-nav-head">
           <h1>精选期刊</h1>
           <div id="periodicals-tabs" class="periodicals-tabs" role="tablist" aria-label="期刊周期">
-            <button type="button" role="tab" data-periodical-cadence="daily" aria-selected="true" tabindex="0">日报</button>
-            <button type="button" role="tab" data-periodical-cadence="weekly" aria-selected="false" tabindex="-1">周报</button>
-            <button type="button" role="tab" data-periodical-cadence="monthly" aria-selected="false" tabindex="-1">月报</button>
+            <button id="periodicals-tab-daily" type="button" role="tab" data-periodical-cadence="daily" aria-controls="periodicals-list" aria-selected="true" tabindex="0">日报</button>
+            <button id="periodicals-tab-weekly" type="button" role="tab" data-periodical-cadence="weekly" aria-controls="periodicals-list" aria-selected="false" tabindex="-1">周报</button>
+            <button id="periodicals-tab-monthly" type="button" role="tab" data-periodical-cadence="monthly" aria-controls="periodicals-list" aria-selected="false" tabindex="-1">月报</button>
           </div>
         </header>
-        <div id="periodicals-list" class="periodicals-list" aria-live="polite"></div>
+        <div id="periodicals-list" class="periodicals-list" role="tabpanel" tabindex="0" aria-labelledby="periodicals-tab-daily" aria-live="polite"></div>
       </section>
     </section>
 
@@ -631,6 +631,7 @@
         <div id="contributor-list" class="my-comments-list"></div>
       </section>
       <article id="periodicals-reader" class="periodicals-reader hidden" aria-live="polite">
+        <button id="periodicals-back" class="periodicals-back hidden" type="button" aria-label="返回期刊列表">返回期刊列表</button>
         <div id="periodicals-empty" class="periodicals-empty">精选期刊正在准备第一期</div>
         <div id="periodicals-document" class="periodicals-document hidden"></div>
       </article>
@@ -888,7 +889,7 @@
     </div>
   </dialog>
 
-  <div id="network-banner" class="network-banner hidden" role="status" aria-live="polite">当前离线 · 内容需要网络</div>
+  <div id="network-banner" class="network-banner hidden" role="status" aria-live="polite">需要连接网络</div>
   <div id="shell-update-banner" class="shell-update-banner hidden" role="status" aria-live="polite">
     <span class="shell-update-text">有新版本可用</span>
     <button id="shell-update-action" class="ghost-btn primary" type="button">更新</button>
@@ -898,7 +899,7 @@
 
   <script src="/purify.min.js"></script>
   <script src="/lucide-icons.js?v=3f59b770ca41"></script>
-  <script src="/app.js?v=435675b27b4d"></script>
-  <script src="/periodicals.js?v=04ebad27f3ab"></script>
+  <script src="/app.js?v=8bcf702aac58"></script>
+  <script src="/periodicals.js?v=61580614da0a"></script>
 </body>
 </html>

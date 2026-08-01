@@ -497,7 +497,7 @@ function shouldRegisterServiceWorker() {
 }
 
 function offlineListEmptyHtml() {
-  return '<div class="list-empty" role="status">当前离线，需要网络才能加载订阅内容<br/><button class="ghost-btn" type="button" onclick="location.reload()" style="margin-top:10px">重试</button></div>';
+  return '<div class="list-empty" role="status">需要连接网络</div>';
 }
 
 function setNetworkBannerVisible(offline) {
@@ -586,7 +586,7 @@ function setupNetworkStatus() {
   });
   window.addEventListener('offline', () => {
     setNetworkBannerVisible(true);
-    toast('当前离线，内容需要网络', 4000);
+    toast('需要连接网络', 4000);
   });
   sync();
 }
@@ -1050,6 +1050,10 @@ function routeStateFromUrl() {
     chatMessageId,
     q: String(params.get('q') || '').trim(),
   };
+}
+
+function isPeriodicalWorkspacePath(pathname = window.location.pathname) {
+  return /^\/periodicals(?:\/|$)/.test(String(pathname || ''));
 }
 
 function articleRouteFromPath(pathname) {
@@ -12103,6 +12107,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('popstate', () => {
+  if (isPeriodicalWorkspacePath()) return;
   openEntryFromUrl();
 });
 
@@ -12143,7 +12148,7 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
   }
   try {
     if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
-      throw new Error('当前离线，需要网络');
+      throw new Error('需要连接网络');
     }
     const [, data] = await Promise.all([
       loadMe(),
@@ -12152,7 +12157,9 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
       loadContributors(),
     ]);
     renderAgent();
-    await openEntryFromUrl({ entriesLoaded: true });
+    if (!isPeriodicalWorkspacePath()) {
+      await openEntryFromUrl({ entriesLoaded: true });
+    }
     // 首屏先使用 SQLite 中已有内容；后台刷新期间只轮询轻量状态，完成后再更新列表一次。
     if (data.refreshing) {
       for (let i = 0; i < 40; i++) {
@@ -12166,7 +12173,7 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
     }
   } catch (e) {
     const offline = typeof navigator.onLine === 'boolean' && !navigator.onLine;
-    toast(offline ? '当前离线，内容需要网络' : ('加载失败: ' + e.message), 5000);
+    toast(offline ? '需要连接网络' : ('加载失败: ' + e.message), 5000);
     $('#entry-list').innerHTML = offline
       ? offlineListEmptyHtml()
       : `<div class="list-empty">数据加载失败：${escapeHtml(e.message)}<br/><button class="ghost-btn" onclick="location.reload()" style="margin-top:10px">重新加载</button></div>`;

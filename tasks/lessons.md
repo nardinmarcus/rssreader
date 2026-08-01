@@ -1,5 +1,6 @@
 # Deployment lessons
 
+- When route ownership becomes conditional, update static performance guards to assert both the preserved call order and the new route predicate; replacing the old unconditional source fragment with a loose presence check can hide either duplicate initialization or a missing ordinary-reader path.
 - Cadence recovery must select the oldest eligible period that is not yet Frozen, not only the most recently completed period; test startup after multiple missed boundaries so durable work and cadence-local volume numbers cannot skip or reorder history.
 - When extracting a cadence-shared rollup pipeline, preserve existing cadence-specific prose exactly; deterministic overview text is both a user-facing contract and part of the frozen content hash, so run the established cadence regression before adding new cadence cases.
 - Build cache keys from the same normalized query values used to execute the request. A raw invalid or out-of-range `limit` must not produce one result shape while colliding with the default-list cache key; prove the invalid-first then valid-request order in a regression test.

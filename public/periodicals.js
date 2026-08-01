@@ -11,6 +11,32 @@
   const EDITORIAL_PRIORITY_LABELS = { high: '高', normal: '普通', low: '低' };
   const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
   const STATUS_LABELS = { open: '更新中', finalizing: '正在定稿', frozen: '已冻结' };
+  const CADENCE_EMPTY_LABELS = {
+    daily: '精选期刊正在准备第一期',
+    weekly: '暂无精选周报',
+    monthly: '暂无精选月报',
+  };
+
+  function issueStatusLabel(issue = {}) {
+    if (issue.status === 'finalizing') return STATUS_LABELS.finalizing;
+    if (issue.updateDelayed) return '更新延迟';
+    if (issue.updateState === 'queued' || issue.updateState === 'running') return '收集中';
+    if (issue.status === 'frozen') return STATUS_LABELS.frozen;
+    if (issue.status === 'open' && Number(issue.eventCount) === 0 && issue.lastSuccessfulAt) {
+      return '低于门槛';
+    }
+    return STATUS_LABELS[issue.status] || issue.status;
+  }
+
+  function issueStateMessage(issue = {}, eventCount = 0) {
+    if (issue.status === 'finalizing') return '正在定稿';
+    if (issue.updateState === 'queued' || issue.updateState === 'running') return '正在收集本期内容';
+    if (issue.status === 'frozen' && eventCount === 0) return '本期无入选事件 · 已冻结';
+    if (issue.status === 'open' && eventCount === 0 && !issue.updateDelayed) {
+      return '本期尚未达到入选门槛';
+    }
+    return '';
+  }
 
   function shanghaiDateTime(value) {
     const timestamp = Number(value);
@@ -27,6 +53,35 @@
         String(date.getUTCMinutes()).padStart(2, '0'),
       ].join(':'),
     ].join(' ');
+  }
+
+  function shanghaiDate(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const timestamp = Number(value);
+    if (!Number.isFinite(timestamp)) return '';
+    const date = new Date(timestamp + SHANGHAI_OFFSET_MS);
+    return [
+      date.getUTCFullYear(),
+      String(date.getUTCMonth() + 1).padStart(2, '0'),
+      String(date.getUTCDate()).padStart(2, '0'),
+    ].join('-');
+  }
+
+  function coverageLabel(issue = {}) {
+    const periodStartAt = Number(issue.periodStartAt);
+    const coverageStartedAt = issue.coverageStartedAt === null
+      || issue.coverageStartedAt === undefined
+      || issue.coverageStartedAt === ''
+      ? periodStartAt
+      : Number(issue.coverageStartedAt);
+    if (!Number.isFinite(coverageStartedAt)) return '';
+    const periodEndAt = Number(issue.periodEndAt);
+    const inclusiveEndAt = Number.isFinite(periodEndAt) && periodEndAt > coverageStartedAt
+      ? periodEndAt - 1
+      : coverageStartedAt;
+    const start = shanghaiDate(coverageStartedAt);
+    const end = shanghaiDate(inclusiveEndAt);
+    return start && end && start !== end ? `${start} 至 ${end}` : start;
   }
 
   function evidenceMeta(item) {
@@ -60,6 +115,11 @@
   function parsePeriodicalPath(pathname) {
     const path = String(pathname || '');
     if (/^\/periodicals\/?$/.test(path)) return { cadence: 'daily', periodKey: '' };
+    const cadenceMatch = path.match(/^\/periodicals\/([^/]+)\/?$/);
+    if (cadenceMatch) {
+      const cadence = String(cadenceMatch[1] || '').toLowerCase();
+      return CADENCES.has(cadence) ? { cadence, periodKey: '' } : { invalid: true };
+    }
     const match = path.match(/^\/periodicals\/([^/]+)\/([^/]+)\/?$/);
     if (!match) return path.startsWith('/periodicals') ? { invalid: true } : null;
     const cadence = String(match[1] || '').toLowerCase();
@@ -70,41 +130,168 @@
 
   function createPeriodicalsController({ request, view }) {
     let requestSequence = 0;
+    let current = null;
+    let loadingMore = false;
 
-    async function open(pathname) {
+    function renderCurrentIndex() {
+      view.renderIndex(current.cadence, current.issues, {
+        lastCursor: current.lastCursor,
+        nextCursor: current.nextCursor,
+        selectedPeriodKey: current.periodKey,
+      });
+    }
+
+    function restoreViewScroll(restore) {
+      if (!restore || typeof view.restoreScroll !== 'function') return;
+      view.restoreScroll({
+        listScroll: Number(restore.listScroll) || 0,
+        documentScroll: Number(restore.documentScroll) || 0,
+      });
+    }
+
+    async function joinEvidenceAvailability(detail, cadence, periodKey) {
+      const evidence = Array.isArray(detail && detail.evidence) ? detail.evidence : [];
+      if (evidence.length === 0
+        || evidence.every(item => typeof item.entryAvailable === 'boolean')) {
+        return detail;
+      }
+      const projection = await request(
+        `/api/periodicals/${cadence}/${periodKey}/evidence-availability`,
+        { cache: 'no-store' },
+      );
+      const availability = new Map((Array.isArray(projection && projection.evidence)
+        ? projection.evidence
+        : []).map(item => [
+        JSON.stringify([item.eventId, item.entryId]),
+        item.entryAvailable === true,
+      ]));
+      return {
+        ...detail,
+        evidence: evidence.map(item => ({
+          ...item,
+          entryAvailable: availability.get(JSON.stringify([item.eventId, item.entryId])) === true,
+        })),
+      };
+    }
+
+    async function open(pathname, { restore = null, indexOnly = false } = {}) {
       const route = parsePeriodicalPath(pathname);
       if (!route || route.invalid) return false;
       const sequence = ++requestSequence;
       view.enter(route.cadence);
+      current = {
+        cadence: route.cadence,
+        issues: [],
+        lastCursor: null,
+        nextCursor: null,
+        periodKey: route.periodKey || '',
+        sequence,
+      };
 
+      let index;
       try {
-        const index = await request(
+        index = await request(
           `/api/periodicals?cadence=${route.cadence}&limit=30`,
           { cache: 'no-store' },
         );
+      } catch (error) {
         if (sequence !== requestSequence) return false;
-        const issues = Array.isArray(index && index.issues) ? index.issues : [];
-        view.renderIndex(route.cadence, issues);
-        if (issues.length === 0) {
-          view.renderEmpty();
-          return true;
-        }
-        const periodKey = route.periodKey || issues[0].periodKey;
-        const detail = await request(
+        const renderError = view.renderIndexError || view.renderError;
+        if (typeof renderError === 'function') renderError(error);
+        restoreViewScroll(restore);
+        return true;
+      }
+      if (sequence !== requestSequence) return false;
+      const issues = Array.isArray(index && index.issues) ? index.issues : [];
+      const restoredPeriodKey = restore
+        && restore.cadence === route.cadence
+        && validPeriodKey(route.cadence, restore.periodKey)
+        ? restore.periodKey
+        : '';
+      current = {
+        cadence: route.cadence,
+        issues,
+        lastCursor: null,
+        nextCursor: index && index.nextCursor || null,
+        periodKey: route.periodKey || restoredPeriodKey || (issues[0] && issues[0].periodKey) || '',
+        sequence,
+      };
+      renderCurrentIndex();
+      const targetCursor = restore && restore.lastCursor || null;
+      const restoredCursors = new Set();
+      while (targetCursor && current.nextCursor && !restoredCursors.has(current.nextCursor)) {
+        const cursor = current.nextCursor;
+        restoredCursors.add(cursor);
+        if (!await loadMore()) break;
+        if (cursor === targetCursor) break;
+      }
+      if (indexOnly && !route.periodKey) {
+        restoreViewScroll(restore);
+        return true;
+      }
+      if (current.issues.length === 0) {
+        view.renderEmpty(route.cadence);
+        restoreViewScroll(restore);
+        return true;
+      }
+      const periodKey = current.periodKey;
+      try {
+        const storedDetail = await request(
           `/api/periodicals/${route.cadence}/${periodKey}`,
           { cache: 'no-cache' },
         );
+        const detail = await joinEvidenceAvailability(storedDetail, route.cadence, periodKey);
         if (sequence !== requestSequence) return false;
         view.renderIssue(detail);
+        restoreViewScroll(restore);
         return true;
       } catch (error) {
         if (sequence !== requestSequence) return false;
-        view.renderError();
+        const renderError = view.renderDocumentError || view.renderError;
+        if (typeof renderError === 'function') renderError(error);
+        restoreViewScroll(restore);
         return true;
       }
     }
 
-    return { open };
+    async function loadMore() {
+      if (!current || !current.nextCursor || loadingMore) return false;
+      const cursor = current.nextCursor;
+      const sequence = current.sequence;
+      loadingMore = true;
+      try {
+        const page = await request(
+          `/api/periodicals?cadence=${current.cadence}&limit=30&cursor=${encodeURIComponent(cursor)}`,
+          { cache: 'no-store' },
+        );
+        if (!current || sequence !== requestSequence || current.sequence !== sequence) return false;
+        current.issues = current.issues.concat(Array.isArray(page && page.issues) ? page.issues : []);
+        current.lastCursor = cursor;
+        current.nextCursor = page && page.nextCursor || null;
+        renderCurrentIndex();
+        return true;
+      } catch (error) {
+        if (sequence === requestSequence) {
+          const renderError = view.renderIndexError || view.renderError;
+          if (typeof renderError === 'function') renderError(error);
+        }
+        return false;
+      } finally {
+        loadingMore = false;
+      }
+    }
+
+    function getState() {
+      if (!current) return null;
+      return {
+        cadence: current.cadence,
+        periodKey: current.periodKey,
+        lastCursor: current.lastCursor,
+        nextCursor: current.nextCursor,
+      };
+    }
+
+    return { getState, loadMore, open };
   }
 
   function mountPeriodicals(root) {
@@ -118,8 +305,15 @@
     const empty = document.querySelector('#periodicals-empty');
     const periodicalDocument = document.querySelector('#periodicals-document');
     const list = document.querySelector('#periodicals-list');
+    const back = document.querySelector('#periodicals-back');
     const tabs = [...document.querySelectorAll('#periodicals-tabs [role="tab"]')];
-    if (!app || !trigger || !nav || !reader || !empty || !periodicalDocument || !list) return false;
+    if (!app || !trigger || !nav || !reader || !empty || !periodicalDocument || !list || !back) {
+      return false;
+    }
+    const mobileLayout = Boolean(
+      root.matchMedia && root.matchMedia('(max-width: 860px)').matches,
+    );
+    const selectedPeriodKeys = new Map();
 
     function element(tagName, className, text) {
       const node = document.createElement(tagName);
@@ -187,22 +381,52 @@
 
     function renderEvidence(item) {
       const evidence = element('li', 'periodical-evidence');
-      const source = element('span', 'periodical-evidence-source', item.sourceName || '未知来源');
+      const sourceLabels = (Array.isArray(item.sourceLabels) ? item.sourceLabels : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+      const sourceName = item.sourceName || '未知来源';
+      const source = element(
+        'span',
+        'periodical-evidence-source',
+        sourceLabels.length > 0 ? `${sourceName} · ${sourceLabels.join('、')}` : sourceName,
+      );
       const title = item.entryTitleZh || item.entryTitle || '无标题';
-      const href = String(item.entryLink || '');
-      const entry = /^https?:\/\//i.test(href)
+      const entryId = String(item.entryId || '').trim();
+      const entryAvailable = Boolean(item.entryAvailable && entryId);
+      const entry = entryAvailable
         ? element('a', 'periodical-evidence-link', title)
         : element('span', 'periodical-evidence-link', title);
-      if (entry.tagName === 'A') {
-        entry.href = href;
-        entry.target = '_blank';
-        entry.rel = 'noopener noreferrer';
+      if (entryAvailable) {
+        entry.href = `/articles/${encodeURIComponent(entryId)}`;
+        entry.addEventListener('click', replaceHistoryState);
       }
       evidence.append(
         source,
         entry,
         element('span', 'periodical-evidence-meta', evidenceMeta(item)),
       );
+      if (!entryAvailable) {
+        evidence.append(element(
+          'span',
+          'periodical-evidence-unavailable',
+          '原文已不可用 · 冻结快照',
+        ));
+        if (item.summaryExcerpt) {
+          evidence.append(element(
+            'p',
+            'periodical-evidence-snapshot',
+            item.summaryExcerpt,
+          ));
+        }
+      }
+      const href = String(item.entryLink || '');
+      if (/^https:\/\//i.test(href)) {
+        const external = element('a', 'periodical-evidence-external', '原始链接');
+        external.href = href;
+        external.target = '_blank';
+        external.rel = 'noopener noreferrer';
+        evidence.append(external);
+      }
       if (item.timestampFallback) {
         evidence.append(element('span', 'periodical-evidence-fallback', '发布时间异常，已回退至收录时间'));
       }
@@ -211,57 +435,122 @@
 
     function leave() {
       app.classList.remove('periodicals-mode');
+      app.classList.remove('periodical-detail-open');
       trigger.removeAttribute('aria-current');
       nav.classList.add('hidden');
       reader.classList.add('hidden');
+      back.classList.add('hidden');
+    }
+
+    let controller = null;
+
+    function replaceHistoryState(pathname = root.location.pathname) {
+      if (!controller || !root.history || typeof root.history.replaceState !== 'function') return;
+      const state = controller.getState();
+      if (!state) return;
+      const previous = root.history.state && typeof root.history.state === 'object'
+        ? root.history.state
+        : {};
+      root.history.replaceState({
+        ...previous,
+        periodicals: {
+          ...(previous.periodicals || {}),
+          ...state,
+          listScroll: Number(list.scrollTop) || 0,
+          documentScroll: Number(reader.scrollTop) || 0,
+        },
+      }, '', pathname);
     }
 
     const view = {
       enter(cadence) {
         app.classList.add('periodicals-mode');
+        app.classList.remove('periodical-detail-open');
         trigger.setAttribute('aria-current', 'page');
         nav.classList.remove('hidden');
         reader.classList.remove('hidden');
         empty.classList.add('hidden');
         periodicalDocument.classList.add('hidden');
+        back.classList.add('hidden');
         list.replaceChildren();
+        let selectedTab = null;
         tabs.forEach(tab => {
           const selected = tab.dataset.periodicalCadence === cadence;
+          if (selected) selectedTab = tab;
           tab.setAttribute('aria-selected', String(selected));
           tab.setAttribute('tabindex', selected ? '0' : '-1');
         });
+        if (selectedTab && selectedTab.id) list.setAttribute('aria-labelledby', selectedTab.id);
         document.title = '精选期刊 · Namoo Reader';
       },
-      renderIndex(cadence, issues) {
+      renderIndex(cadence, issues, meta = {}) {
         const items = issues.map(issue => {
           const link = element('a', 'periodicals-list-item');
-          link.href = `/periodicals/${cadence}/${issue.periodKey}`;
-          const status = issue.status === 'finalizing'
-            ? STATUS_LABELS.finalizing
-            : (issue.updateDelayed ? '生成异常' : (STATUS_LABELS[issue.status] || issue.status));
+          const pathname = `/periodicals/${cadence}/${issue.periodKey}`;
+          link.href = pathname;
+          if (issue.periodKey === meta.selectedPeriodKey) link.setAttribute('aria-current', 'page');
+          link.addEventListener('click', event => {
+            event.preventDefault();
+            return openPath(pathname, {
+              push: true,
+              returnPath: `/periodicals/${cadence}`,
+            });
+          });
+          const status = issueStatusLabel(issue);
           link.append(
-            element('strong', '', issue.periodKey),
+            element('strong', '', `${issue.periodKey} · 第 ${issue.volumeNo || 1} 卷`),
             element('span', '', `${issue.eventCount || 0} 个事件 · ${status}`),
           );
           const lastSuccessfulAt = shanghaiDateTime(issue.lastSuccessfulAt);
           if (lastSuccessfulAt) link.append(element('span', '', `最后成功 ${lastSuccessfulAt}`));
           return link;
         });
+        if (meta.nextCursor) {
+          const loadMore = element('button', 'periodicals-load-more', '加载更多');
+          loadMore.type = 'button';
+          loadMore.addEventListener('click', async () => {
+            loadMore.disabled = true;
+            await controller.loadMore();
+            replaceHistoryState();
+          });
+          items.push(loadMore);
+        }
         list.replaceChildren(...items);
       },
-      renderEmpty() {
-        empty.textContent = '精选期刊正在准备第一期';
+      renderEmpty(cadence = 'daily') {
+        empty.textContent = CADENCE_EMPTY_LABELS[cadence] || CADENCE_EMPTY_LABELS.daily;
         empty.classList.remove('hidden');
       },
-      renderError() {
-        empty.textContent = '精选期刊暂时不可用';
+      renderIndexError(error) {
+        empty.textContent = error && error.offline
+          ? '需要连接网络'
+          : '期刊索引暂时不可用';
+        periodicalDocument.classList.add('hidden');
+        empty.classList.remove('hidden');
+      },
+      renderDocumentError(error) {
+        if (mobileLayout) {
+          app.classList.add('periodical-detail-open');
+          back.classList.remove('hidden');
+        }
+        empty.textContent = error && error.offline
+          ? '需要连接网络'
+          : (error && error.status === 404
+            ? '未找到这期精选期刊'
+            : '期刊正文暂时不可用');
+        periodicalDocument.classList.add('hidden');
         empty.classList.remove('hidden');
       },
       renderIssue(payload) {
+        if (mobileLayout) {
+          app.classList.add('periodical-detail-open');
+          back.classList.remove('hidden');
+        }
         const issue = payload && payload.issue || {};
         const themes = Array.isArray(payload && payload.themes) ? payload.themes : [];
         const events = Array.isArray(payload && payload.events) ? payload.events : [];
         const evidence = Array.isArray(payload && payload.evidence) ? payload.evidence : [];
+        const coverage = coverageLabel(issue);
         const header = element('header', 'periodical-document-header');
         header.append(
           element('p', 'periodical-document-meta', [
@@ -269,18 +558,26 @@
             `第 ${issue.volumeNo || 1} 卷`,
             issue.periodKey,
             STATUS_LABELS[issue.status] || issue.status,
+            coverage ? `覆盖 ${coverage}` : '',
           ].filter(Boolean).join(' · ')),
           element('h1', '', `精选${CADENCE_LABELS[issue.cadence] || '期刊'}`),
           element('p', 'periodical-overview', issue.overview || '本期暂无概览。'),
         );
+        const stateMessage = issueStateMessage(issue, events.length);
+        if (stateMessage) {
+          header.append(element('p', 'periodical-issue-state', stateMessage));
+        }
+        if (issue.summaryStatus === 'fallback') {
+          header.append(element('p', 'periodical-summary-fallback', '本期使用规则摘要'));
+        }
         if (issue.updateDelayed) {
           const lastSuccessfulAt = shanghaiDateTime(issue.lastSuccessfulAt);
           header.append(element(
             'p',
             'periodical-update-delay',
             lastSuccessfulAt
-              ? `本期更新暂时延迟 · 最后成功更新 ${lastSuccessfulAt}`
-              : '本期更新暂时延迟',
+              ? `本期更新延迟 · 最后成功更新 ${lastSuccessfulAt}`
+              : '本期更新延迟',
           ));
         }
 
@@ -350,8 +647,17 @@
         periodicalDocument.classList.remove('hidden');
         document.title = `${issue.periodKey || '精选期刊'} · Namoo Reader`;
       },
+      restoreScroll({ listScroll = 0, documentScroll = 0 } = {}) {
+        list.scrollTop = Math.max(0, Number(listScroll) || 0);
+        reader.scrollTop = Math.max(0, Number(documentScroll) || 0);
+      },
     };
     const request = async (url, options = {}) => {
+      if (root.navigator && root.navigator.onLine === false) {
+        const error = new Error('需要连接网络');
+        error.offline = true;
+        throw error;
+      }
       const response = await root.fetch(url, {
         cache: options.cache || 'no-store',
         headers: { Accept: 'application/json' },
@@ -363,7 +669,106 @@
       }
       return response.json();
     };
-    const controller = createPeriodicalsController({ request, view });
+    controller = createPeriodicalsController({ request, view });
+
+    async function openPath(pathname, {
+      push = false,
+      restore = null,
+      returnPath = '',
+    } = {}) {
+      const route = parsePeriodicalPath(pathname);
+      if (!route || route.invalid) return false;
+      if (push) {
+        replaceHistoryState();
+        if (!root.history || typeof root.history.pushState !== 'function') {
+          root.location.assign(pathname);
+          return false;
+        }
+        root.history.pushState({
+          periodicals: {
+            cadence: route.cadence,
+            periodKey: route.periodKey,
+            lastCursor: null,
+            nextCursor: null,
+            listScroll: 0,
+            documentScroll: 0,
+            ...(returnPath ? { returnPath } : {}),
+          },
+        }, '', pathname);
+      }
+      const opened = await controller.open(pathname, { restore, indexOnly: mobileLayout });
+      if (opened) {
+        const state = controller.getState();
+        if (state && state.periodKey) selectedPeriodKeys.set(state.cadence, state.periodKey);
+        const canonicalPath = !route.periodKey
+          ? (mobileLayout || !state || !state.periodKey
+            ? `/periodicals/${route.cadence}`
+            : `/periodicals/${route.cadence}/${state.periodKey}`)
+          : pathname;
+        replaceHistoryState(canonicalPath);
+      }
+      return opened;
+    }
+
+    function navigateCadence(cadence) {
+      const selectedPeriodKey = selectedPeriodKeys.get(cadence);
+      const pathname = !mobileLayout && selectedPeriodKey
+        ? `/periodicals/${cadence}/${selectedPeriodKey}`
+        : `/periodicals/${cadence}`;
+      return openPath(pathname, { push: true });
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', event => {
+        event.preventDefault();
+        tab.focus();
+        return navigateCadence(tab.dataset.periodicalCadence);
+      });
+      tab.addEventListener('keydown', event => {
+        let nextIndex = index;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+          nextIndex = (index + 1) % tabs.length;
+        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+          nextIndex = (index - 1 + tabs.length) % tabs.length;
+        } else if (event.key === 'Home') {
+          nextIndex = 0;
+        } else if (event.key === 'End') {
+          nextIndex = tabs.length - 1;
+        } else {
+          return undefined;
+        }
+        event.preventDefault();
+        const nextTab = tabs[nextIndex];
+        nextTab.focus();
+        return navigateCadence(nextTab.dataset.periodicalCadence);
+      });
+    });
+
+    back.addEventListener('click', event => {
+      event.preventDefault();
+      const savedState = root.history && root.history.state && root.history.state.periodicals;
+      if (savedState && savedState.returnPath
+        && root.history && typeof root.history.back === 'function') {
+        root.history.back();
+        return true;
+      }
+      const state = controller.getState();
+      return navigateCadence(state && state.cadence || 'daily');
+    });
+
+    list.addEventListener('scroll', replaceHistoryState);
+    reader.addEventListener('scroll', replaceHistoryState);
+    if (typeof root.addEventListener === 'function') {
+      root.addEventListener('popstate', event => {
+        const nextRoute = parsePeriodicalPath(root.location.pathname);
+        if (!nextRoute || nextRoute.invalid) {
+          leave();
+          return false;
+        }
+        const nextRestore = event && event.state && event.state.periodicals;
+        return openPath(root.location.pathname, { restore: nextRestore || null });
+      });
+    }
 
     trigger.classList.remove('hidden');
     trigger.addEventListener('click', event => {
@@ -378,9 +783,16 @@
       if (target) leave();
     });
 
+    const route = parsePeriodicalPath(root.location.pathname);
+    const saved = root.history && root.history.state && root.history.state.periodicals;
+    const restore = route && !route.invalid && saved && saved.cadence === route.cadence
+      ? saved
+      : null;
+    const ready = openPath(root.location.pathname, { restore });
+
     return {
       leave,
-      ready: controller.open(root.location.pathname),
+      ready,
     };
   }
 
