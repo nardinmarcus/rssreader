@@ -704,6 +704,7 @@ GET /api/periodicals/monthly/2026-07
 
 ### 20.6 迁移与生产只读验收
 
+- 验证输入必须是独立 SQLite 副本；除 `realpath` 外还要比较 device/inode 并拒绝活动库的硬链接别名，避免因别名使用不同 WAL sidecar 而把陈旧主文件误报为 PASS。
 - 在临时数据库和生产 SQLite 副本上重复初始化，`PRAGMA quick_check=ok` 且外键无错误。
 - 迁移前后来源偏好、文章数、用户数、管理员密码摘要、阅读/收藏/浏览数据完全不变。
 - `shadow` 期刊的每条证据都能追溯到 SQLite entry 与当次来源快照，且不存在外部新增 source ID。

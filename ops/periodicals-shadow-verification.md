@@ -49,7 +49,7 @@ npm run verify:periodicals-shadow -- \
   --receipt /new/private/path/migration-copy.json
 ```
 
-命令会拒绝当前 `NAMOO_READER_DATA_DIR` 指向的活动数据库，并且始终要求候选 worktree 干净。它在加载数据路径、迁移器或验证器等任何候选实现模块前先记录 start HEAD/tree/clean，加载后立即复核，再在验证完成后和输出前复核。它只读打开输入，先用 SQLite online backup 生成闭合单文件 snapshot；若 `data_version` 或 main/非空 WAL 元数据在备份期间漂移则 fail closed。命令关闭 snapshot 句柄、收紧为只读后才计算字节 SHA-256，并在其第二份工作副本上执行两次 additive migration。指定 `--receipt` 时，v4 结果先写入同目录权限 `0600` 的私有临时文件；只有最终候选身份屏障通过后才以不覆盖既有路径的原子硬链接发布 PASS 收据。
+命令会拒绝当前 `NAMOO_READER_DATA_DIR` 指向的活动数据库，包括指向同一 device/inode 的硬链接别名；只比较 `realpath` 不足以证明副本隔离，因为别名会使用不同的 WAL sidecar 名称并漏读已提交事实。命令始终要求候选 worktree 干净。它在加载数据路径、迁移器或验证器等任何候选实现模块前先记录 start HEAD/tree/clean，加载后立即复核，再在验证完成后和输出前复核。它只读打开输入，先用 SQLite online backup 生成闭合单文件 snapshot；若 `data_version` 或 main/非空 WAL 元数据在备份期间漂移则 fail closed。命令关闭 snapshot 句柄、收紧为只读后才计算字节 SHA-256，并在其第二份工作副本上执行两次 additive migration。指定 `--receipt` 时，v4 结果先写入同目录权限 `0600` 的私有临时文件；只有最终候选身份屏障通过后才以不覆盖既有路径的原子硬链接发布 PASS 收据。
 
 它验证：
 

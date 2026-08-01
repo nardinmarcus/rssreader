@@ -58,6 +58,20 @@ function realPathIfPresent(value) {
   }
 }
 
+function filesShareIdentity(left, right) {
+  if (left === right) return true;
+  let leftStat;
+  let rightStat;
+  try {
+    leftStat = fs.statSync(left, { bigint: true });
+    rightStat = fs.statSync(right, { bigint: true });
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false;
+    throw error;
+  }
+  return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
+}
+
 function candidateIdentity() {
   const cwd = path.resolve(__dirname, '..');
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
@@ -104,7 +118,7 @@ async function runCandidateVerification({
   }
 
   const activeDatabaseFile = realPathIfPresent(dataPaths.resolveDataPaths().databaseFile);
-  if (databaseFile === activeDatabaseFile) {
+  if (filesShareIdentity(databaseFile, activeDatabaseFile)) {
     throw cliError('ERR_PERIODICAL_LIVE_DATABASE_REFUSED');
   }
   const verifier = loadVerifier();
@@ -194,6 +208,7 @@ if (require.main === module) {
 module.exports = {
   main,
   parseArgs,
+  filesShareIdentity,
   publishReceiptAfterBarrier,
   runCandidateVerification,
   sameCandidateIdentity,

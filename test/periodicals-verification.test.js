@@ -1470,3 +1470,51 @@ test('shadow verification command refuses the configured live database path', ()
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('shadow verification command refuses a hard-link alias of an active WAL database', () => {
+  const rootDir = createTempDataDir('namoo-reader-periodicals-live-hardlink-');
+  const activeDataDir = path.join(rootDir, 'active');
+  let writer;
+  try {
+    fs.mkdirSync(activeDataDir);
+    initializeStore(activeDataDir);
+    const activeDatabaseFile = path.join(activeDataDir, 'qmreader.sqlite');
+    const aliasDatabaseFile = path.join(rootDir, 'copy-alias.sqlite');
+    writer = new DatabaseSync(activeDatabaseFile);
+    writer.exec('PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA wal_checkpoint(TRUNCATE);');
+    const mainFileHash = sha256File(activeDatabaseFile);
+    fs.linkSync(activeDatabaseFile, aliasDatabaseFile);
+    writer.prepare(`
+      INSERT INTO users (
+        id, email, display_name, password_hash, password_salt, created_at, updated_at
+      ) VALUES ('wal-only-live-user', 'wal-live@example.com', 'WAL', 'digest', 'salt', 1, 1)
+    `).run();
+
+    const activeStat = fs.statSync(activeDatabaseFile, { bigint: true });
+    const aliasStat = fs.statSync(aliasDatabaseFile, { bigint: true });
+    assert.equal(activeStat.dev, aliasStat.dev);
+    assert.equal(activeStat.ino, aliasStat.ino);
+    assert.equal(sha256File(activeDatabaseFile), mainFileHash);
+    assert.equal(fs.statSync(`${activeDatabaseFile}-wal`).size > 0, true);
+    assert.equal(Number(writer.prepare('SELECT COUNT(*) AS count FROM users').get().count), 1);
+
+    const result = spawnSync(process.execPath, [
+      'scripts/verify-periodicals-shadow.js',
+      '--database-copy', aliasDatabaseFile,
+      '--confirm-read-only-copy',
+    ], {
+      cwd: projectDir,
+      env: { ...process.env, NAMOO_READER_DATA_DIR: activeDataDir },
+      encoding: 'utf8',
+    });
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stderr), {
+      passed: false,
+      errorCode: 'ERR_PERIODICAL_LIVE_DATABASE_REFUSED',
+    });
+    assert.equal(result.stdout, '');
+  } finally {
+    if (writer) writer.close();
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
