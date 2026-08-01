@@ -758,8 +758,8 @@
       return navigateCadence(state && state.cadence || 'daily');
     });
 
-    list.addEventListener('scroll', replaceHistoryState);
-    readerPane.addEventListener('scroll', replaceHistoryState);
+    list.addEventListener('scroll', () => replaceHistoryState());
+    readerPane.addEventListener('scroll', () => replaceHistoryState());
     if (typeof root.addEventListener === 'function') {
       root.addEventListener('popstate', event => {
         const nextRoute = parsePeriodicalPath(root.location.pathname);

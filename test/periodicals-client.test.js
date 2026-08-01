@@ -522,6 +522,7 @@ test('periodical workspace loads the next cursor and persists independent list a
   browser.elements['#reader-pane'].scrollTop = 720;
   browser.elements['#reader-pane'].dispatch('scroll');
 
+  assert.equal(browser.root.location.pathname, '/periodicals/daily/2026-07-30');
   assert.deepEqual(browser.root.history.state.periodicals, {
     cadence: 'daily',
     periodKey: '2026-07-30',
