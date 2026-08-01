@@ -2,8 +2,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
-const { resolveDataPaths } = require('../lib/data-paths');
 
 function cliError(code) {
   const error = new Error(code);
@@ -79,42 +79,98 @@ function pathIsInside(parent, child) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function loadCandidateModules() {
+  const { resolveDataPaths } = require('../lib/data-paths');
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  return { resolveDataPaths, verifyDatabaseCopy };
+}
+
+async function runCandidateVerification({
+  databaseFile,
+  getCandidateIdentity = candidateIdentity,
+  loadCandidateModules: loadModules = loadCandidateModules,
+  verifyDatabaseCopy: verifyOverride = null,
+}) {
+  const candidateStart = getCandidateIdentity();
+  if (!candidateStart.clean) throw cliError('ERR_PERIODICAL_CANDIDATE_DIRTY');
+
+  const modules = loadModules();
+  const candidateAfterLoad = getCandidateIdentity();
+  if (!sameCandidateIdentity(candidateStart, candidateAfterLoad)) {
+    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
+  }
+
+  const activeDatabaseFile = realPathIfPresent(modules.resolveDataPaths().databaseFile);
+  if (databaseFile === activeDatabaseFile) {
+    throw cliError('ERR_PERIODICAL_LIVE_DATABASE_REFUSED');
+  }
+  const verifyDatabaseCopy = verifyOverride || modules.verifyDatabaseCopy;
+  const verification = await verifyDatabaseCopy(databaseFile);
+  const candidateEnd = getCandidateIdentity();
+  if (!sameCandidateIdentity(candidateStart, candidateEnd)) {
+    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
+  }
+  return { candidateStart, candidateEnd, verification };
+}
+
+function publishReceiptAfterBarrier({ receiptFile, output, finalBarrier }) {
+  const directory = path.dirname(receiptFile);
+  const temporaryFile = path.join(
+    directory,
+    `.${path.basename(receiptFile)}.${process.pid}.${crypto.randomBytes(12).toString('hex')}.tmp`,
+  );
+  let descriptor = null;
+  let temporaryPresent = false;
+  try {
+    descriptor = fs.openSync(temporaryFile, 'wx', 0o600);
+    temporaryPresent = true;
+    fs.writeFileSync(descriptor, output, { encoding: 'utf8' });
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+
+    finalBarrier();
+    fs.linkSync(temporaryFile, receiptFile);
+    fs.unlinkSync(temporaryFile);
+    temporaryPresent = false;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+    if (temporaryPresent) {
+      try {
+        fs.unlinkSync(temporaryFile);
+      } catch (error) {
+        if (!error || error.code !== 'ENOENT') throw error;
+      }
+    }
+  }
+}
+
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   const projectDir = path.resolve(__dirname, '..');
   const databaseFile = realPathIfPresent(options.databaseCopy);
-  const activeDatabaseFile = realPathIfPresent(resolveDataPaths().databaseFile);
-  if (databaseFile === activeDatabaseFile) {
-    throw cliError('ERR_PERIODICAL_LIVE_DATABASE_REFUSED');
-  }
   const receiptFile = options.receiptFile ? path.resolve(options.receiptFile) : null;
   if (receiptFile && pathIsInside(projectDir, receiptFile)) {
     throw cliError('ERR_PERIODICAL_RECEIPT_INSIDE_WORKTREE');
   }
 
-  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
-  const candidateStart = candidateIdentity();
-  if (!candidateStart.clean) {
-    throw cliError('ERR_PERIODICAL_CANDIDATE_DIRTY');
-  }
-  const verification = await verifyDatabaseCopy(databaseFile);
-  const candidateEnd = candidateIdentity();
-  if (!sameCandidateIdentity(candidateStart, candidateEnd)) {
-    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
-  }
+  const { candidateStart, candidateEnd, verification } = await runCandidateVerification({
+    databaseFile,
+  });
   const receipt = {
     ...verification,
     candidate: candidateEnd,
   };
   const output = `${JSON.stringify(receipt, null, 2)}\n`;
+  const finalBarrier = () => {
+    const candidateFinal = candidateIdentity();
+    if (!sameCandidateIdentity(candidateStart, candidateFinal)) {
+      throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
+    }
+  };
   if (receiptFile) {
-    fs.writeFileSync(receiptFile, output, { encoding: 'utf8', flag: 'wx' });
-  }
-  const candidateFinal = candidateIdentity();
-  if (!sameCandidateIdentity(candidateStart, candidateFinal)) {
-    if (receiptFile) fs.unlinkSync(receiptFile);
-    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
-  }
+    publishReceiptAfterBarrier({ receiptFile, output, finalBarrier });
+  } else finalBarrier();
   process.stdout.write(output);
 }
 
@@ -127,4 +183,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseArgs, sameCandidateIdentity };
+module.exports = {
+  main,
+  parseArgs,
+  publishReceiptAfterBarrier,
+  runCandidateVerification,
+  sameCandidateIdentity,
+};

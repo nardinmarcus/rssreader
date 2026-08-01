@@ -131,6 +131,14 @@ test('shadow worker persists a Custom Source event and timestamp fallback throug
       NOW - (10 * 60 * 1000),
     );
     assert.match(selectionContext.candidateSnapshot[0].contentHash, /^[a-f0-9]{64}$/);
+    assert.equal(selectionContext.candidateSnapshot[0].sourceId, 'custom-daily');
+    assert.deepEqual(selectionContext.candidateSnapshot[0].input.source, {
+      id: 'custom-daily',
+      name: 'Custom Daily',
+      category: 'article',
+    });
+    assert.equal(selectionContext.candidateSnapshot[0].input.entry.title, 'Future timestamp entry');
+    assert.equal(selectionContext.candidateSnapshot[0].input.entry.timestampFallback, true);
   } finally {
     db.close();
   }

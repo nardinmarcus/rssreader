@@ -49,13 +49,14 @@ npm run verify:periodicals-shadow -- \
   --receipt /new/private/path/migration-copy.json
 ```
 
-命令会拒绝当前 `NAMOO_READER_DATA_DIR` 指向的活动数据库，并且始终要求候选 worktree 干净。它只读打开输入，先用 SQLite online backup 生成闭合单文件 snapshot；若 `data_version` 或 main/非空 WAL 元数据在备份期间漂移则 fail closed。命令关闭 snapshot 句柄、收紧为只读后才计算字节 SHA-256，并在其第二份工作副本上执行两次 additive migration。候选 HEAD/tree/clean 在实现加载后、验证后和输出前重复核对。
+命令会拒绝当前 `NAMOO_READER_DATA_DIR` 指向的活动数据库，并且始终要求候选 worktree 干净。它在加载数据路径、迁移器或验证器等任何候选实现模块前先记录 start HEAD/tree/clean，加载后立即复核，再在验证完成后和输出前复核。它只读打开输入，先用 SQLite online backup 生成闭合单文件 snapshot；若 `data_version` 或 main/非空 WAL 元数据在备份期间漂移则 fail closed。命令关闭 snapshot 句柄、收紧为只读后才计算字节 SHA-256，并在其第二份工作副本上执行两次 additive migration。指定 `--receipt` 时，结果先写入同目录权限 `0600` 的私有临时文件；只有最终候选身份屏障通过后才以不覆盖既有路径的原子硬链接发布 PASS 收据。
 
 它验证：
 
 - 每次 `quick_check=ok`、`foreign_key_check` 为空；
-- `source_preferences`、`custom_sources`、`entries`、`users`、密码摘要、`user_entry_states`、`entry_stats` 的行数和 SQLite type-tagged 原始值 SHA-256 完全一致；CRLF、Unicode 组合形式或 SQLite 类型变化都必须改变摘要；
-- 每条 Evidence 都关联 SQLite Entry，Evidence/Entry 的 Source ID 一致，Source ID 来自内建或 SQLite 自定义 Source；日报必须由持久化的 Candidate/Source snapshot 重算 `sourceInputHash` 与候选内容哈希，周/月 Evidence 必须匹配其绑定冻结日报；每期 `contentHash` 必须能从 SQLite 文档重算；
+- `source_preferences`、`custom_sources`、`entries`、`users`、密码摘要、`user_entry_states`、`entry_stats` 的行数和 SQLite type-tagged 原始值 SHA-256 完全一致；CRLF、Unicode 组合形式、SQLite 类型变化或两个相邻 REAL 值都必须改变摘要；
+- 每条 Evidence 都关联 SQLite Entry，Evidence/Entry 的 Source ID 一致，Source ID 来自内建或 SQLite 自定义 Source；日报的每个 Candidate 都必须保存完整构建时输入 preimage、稳定 Source ID，并关联同 Source 的 SQLite Entry，随后由该 preimage 重算候选哈希、再由稳定身份投影重算 `sourceInputHash`；
+- Weekly/Monthly 必须从 cadence/periodKey 推导完整 Asia/Shanghai 自然周期，按日逐项匹配唯一冻结 Daily 的 Issue ID、revision、日期边界与重算后的 contentHash。空集合、缺日、重复、范围外日报或错误 revision/contentHash 一律 fail closed；周/月 Evidence 只能追溯到这组完整输入日报；每期 `contentHash` 必须能从 SQLite 文档重算；
 - 输出不包含数据库路径或受保护字段。
 
 ## 4. off / shadow / on 部署隔离

@@ -117,7 +117,7 @@ function expectedInputHash(sourceInputHash, { legacy = false } = {}) {
     ...(legacy ? {} : { scoringHistoryHash: expectedScoringHistoryHash() }),
     ...(legacy ? {} : {
       canonicalizationVersion: CANONICALIZATION_VERSION,
-      candidateSnapshotVersion: 'periodical-candidate-v1',
+      candidateSnapshotVersion: 'periodical-candidate-v2',
       urlCanonicalizationVersion: 'periodical-url-v1',
       titleNormalizationVersion: 'periodical-title-v1',
       entityAnchorVersion: 'periodical-entity-v1',

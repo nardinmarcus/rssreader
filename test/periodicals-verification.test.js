@@ -5,9 +5,12 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
+const { computeCanonicalHash } = require('../lib/content-hashes');
 const { computePeriodicalContentHash } = require('../lib/periodical-summary');
 const {
-  candidateInputContentHash,
+  candidateIdentitySnapshot,
+  candidateInputSnapshot,
+  candidateInputSnapshotHash,
   readStoredPeriodicalIssue,
   sourceIdentitySnapshot,
   sourceInputIdentity,
@@ -31,6 +34,70 @@ function initializeStore(dataDir) {
 
 function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function shanghaiPeriodKey(timestamp) {
+  return new Date(timestamp + (8 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+}
+
+function rollupChainFixture(cadence) {
+  const weekly = cadence === 'weekly';
+  const periodKey = weekly ? '2026-W31' : '2026-07';
+  const periodStartAt = Date.parse(weekly
+    ? '2026-07-26T16:00:00.000Z'
+    : '2026-06-30T16:00:00.000Z');
+  const dayCount = weekly ? 7 : 31;
+  const issueId = `periodical:${cadence}:${periodKey}`;
+  const dailies = Array.from({ length: dayCount }, (_, displayOrder) => {
+    const dailyPeriodKey = shanghaiPeriodKey(periodStartAt + (displayOrder * 86_400_000));
+    return {
+      issue: {
+        id: `periodical:daily:${dailyPeriodKey}`,
+        cadence: 'daily',
+        periodKey: dailyPeriodKey,
+        timezone: 'Asia/Shanghai',
+        periodStartAt: periodStartAt + (displayOrder * 86_400_000),
+        periodEndAt: periodStartAt + ((displayOrder + 1) * 86_400_000),
+        status: 'frozen',
+        revision: 1,
+        contentHash: String(displayOrder + 1).padStart(64, '0'),
+      },
+      themes: [],
+      events: [],
+      evidence: [],
+      inputs: [],
+    };
+  });
+  for (const daily of dailies) {
+    daily.issue.contentHash = computePeriodicalContentHash(daily);
+  }
+  const rollup = {
+    issue: {
+      id: issueId,
+      cadence,
+      periodKey,
+      timezone: 'Asia/Shanghai',
+      periodStartAt,
+      periodEndAt: periodStartAt + (dayCount * 86_400_000),
+      status: 'frozen',
+      revision: 1,
+      contentHash: 'f'.repeat(64),
+    },
+    themes: [],
+    events: [],
+    evidence: [],
+    inputs: dailies.map((daily, displayOrder) => ({
+      issueId,
+      dailyIssueId: daily.issue.id,
+      dailyContentHash: daily.issue.contentHash,
+      displayOrder,
+    })),
+  };
+  return {
+    dailies,
+    documents: new Map(dailies.map(daily => [daily.issue.id, daily])),
+    rollup,
+  };
 }
 
 function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
@@ -99,14 +166,17 @@ function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
     editorialPriority: 'high',
     labels: ['产品'],
   }];
+  const candidateInput = candidateInputSnapshot({ source: { category: 'article' }, evidence });
   const candidateSnapshot = [{
     entryId: evidence.entryId,
-    contentHash: candidateInputContentHash({ source: { category: 'article' }, evidence }),
+    sourceId,
+    contentHash: candidateInputSnapshotHash(candidateInput),
     effectivePublishedAt: evidence.effectivePublishedAt,
+    input: candidateInput,
   }];
   const sourceInputHash = sourceInputIdentity({
     periodKey: '2026-08-01',
-    candidates: candidateSnapshot,
+    candidates: candidateSnapshot.map(candidateIdentitySnapshot),
     sources: sourceSnapshot.map(sourceIdentitySnapshot),
     behaviorSignalEnabled: false,
   });
@@ -201,6 +271,7 @@ test('shadow verifier repeats additive migration on a work copy without changing
       sourceInputHashMismatchCount: 0,
       candidateSnapshotMismatchCount: 0,
       rollupSnapshotMismatchCount: 0,
+      revisionZeroStateMismatchCount: 0,
     });
     assert.equal(receipt.durableState.issues.rowCount, 1);
     assert.equal(receipt.durableState.jobs.rowCount, 1);
@@ -257,6 +328,254 @@ test('protected fact fingerprints preserve exact SQLite text bytes', () => {
     if (db) db.close();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
+});
+
+test('protected fact fingerprints distinguish adjacent SQLite REAL values', () => {
+  const { snapshotProtectedFacts } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-exact-real-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, created_at, updated_at
+      ) VALUES ('real-entry', 'real-source', 'REAL', '', ?, 1, 1)
+    `).run(0.1);
+    const before = snapshotProtectedFacts(db);
+
+    db.prepare(`UPDATE entries SET published_ts = ? WHERE id = 'real-entry'`)
+      .run(0.10000000000000002);
+    const after = snapshotProtectedFacts(db);
+
+    assert.notEqual(before.entries.sha256, after.entries.sha256);
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('shadow verifier rejects revision-zero issues that already own durable children', async () => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-revision-zero-');
+  try {
+    initializeStore(dataDir);
+    const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+    seedProtectedFacts(databaseFile);
+    const db = new DatabaseSync(databaseFile);
+    db.prepare(`
+      UPDATE periodical_issues
+      SET revision = 0, content_hash = '', selection_context_json = '{}'
+      WHERE id = 'verified-issue'
+    `).run();
+    db.close();
+
+    await assert.rejects(
+      verifyDatabaseCopy(databaseFile),
+      error => error.code === 'ERR_PERIODICAL_EVIDENCE_PROVENANCE',
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('rollup provenance derives and closes the complete Shanghai natural-period input set', async t => {
+  const { validateRollupInputChain } = require('../lib/periodicals-verification');
+  const scenarios = [
+    ['empty input set', ({ rollup }) => { rollup.inputs = []; }],
+    ['missing day', ({ rollup }) => { rollup.inputs.splice(3, 1); }],
+    ['duplicate day', ({ rollup }) => { rollup.inputs[3] = { ...rollup.inputs[2], displayOrder: 3 }; }],
+    ['non-frozen day', ({ dailies }) => { dailies[3].issue.status = 'open'; }],
+    ['revision-zero day', ({ dailies }) => { dailies[3].issue.revision = 0; }],
+    ['wrong daily content hash', ({ rollup }) => { rollup.inputs[3].dailyContentHash = 'e'.repeat(64); }],
+    ['out-of-range day', fixture => {
+      const lastIndex = fixture.dailies.length - 1;
+      const outsidePeriodKey = shanghaiPeriodKey(fixture.rollup.issue.periodEndAt);
+      const outside = {
+        ...fixture.dailies[lastIndex],
+        issue: {
+          ...fixture.dailies[lastIndex].issue,
+          id: `periodical:daily:${outsidePeriodKey}`,
+          periodKey: outsidePeriodKey,
+          periodStartAt: fixture.rollup.issue.periodEndAt,
+          periodEndAt: fixture.rollup.issue.periodEndAt + 86_400_000,
+        },
+      };
+      outside.issue.contentHash = computePeriodicalContentHash(outside);
+      fixture.documents.set(outside.issue.id, outside);
+      fixture.rollup.inputs[lastIndex] = {
+        ...fixture.rollup.inputs[lastIndex],
+        dailyIssueId: outside.issue.id,
+        dailyContentHash: outside.issue.contentHash,
+      };
+    }],
+  ];
+
+  for (const cadence of ['weekly', 'monthly']) {
+    const valid = rollupChainFixture(cadence);
+    assert.equal(validateRollupInputChain(valid.rollup, valid.documents).valid, true);
+
+    for (const [name, mutate] of scenarios) {
+      await t.test(`${cadence}: ${name}`, () => {
+        const fixture = rollupChainFixture(cadence);
+        mutate(fixture);
+        assert.equal(validateRollupInputChain(fixture.rollup, fixture.documents).valid, false);
+      });
+    }
+  }
+});
+
+test('shadow verifier rejects a hash-valid frozen rollup with no declared daily inputs', async () => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-empty-rollup-');
+  try {
+    initializeStore(dataDir);
+    const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+    seedProtectedFacts(databaseFile);
+    const db = new DatabaseSync(databaseFile);
+    const periodStartAt = Date.parse('2026-07-26T16:00:00.000Z');
+    db.prepare(`
+      INSERT INTO periodical_issues (
+        id, cadence, period_key, volume_no, timezone,
+        period_start_at, period_end_at, status, revision, overview,
+        selection_version, summary_version, source_input_hash,
+        selection_context_json, input_hash, content_hash, summary_status,
+        frozen_at, created_at, updated_at
+      ) VALUES (
+        'periodical:weekly:2026-W31', 'weekly', '2026-W31', 1, 'Asia/Shanghai',
+        ?, ?, 'finalizing', 1, 'empty but self-consistent',
+        'weekly-v1', 'summary-v1', ?, '{}', ?, '', 'fallback', ?, ?, ?
+      )
+    `).run(
+      periodStartAt,
+      periodStartAt + (7 * 86_400_000),
+      'a'.repeat(64),
+      'b'.repeat(64),
+      periodStartAt + (7 * 86_400_000),
+      periodStartAt,
+      periodStartAt + (7 * 86_400_000),
+    );
+    const issue = db.prepare(`
+      SELECT * FROM periodical_issues WHERE id = 'periodical:weekly:2026-W31'
+    `).get();
+    const document = readStoredPeriodicalIssue(db, issue);
+    document.issue.status = 'frozen';
+    db.prepare(`
+      UPDATE periodical_issues SET content_hash = ?, status = 'frozen'
+      WHERE id = 'periodical:weekly:2026-W31'
+    `).run(computePeriodicalContentHash(document));
+    db.close();
+
+    await assert.rejects(
+      verifyDatabaseCopy(databaseFile),
+      error => error.code === 'ERR_PERIODICAL_EVIDENCE_PROVENANCE',
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('shadow verifier rejects a self-consistent candidate that has no SQLite Entry', async () => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-candidate-entry-');
+  try {
+    initializeStore(dataDir);
+    const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+    seedProtectedFacts(databaseFile);
+    const db = new DatabaseSync(databaseFile);
+    db.exec(`
+      DELETE FROM periodical_event_evidence;
+      DELETE FROM periodical_events;
+      DELETE FROM periodical_themes;
+    `);
+    const sourceSnapshot = [{
+      sourceId: 'verified-source',
+      name: 'Verified Source',
+      category: 'article',
+      enabled: true,
+      editorialPriority: 'high',
+      labels: ['产品'],
+    }];
+    const candidateSnapshot = [{
+      entryId: 'missing-entry',
+      contentHash: 'a'.repeat(64),
+      effectivePublishedAt: Date.parse('2026-08-01T12:00:00.000Z'),
+    }];
+    const selectionContext = {
+      scoreConfig: { behavior: { enabled: false } },
+      candidateCount: 1,
+      eligibleSourceCount: 1,
+      candidateSnapshot,
+      sourceSnapshot,
+    };
+    const sourceInputHash = sourceInputIdentity({
+      periodKey: '2026-08-01',
+      candidates: candidateSnapshot,
+      sources: sourceSnapshot.map(sourceIdentitySnapshot),
+      behaviorSignalEnabled: false,
+    });
+    db.prepare(`
+      UPDATE periodical_issues
+      SET source_input_hash = ?, selection_context_json = ?, content_hash = ''
+      WHERE id = 'verified-issue'
+    `).run(sourceInputHash, JSON.stringify(selectionContext));
+    const issue = db.prepare(`SELECT * FROM periodical_issues WHERE id = 'verified-issue'`).get();
+    db.prepare(`UPDATE periodical_issues SET content_hash = ? WHERE id = 'verified-issue'`)
+      .run(computePeriodicalContentHash(readStoredPeriodicalIssue(db, issue)));
+    db.close();
+
+    await assert.rejects(
+      verifyDatabaseCopy(databaseFile),
+      error => error.code === 'ERR_PERIODICAL_EVIDENCE_PROVENANCE',
+    );
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('candidate preimage validation binds source, Entry association, and snapshot hash', () => {
+  const { validateCandidateSnapshot } = require('../lib/periodicals-verification');
+  const input = {
+    source: { id: 'verified-source', name: 'Verified Source', category: 'article' },
+    entry: {
+      title: 'Title',
+      titleZh: null,
+      link: 'https://verified.example/entry',
+      canonicalUrl: 'https://verified.example/entry',
+      summaryExcerpt: 'Excerpt',
+      contentHash: 'entry-hash',
+      timestampFallback: false,
+    },
+  };
+  const candidate = {
+    entryId: 'verified-entry',
+    sourceId: 'verified-source',
+    contentHash: computeCanonicalHash(input),
+    effectivePublishedAt: 1,
+    input,
+  };
+  const source = {
+    sourceId: 'verified-source',
+    name: 'Verified Source',
+    category: 'article',
+    enabled: true,
+    editorialPriority: 'high',
+    labels: ['产品'],
+  };
+
+  assert.equal(validateCandidateSnapshot(candidate, source, {
+    id: 'verified-entry',
+    source_id: 'verified-source',
+  }), true);
+  assert.equal(validateCandidateSnapshot(candidate, source, null), false);
+  assert.equal(validateCandidateSnapshot(candidate, source, {
+    id: 'verified-entry',
+    source_id: 'another-source',
+  }), false);
+  assert.equal(validateCandidateSnapshot({ ...candidate, contentHash: 'b'.repeat(64) }, source, {
+    id: 'verified-entry',
+    source_id: 'verified-source',
+  }), false);
 });
 
 test('shadow verifier rejects evidence that is not bound to its build-time Source snapshot', async () => {
@@ -378,6 +697,98 @@ test('shadow verification command requires a clean and stable candidate identity
     { head: 'a', tree: 'b', clean: true },
     { head: 'a', tree: 'b', clean: false },
   ), false);
+});
+
+test('candidate bootstrap rejects a module-load side effect before verification runs', async () => {
+  const { runCandidateVerification } = require('../scripts/verify-periodicals-shadow');
+  const tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'periodicals-bootstrap-side-effect-'));
+  const stateFile = path.join(tempDir, 'identity');
+  const moduleFile = path.join(tempDir, 'candidate-module.js');
+  let verified = false;
+  try {
+    fs.writeFileSync(stateFile, 'start', { flag: 'wx' });
+    fs.writeFileSync(moduleFile, `
+      require('fs').writeFileSync(${JSON.stringify(stateFile)}, 'changed');
+      module.exports = { verifyDatabaseCopy: async () => ({ passed: true }) };
+    `, { flag: 'wx' });
+
+    await assert.rejects(
+      runCandidateVerification({
+        databaseFile: '/private/tmp/unused.sqlite',
+        getCandidateIdentity: () => ({
+          head: 'head',
+          tree: fs.readFileSync(stateFile, 'utf8'),
+          clean: true,
+        }),
+        loadCandidateModules: () => ({
+          ...require(moduleFile),
+          resolveDataPaths: () => ({ databaseFile: '/private/tmp/live.sqlite' }),
+        }),
+        verifyDatabaseCopy: async () => { verified = true; },
+      }),
+      error => error.code === 'ERR_PERIODICAL_CANDIDATE_CHANGED',
+    );
+    assert.equal(verified, false);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('receipt path remains absent when the final identity barrier terminates the process', () => {
+  const tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'periodicals-receipt-barrier-'));
+  const receiptFile = path.join(tempDir, 'receipt.json');
+  try {
+    const script = `
+      const { publishReceiptAfterBarrier } = require(${JSON.stringify(path.join(
+        projectDir,
+        'scripts',
+        'verify-periodicals-shadow.js',
+      ))});
+      publishReceiptAfterBarrier({
+        receiptFile: ${JSON.stringify(receiptFile)},
+        output: '{"passed":true}\\n',
+        finalBarrier: () => process.exit(86),
+      });
+    `;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: projectDir,
+      encoding: 'utf8',
+    });
+
+    assert.equal(result.status, 86);
+    assert.equal(fs.existsSync(receiptFile), false);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('receipt publication is barrier-ordered, private, and no-clobber', () => {
+  const { publishReceiptAfterBarrier } = require('../scripts/verify-periodicals-shadow');
+  const tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'periodicals-receipt-publish-'));
+  const receiptFile = path.join(tempDir, 'receipt.json');
+  let barrierObservedAbsent = false;
+  try {
+    publishReceiptAfterBarrier({
+      receiptFile,
+      output: '{"passed":true}\n',
+      finalBarrier: () => { barrierObservedAbsent = !fs.existsSync(receiptFile); },
+    });
+
+    assert.equal(barrierObservedAbsent, true);
+    assert.equal(fs.readFileSync(receiptFile, 'utf8'), '{"passed":true}\n');
+    assert.equal(fs.statSync(receiptFile).mode & 0o777, 0o600);
+    assert.throws(
+      () => publishReceiptAfterBarrier({
+        receiptFile,
+        output: '{"passed":false}\n',
+        finalBarrier: () => {},
+      }),
+      error => error.code === 'EEXIST',
+    );
+    assert.equal(fs.readFileSync(receiptFile, 'utf8'), '{"passed":true}\n');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('shadow verification command requires an explicit read-only-copy confirmation', () => {
