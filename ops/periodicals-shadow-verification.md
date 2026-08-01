@@ -56,7 +56,7 @@ npm run verify:periodicals-shadow -- \
 - 每次 `quick_check=ok`、`foreign_key_check` 为空；
 - `source_preferences`、`custom_sources`、`entries`、`users`、密码摘要、`user_entry_states`、`entry_stats` 的行数和 SQLite type-tagged 原始值 SHA-256 完全一致；CRLF、Unicode 组合形式、SQLite 类型变化或两个相邻 REAL 值都必须改变摘要；
 - 每条 Evidence 都关联 SQLite Entry，Evidence/Entry 的 Source ID 一致，Source ID 来自内建或 SQLite 自定义 Source；日报的每个 Candidate 都必须保存完整构建时输入 preimage、稳定 Source ID，并关联同 Source 的 SQLite Entry，随后由该 preimage 重算候选哈希、再由稳定身份投影重算 `sourceInputHash`；
-- Weekly/Monthly 必须从 cadence/periodKey 推导完整 Asia/Shanghai 自然周期，按日逐项匹配唯一冻结 Daily 的 Issue ID、revision、日期边界与重算后的 contentHash。空集合、缺日、重复、范围外日报或错误 revision/contentHash 一律 fail closed；周/月 Evidence 只能追溯到这组完整输入日报；每期 `contentHash` 必须能从 SQLite 文档重算；
+- Daily 必须从完整 candidate/source/history preimage 重算 `sourceInputHash → inputHash`；Weekly/Monthly 必须从 cadence/periodKey 推导完整 Asia/Shanghai 自然周期，按日逐项匹配唯一冻结 Daily 的 Issue ID、revision、日期边界与重算后的 contentHash，再重算自己的 `sourceInputHash → inputHash` 与精确 selection context。空集合、缺日、重复、范围外日报或错误 revision/contentHash 一律 fail closed；周/月 Evidence 只能追溯到这组完整输入日报；每期还必须绑定 deterministic ID、成功状态、as-of/cutoff、算法版本、score config 与计数均一致的唯一 succeeded job，且 `contentHash` 能从 SQLite 文档重算；
 - 输出不包含数据库路径或受保护字段。
 
 ## 4. off / shadow / on 部署隔离

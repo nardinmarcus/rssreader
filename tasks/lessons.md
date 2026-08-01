@@ -184,3 +184,4 @@
 - Before asserting an exact fixture literal, reread the seeded row rather than inferring its label from the test name; a wrong expected title tests the fixture author, not the product behavior.
 - When patching repeated version fields, anchor the patch to the owning function; an unscoped first match can silently update the legacy domain instead of the current one.
 - Exact-tree bootstrap can still load candidate modules in stages: put an identity barrier after each load, and keep cheap refusal checks ahead of warning-producing SQLite modules so a structured stderr contract remains pure JSON.
+- A semantic content hash cannot prove fields it intentionally excludes. Shadow verification must independently recompute each Daily and rollup `sourceInputHash -> inputHash` chain from persisted preimages, then bind the canonical succeeded-job identity and fingerprint every durable job identity column.

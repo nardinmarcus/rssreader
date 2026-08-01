@@ -293,6 +293,8 @@ importanceScore = round(sum(componentPoints), 1)
 
 周报和月报只接收冻结日报事件及其哈希。跨日事件仍使用第 9 节的保守匹配规则合并，并记录所有输入日报事件 ID。
 
+汇总输入身份按自然周期逐日绑定冻结日报的 Issue ID、revision、日期边界与 content hash；`sourceInputHash` 对这份完整有序状态计算，`inputHash` 再绑定 cadence 的 input/selection/event 版本、score config 与 summary version。持久化 selection context 必须与这些版本及自然周期日数精确一致；冻结汇总还必须存在唯一 canonical succeeded job，绑定 deterministic job ID、两个输入哈希、period-end as-of/cutoff 和同一组算法版本。
+
 汇总分数：
 
 ```text

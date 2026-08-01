@@ -5,13 +5,20 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
-const { computeCanonicalHash } = require('../lib/content-hashes');
+const { canonicalSerialize, computeCanonicalHash } = require('../lib/content-hashes');
 const { computePeriodicalContentHash } = require('../lib/periodical-summary');
 const {
   candidateIdentitySnapshot,
   candidateInputSnapshot,
   candidateInputSnapshotHash,
+  createPeriodicalsModule,
+  dailySelectionContext,
+  fullInputIdentity,
+  periodicalBuildJobId,
   readStoredPeriodicalIssue,
+  rollupInputIdentity,
+  scoreConfigFor,
+  scoringHistoryIdentity,
   sourceIdentitySnapshot,
   sourceInputIdentity,
 } = require('../lib/periodicals');
@@ -38,6 +45,35 @@ function sha256File(file) {
 
 function shanghaiPeriodKey(timestamp) {
   return new Date(timestamp + (8 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+}
+
+function fixtureRollupIdentity(cadence, periodKey, dailies) {
+  const inputStates = dailies.map((daily, displayOrder) => ({
+    displayOrder,
+    expectedDailyIssueId: daily.issue.id,
+    expectedPeriodKey: daily.issue.periodKey,
+    actualIssueId: daily.issue.id,
+    actualCadence: daily.issue.cadence,
+    actualPeriodKey: daily.issue.periodKey,
+    actualPeriodStartAt: daily.issue.periodStartAt,
+    actualPeriodEndAt: daily.issue.periodEndAt,
+    actualStatus: daily.issue.status,
+    actualRevision: daily.issue.revision,
+    dailyContentHash: daily.issue.contentHash,
+    validationCode: null,
+  }));
+  const identity = rollupInputIdentity({
+    cadence,
+    periodKey,
+    inputStates,
+  });
+  return {
+    ...identity,
+    selectionContext: {
+      ...identity.selectionContext,
+      scoreConfig: { ...identity.selectionContext.scoreConfig },
+    },
+  };
 }
 
 function rollupChainFixture(cadence) {
@@ -71,6 +107,7 @@ function rollupChainFixture(cadence) {
   for (const daily of dailies) {
     daily.issue.contentHash = computePeriodicalContentHash(daily);
   }
+  const identity = fixtureRollupIdentity(cadence, periodKey, dailies);
   const rollup = {
     issue: {
       id: issueId,
@@ -81,6 +118,11 @@ function rollupChainFixture(cadence) {
       periodEndAt: periodStartAt + (dayCount * 86_400_000),
       status: 'frozen',
       revision: 1,
+      selectionVersion: identity.selectionVersion,
+      summaryVersion: identity.summaryVersion,
+      sourceInputHash: identity.sourceInputHash,
+      selectionContext: identity.selectionContext,
+      inputHash: identity.inputHash,
       contentHash: 'f'.repeat(64),
     },
     themes: [],
@@ -93,11 +135,72 @@ function rollupChainFixture(cadence) {
       displayOrder,
     })),
   };
+  rollup.issue.contentHash = computePeriodicalContentHash(rollup);
   return {
     dailies,
     documents: new Map(dailies.map(daily => [daily.issue.id, daily])),
     rollup,
   };
+}
+
+async function seedFrozenProductPeriod(databaseFile, cadence) {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      aiAdapter: null,
+      logger() {},
+    });
+    const startAt = Date.parse(cadence === 'weekly'
+      ? '2026-07-26T16:00:00.000Z'
+      : '2026-06-30T16:00:00.000Z');
+    const dayCount = cadence === 'weekly' ? 7 : 31;
+    for (let day = 0; day < dayCount; day += 1) {
+      const periodStartAt = startAt + (day * 86_400_000);
+      periodicals.syncOpenDaily({ now: periodStartAt, trigger: 'identity-red' });
+      await periodicals.runNextBuild({ now: periodStartAt + 1_000 });
+      periodicals.finalizeDueIssues({ now: periodStartAt + 86_400_000 });
+      await periodicals.runNextBuild({ now: periodStartAt + 86_401_000 });
+    }
+    const rollupAt = startAt + (dayCount * 86_400_000);
+    const scheduled = cadence === 'weekly'
+      ? periodicals.syncWeeklyRollup({ now: rollupAt + 1_000, trigger: 'identity-red' })
+      : periodicals.syncMonthlyRollup({ now: rollupAt + 1_000, trigger: 'identity-red' });
+    await periodicals.runNextBuild({ now: rollupAt + 2_000 });
+    const issue = db.prepare(`
+      SELECT id FROM periodical_issues
+      WHERE cadence = ? AND revision > 0
+      ORDER BY period_key DESC
+      LIMIT 1
+    `).get(cadence);
+    return issue && issue.id || scheduled.issueId;
+  } finally {
+    db.close();
+  }
+}
+
+async function seedFrozenProductDaily(databaseFile) {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      aiAdapter: null,
+      logger() {},
+    });
+    const periodStartAt = Date.parse('2026-07-26T16:00:00.000Z');
+    const scheduled = periodicals.syncOpenDaily({
+      now: periodStartAt,
+      trigger: 'identity-red',
+    });
+    await periodicals.runNextBuild({ now: periodStartAt + 1_000 });
+    periodicals.finalizeDueIssues({ now: periodStartAt + 86_400_000 });
+    await periodicals.runNextBuild({ now: periodStartAt + 86_401_000 });
+    return scheduled.issueId;
+  } finally {
+    db.close();
+  }
 }
 
 function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
@@ -180,13 +283,21 @@ function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
     sources: sourceSnapshot.map(sourceIdentitySnapshot),
     behaviorSignalEnabled: false,
   });
-  const selectionContext = {
-    scoreConfig: { behavior: { enabled: false } },
-    candidateCount: 1,
-    eligibleSourceCount: 1,
+  const scoreConfig = scoreConfigFor(false);
+  const frozenDailyHistory = [];
+  const selectionContext = dailySelectionContext({
+    scoreConfig,
     candidateSnapshot,
     sourceSnapshot,
-  };
+    frozenDailyHistory,
+  });
+  const inputHash = fullInputIdentity({
+    sourceInputHash,
+    asOfAt: now,
+    scoringHistoryHash: scoringHistoryIdentity(frozenDailyHistory),
+    scoreConfig,
+  });
+  const summaryVersion = 'constrained-summary-v1';
   db.prepare(`
     INSERT INTO periodical_issues (
       id, cadence, period_key, volume_no, period_start_at, period_end_at,
@@ -194,12 +305,14 @@ function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
       selection_context_json, input_hash, content_hash, summary_status,
       last_built_at, created_at, updated_at
     ) VALUES ('verified-issue', 'daily', '2026-08-01', 1, ?, ?, 'open', 1,
-      'importance-v1', 'summary-v1', ?, ?, 'input-hash', '', 'fallback', ?, ?, ?)
+      'importance-v1', ?, ?, ?, ?, '', 'fallback', ?, ?, ?)
   `).run(
     now - 3600_000,
     now + 3600_000,
+    summaryVersion,
     sourceInputHash,
     JSON.stringify(selectionContext),
+    inputHash,
     now,
     now - 1000,
     now,
@@ -227,12 +340,29 @@ function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
   `).run(sourceId, now - 1000);
   db.prepare(`
     INSERT INTO periodical_build_jobs (
-      id, issue_id, source_input_hash, input_hash, as_of_at, selection_version,
-      score_config_json, summary_version, trigger_reason, status, candidate_count,
-      source_count, created_at, updated_at, completed_at
-    ) VALUES ('verified-job', 'verified-issue', ?, 'input-hash', ?,
-      'importance-v1', '{}', 'summary-v1', 'test', 'succeeded', 1, 1, ?, ?, ?)
-  `).run(sourceInputHash, now, now - 1000, now, now);
+      id, issue_id, source_input_hash, input_hash, as_of_at, candidate_cutoff_at,
+      selection_version, score_config_json, summary_version, trigger_reason,
+      status, attempt_count, candidate_count, source_count,
+      created_at, updated_at, completed_at
+    ) VALUES (?, 'verified-issue', ?, ?, ?, ?,
+      'importance-v1', ?, ?, 'test',
+      'succeeded', 1, 1, 1, ?, ?, ?)
+  `).run(
+    periodicalBuildJobId({
+      issueId: 'verified-issue',
+      inputHash,
+      summaryVersion,
+    }),
+    sourceInputHash,
+    inputHash,
+    now,
+    now,
+    canonicalSerialize(scoreConfig),
+    summaryVersion,
+    now - 1000,
+    now,
+    now,
+  );
   const issueRow = db.prepare(`
     SELECT * FROM periodical_issues WHERE id = 'verified-issue'
   `).get();
@@ -252,7 +382,7 @@ test('shadow verifier repeats additive migration on a work copy without changing
 
     const receipt = await verifyDatabaseCopy(databaseFile);
 
-    assert.equal(receipt.version, 'periodicals-shadow-verification-v2');
+    assert.equal(receipt.version, 'periodicals-shadow-verification-v3');
     assert.equal(receipt.passed, true);
     assert.equal(receipt.sourceReadOnly, true);
     assert.equal(receipt.sourceUnchanged, true);
@@ -269,6 +399,9 @@ test('shadow verifier repeats additive migration on a work copy without changing
       invalidSourceSnapshotCount: 0,
       issueContentHashMismatchCount: 0,
       sourceInputHashMismatchCount: 0,
+      inputHashMismatchCount: 0,
+      selectionContextMismatchCount: 0,
+      buildIdentityMismatchCount: 0,
       candidateSnapshotMismatchCount: 0,
       rollupSnapshotMismatchCount: 0,
       revisionZeroStateMismatchCount: 0,
@@ -387,7 +520,29 @@ test('rollup provenance derives and closes the complete Shanghai natural-period 
     ['duplicate day', ({ rollup }) => { rollup.inputs[3] = { ...rollup.inputs[2], displayOrder: 3 }; }],
     ['non-frozen day', ({ dailies }) => { dailies[3].issue.status = 'open'; }],
     ['revision-zero day', ({ dailies }) => { dailies[3].issue.revision = 0; }],
+    ['wrong nonzero daily revision', ({ dailies }) => { dailies[3].issue.revision = 2; }],
     ['wrong daily content hash', ({ rollup }) => { rollup.inputs[3].dailyContentHash = 'e'.repeat(64); }],
+    ['wrong rollup source input hash', ({ rollup }) => {
+      rollup.issue.sourceInputHash = 'c'.repeat(64);
+    }],
+    ['wrong rollup input hash', ({ rollup }) => {
+      rollup.issue.inputHash = 'd'.repeat(64);
+    }],
+    ['wrong rollup input version', ({ rollup }) => {
+      rollup.issue.selectionContext.inputVersion = 'tampered-input-v9';
+    }],
+    ['wrong rollup event version', ({ rollup }) => {
+      rollup.issue.selectionContext.eventVersion = 'tampered-event-v9';
+    }],
+    ['wrong rollup score config', ({ rollup }) => {
+      rollup.issue.selectionContext.scoreConfig.maxEvents += 1;
+    }],
+    ['wrong rollup daily count', ({ rollup }) => {
+      rollup.issue.selectionContext.dailyInputCount -= 1;
+    }],
+    ['unexpected rollup selection context field', ({ rollup }) => {
+      rollup.issue.selectionContext.unbound = true;
+    }],
     ['out-of-range day', fixture => {
       const lastIndex = fixture.dailies.length - 1;
       const outsidePeriodKey = shanghaiPeriodKey(fixture.rollup.issue.periodEndAt);
@@ -422,6 +577,191 @@ test('rollup provenance derives and closes the complete Shanghai natural-period 
         assert.equal(validateRollupInputChain(fixture.rollup, fixture.documents).valid, false);
       });
     }
+  }
+});
+
+test('shadow verifier binds Daily inputHash to the canonical succeeded job identity', async t => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-daily-job-identity-');
+  try {
+    initializeStore(dataDir);
+    const baseFile = path.join(dataDir, 'base.sqlite');
+    fs.copyFileSync(path.join(dataDir, 'qmreader.sqlite'), baseFile);
+    const issueId = await seedFrozenProductDaily(baseFile);
+    const scenarios = [
+      ['missing succeeded job', ({ db, job }) => {
+        db.prepare('DELETE FROM periodical_build_jobs WHERE id = ?').run(job.id);
+      }],
+      ['nondeterministic job id', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET id = ? WHERE id = ?')
+          .run('periodical-job:tampered', job.id);
+      }],
+      ['non-succeeded job', ({ db, job }) => {
+        db.prepare("UPDATE periodical_build_jobs SET status = 'failed' WHERE id = ?").run(job.id);
+      }],
+      ['wrong job source hash', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET source_input_hash = ? WHERE id = ?')
+          .run('a'.repeat(64), job.id);
+      }],
+      ['wrong job as-of boundary', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET as_of_at = as_of_at + 1 WHERE id = ?')
+          .run(job.id);
+      }],
+      ['wrong job candidate cutoff boundary', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET candidate_cutoff_at = candidate_cutoff_at + ? WHERE id = ?')
+          .run(16 * 60 * 1_000, job.id);
+      }],
+      ['wrong job selection version', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET selection_version = ? WHERE id = ?')
+          .run('tampered-selection-v9', job.id);
+      }],
+      ['wrong job score config', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET score_config_json = ? WHERE id = ?')
+          .run('{}', job.id);
+      }],
+      ['wrong job summary version', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET summary_version = ? WHERE id = ?')
+          .run('tampered-summary-v9', job.id);
+      }],
+      ['self-consistent but noncanonical selection version', ({ db, issue, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET selection_version = ? WHERE id = ?')
+          .run('tampered-selection-v9', job.id);
+        db.prepare('UPDATE periodical_issues SET selection_version = ? WHERE id = ?')
+          .run('tampered-selection-v9', issue.id);
+        const changed = db.prepare('SELECT * FROM periodical_issues WHERE id = ?').get(issue.id);
+        db.prepare('UPDATE periodical_issues SET content_hash = ? WHERE id = ?')
+          .run(computePeriodicalContentHash(readStoredPeriodicalIssue(db, changed)), issue.id);
+      }],
+      ['self-consistent but noncanonical summary version', ({ db, issue, job }) => {
+        const summaryVersion = 'tampered-summary-v9';
+        const jobId = periodicalBuildJobId({
+          issueId: issue.id,
+          inputHash: issue.input_hash,
+          summaryVersion,
+        });
+        db.prepare('UPDATE periodical_build_jobs SET id = ?, summary_version = ? WHERE id = ?')
+          .run(jobId, summaryVersion, job.id);
+        db.prepare('UPDATE periodical_issues SET summary_version = ? WHERE id = ?')
+          .run(summaryVersion, issue.id);
+        const changed = db.prepare('SELECT * FROM periodical_issues WHERE id = ?').get(issue.id);
+        db.prepare('UPDATE periodical_issues SET content_hash = ? WHERE id = ?')
+          .run(computePeriodicalContentHash(readStoredPeriodicalIssue(db, changed)), issue.id);
+      }],
+      ['wrong job candidate count', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET candidate_count = candidate_count + 1 WHERE id = ?')
+          .run(job.id);
+      }],
+      ['wrong job completion identity', ({ db, job }) => {
+        db.prepare('UPDATE periodical_build_jobs SET completed_at = completed_at + 1 WHERE id = ?')
+          .run(job.id);
+      }],
+      ['self-consistent but noncanonical issue and job input hash', ({ db, issue, job }) => {
+        const inputHash = 'b'.repeat(64);
+        const jobId = `periodical-job:${computeCanonicalHash({
+          issueId: issue.id,
+          inputHash,
+          summaryVersion: issue.summary_version,
+        })}`;
+        db.prepare('UPDATE periodical_build_jobs SET id = ?, input_hash = ? WHERE id = ?')
+          .run(jobId, inputHash, job.id);
+        db.prepare('UPDATE periodical_issues SET input_hash = ? WHERE id = ?')
+          .run(inputHash, issue.id);
+      }],
+      ['unbound Daily selection algorithm version', ({ db, issue }) => {
+        const context = JSON.parse(issue.selection_context_json);
+        context.candidateSnapshotVersion = 'tampered-candidate-v9';
+        db.prepare('UPDATE periodical_issues SET selection_context_json = ? WHERE id = ?')
+          .run(JSON.stringify(context), issue.id);
+      }],
+    ];
+
+    for (const [name, mutate] of scenarios) {
+      await t.test(name, async () => {
+        const databaseFile = path.join(dataDir, `${name.replaceAll(/[^a-z]+/gi, '-')}.sqlite`);
+        fs.copyFileSync(baseFile, databaseFile);
+        const db = new DatabaseSync(databaseFile);
+        db.exec('DROP TRIGGER IF EXISTS reject_frozen_periodical_issue_update');
+        const issue = db.prepare('SELECT * FROM periodical_issues WHERE id = ?').get(issueId);
+        const job = db.prepare(`
+          SELECT * FROM periodical_build_jobs
+          WHERE issue_id = ? AND input_hash = ? AND status = 'succeeded'
+        `).get(issue.id, issue.input_hash);
+        mutate({ db, issue, job });
+        db.close();
+
+        await assert.rejects(
+          verifyDatabaseCopy(databaseFile),
+          error => error.code === 'ERR_PERIODICAL_EVIDENCE_PROVENANCE',
+        );
+      });
+    }
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('shadow verifier requires a canonical succeeded job for Frozen Weekly and Monthly', async t => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  for (const cadence of ['weekly', 'monthly']) {
+    await t.test(cadence, async () => {
+      const dataDir = createTempDataDir(`namoo-reader-periodicals-${cadence}-job-`);
+      try {
+        initializeStore(dataDir);
+        const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+        const issueId = await seedFrozenProductPeriod(databaseFile, cadence);
+        const db = new DatabaseSync(databaseFile);
+        const issue = db.prepare('SELECT input_hash FROM periodical_issues WHERE id = ?')
+          .get(issueId);
+        db.prepare(`
+          DELETE FROM periodical_build_jobs
+          WHERE issue_id = ? AND input_hash = ? AND status = 'succeeded'
+        `).run(issueId, issue.input_hash);
+        db.close();
+
+        await assert.rejects(
+          verifyDatabaseCopy(databaseFile),
+          error => error.code === 'ERR_PERIODICAL_EVIDENCE_PROVENANCE',
+        );
+      } finally {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('durable task fingerprints bind every canonical build identity field', async t => {
+  const { snapshotDurablePeriodicalState } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-durable-job-identity-');
+  try {
+    initializeStore(dataDir);
+    const baseFile = path.join(dataDir, 'base.sqlite');
+    fs.copyFileSync(path.join(dataDir, 'qmreader.sqlite'), baseFile);
+    const issueId = await seedFrozenProductDaily(baseFile);
+    const scenarios = [
+      ['source_input_hash', "'a' || substr(source_input_hash, 2)"],
+      ['as_of_at', 'as_of_at + 1'],
+      ['candidate_cutoff_at', 'candidate_cutoff_at + 1'],
+      ['selection_version', "selection_version || '-tampered'"],
+      ['score_config_json', "'{}'"],
+      ['summary_version', "summary_version || '-tampered'"],
+    ];
+    for (const [column, expression] of scenarios) {
+      await t.test(column, () => {
+        const databaseFile = path.join(dataDir, `${column}.sqlite`);
+        fs.copyFileSync(baseFile, databaseFile);
+        const db = new DatabaseSync(databaseFile);
+        const before = snapshotDurablePeriodicalState(db);
+        db.prepare(`
+          UPDATE periodical_build_jobs SET ${column} = ${expression}
+          WHERE issue_id = ? AND status = 'succeeded'
+        `).run(issueId);
+        const after = snapshotDurablePeriodicalState(db);
+        db.close();
+        assert.notEqual(before.jobs.sha256, after.jobs.sha256);
+      });
+    }
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
 
