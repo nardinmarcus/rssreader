@@ -183,3 +183,4 @@
 - A Candidate hash that is merely self-consistent is not SQLite provenance; persist the complete build-time preimage and Source ID, require the Entry to exist with the same Source, then hash a stable identity projection separately from the audit payload.
 - Before asserting an exact fixture literal, reread the seeded row rather than inferring its label from the test name; a wrong expected title tests the fixture author, not the product behavior.
 - When patching repeated version fields, anchor the patch to the owning function; an unscoped first match can silently update the legacy domain instead of the current one.
+- Exact-tree bootstrap can still load candidate modules in stages: put an identity barrier after each load, and keep cheap refusal checks ahead of warning-producing SQLite modules so a structured stderr contract remains pure JSON.

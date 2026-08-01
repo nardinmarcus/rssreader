@@ -79,32 +79,40 @@ function pathIsInside(parent, child) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function loadCandidateModules() {
-  const { resolveDataPaths } = require('../lib/data-paths');
-  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
-  return { resolveDataPaths, verifyDatabaseCopy };
+function loadCandidateDataPaths() {
+  return require('../lib/data-paths');
+}
+
+function loadCandidateVerifier() {
+  return require('../lib/periodicals-verification');
 }
 
 async function runCandidateVerification({
   databaseFile,
   getCandidateIdentity = candidateIdentity,
-  loadCandidateModules: loadModules = loadCandidateModules,
+  loadCandidateDataPaths: loadDataPaths = loadCandidateDataPaths,
+  loadCandidateVerifier: loadVerifier = loadCandidateVerifier,
   verifyDatabaseCopy: verifyOverride = null,
 }) {
   const candidateStart = getCandidateIdentity();
   if (!candidateStart.clean) throw cliError('ERR_PERIODICAL_CANDIDATE_DIRTY');
 
-  const modules = loadModules();
-  const candidateAfterLoad = getCandidateIdentity();
-  if (!sameCandidateIdentity(candidateStart, candidateAfterLoad)) {
+  const dataPaths = loadDataPaths();
+  const candidateAfterDataPaths = getCandidateIdentity();
+  if (!sameCandidateIdentity(candidateStart, candidateAfterDataPaths)) {
     throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
   }
 
-  const activeDatabaseFile = realPathIfPresent(modules.resolveDataPaths().databaseFile);
+  const activeDatabaseFile = realPathIfPresent(dataPaths.resolveDataPaths().databaseFile);
   if (databaseFile === activeDatabaseFile) {
     throw cliError('ERR_PERIODICAL_LIVE_DATABASE_REFUSED');
   }
-  const verifyDatabaseCopy = verifyOverride || modules.verifyDatabaseCopy;
+  const verifier = loadVerifier();
+  const candidateAfterVerifier = getCandidateIdentity();
+  if (!sameCandidateIdentity(candidateStart, candidateAfterVerifier)) {
+    throw cliError('ERR_PERIODICAL_CANDIDATE_CHANGED');
+  }
+  const verifyDatabaseCopy = verifyOverride || verifier.verifyDatabaseCopy;
   const verification = await verifyDatabaseCopy(databaseFile);
   const candidateEnd = getCandidateIdentity();
   if (!sameCandidateIdentity(candidateStart, candidateEnd)) {

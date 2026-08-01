@@ -704,7 +704,6 @@ test('candidate bootstrap rejects a module-load side effect before verification 
   const tempDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'periodicals-bootstrap-side-effect-'));
   const stateFile = path.join(tempDir, 'identity');
   const moduleFile = path.join(tempDir, 'candidate-module.js');
-  let verified = false;
   try {
     fs.writeFileSync(stateFile, 'start', { flag: 'wx' });
     fs.writeFileSync(moduleFile, `
@@ -712,26 +711,55 @@ test('candidate bootstrap rejects a module-load side effect before verification 
       module.exports = { verifyDatabaseCopy: async () => ({ passed: true }) };
     `, { flag: 'wx' });
 
-    await assert.rejects(
-      runCandidateVerification({
-        databaseFile: '/private/tmp/unused.sqlite',
-        getCandidateIdentity: () => ({
-          head: 'head',
-          tree: fs.readFileSync(stateFile, 'utf8'),
-          clean: true,
+    for (const sideEffectStage of ['data-paths', 'verifier']) {
+      fs.writeFileSync(stateFile, 'start');
+      delete require.cache[require.resolve(moduleFile)];
+      let verified = false;
+      await assert.rejects(
+        runCandidateVerification({
+          databaseFile: '/private/tmp/unused.sqlite',
+          getCandidateIdentity: () => ({
+            head: 'head',
+            tree: fs.readFileSync(stateFile, 'utf8'),
+            clean: true,
+          }),
+          loadCandidateDataPaths: () => {
+            if (sideEffectStage === 'data-paths') require(moduleFile);
+            return { resolveDataPaths: () => ({ databaseFile: '/private/tmp/live.sqlite' }) };
+          },
+          loadCandidateVerifier: () => (sideEffectStage === 'verifier'
+            ? require(moduleFile)
+            : { verifyDatabaseCopy: async () => ({ passed: true }) }),
+          verifyDatabaseCopy: async () => { verified = true; },
         }),
-        loadCandidateModules: () => ({
-          ...require(moduleFile),
-          resolveDataPaths: () => ({ databaseFile: '/private/tmp/live.sqlite' }),
-        }),
-        verifyDatabaseCopy: async () => { verified = true; },
-      }),
-      error => error.code === 'ERR_PERIODICAL_CANDIDATE_CHANGED',
-    );
-    assert.equal(verified, false);
+        error => error.code === 'ERR_PERIODICAL_CANDIDATE_CHANGED',
+      );
+      assert.equal(verified, false);
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('live database refusal occurs before the SQLite verifier module loads', async () => {
+  const { runCandidateVerification } = require('../scripts/verify-periodicals-shadow');
+  let verifierLoaded = false;
+
+  await assert.rejects(
+    runCandidateVerification({
+      databaseFile: '/private/tmp/live.sqlite',
+      getCandidateIdentity: () => ({ head: 'head', tree: 'tree', clean: true }),
+      loadCandidateDataPaths: () => ({
+        resolveDataPaths: () => ({ databaseFile: '/private/tmp/live.sqlite' }),
+      }),
+      loadCandidateVerifier: () => {
+        verifierLoaded = true;
+        return { verifyDatabaseCopy: async () => ({ passed: true }) };
+      },
+    }),
+    error => error.code === 'ERR_PERIODICAL_LIVE_DATABASE_REFUSED',
+  );
+  assert.equal(verifierLoaded, false);
 });
 
 test('receipt path remains absent when the final identity barrier terminates the process', () => {
