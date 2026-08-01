@@ -237,6 +237,49 @@ async function seedLateFrozenHistory(databaseFile) {
   }
 }
 
+async function seedSameMillisecondHistory(databaseFile, { freezeBeforeBuild }) {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      aiAdapter: null,
+      logger() {},
+    });
+    const firstPeriodStartAt = Date.parse('2026-07-26T16:00:00.000Z');
+    const secondPeriodStartAt = firstPeriodStartAt + 86_400_000;
+    const sharedTimestamp = secondPeriodStartAt + 1_000;
+
+    periodicals.syncOpenDaily({ now: firstPeriodStartAt + 1_000, trigger: 'same-ms-red' });
+    await periodicals.runNextBuild({ now: firstPeriodStartAt + 2_000 });
+
+    const freezeFirst = async () => {
+      periodicals.finalizeDueIssues({ now: sharedTimestamp });
+      await periodicals.runNextBuild({ now: sharedTimestamp });
+    };
+    const buildSecond = async () => {
+      periodicals.syncOpenDaily({ now: sharedTimestamp, trigger: 'same-ms-red' });
+      await periodicals.runNextBuild({ now: sharedTimestamp });
+    };
+    if (freezeBeforeBuild) {
+      await freezeFirst();
+      await buildSecond();
+    } else {
+      await buildSecond();
+      await freezeFirst();
+    }
+
+    const second = db.prepare(`
+      SELECT selection_context_json
+      FROM periodical_issues
+      WHERE cadence = 'daily' AND period_key = '2026-07-28'
+    `).get();
+    return JSON.parse(second.selection_context_json).frozenDailyHistory;
+  } finally {
+    db.close();
+  }
+}
+
 function seedProtectedFacts(databaseFile, { externalSource = false } = {}) {
   const db = new DatabaseSync(databaseFile);
   const sourceId = externalSource ? 'external-source' : 'verified-source';
@@ -567,6 +610,27 @@ test('shadow verifier reconstructs Daily history at the succeeded job cutoff', a
     assert.equal(receipt.provenance.inputHashMismatchCount, 0);
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('shadow verifier accepts both causal history orders at an equal millisecond cutoff', async t => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  for (const freezeBeforeBuild of [false, true]) {
+    await t.test(freezeBeforeBuild ? 'freeze then build' : 'build then freeze', async () => {
+      const dataDir = createTempDataDir('namoo-reader-periodicals-same-ms-history-');
+      try {
+        initializeStore(dataDir);
+        const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+        const history = await seedSameMillisecondHistory(databaseFile, { freezeBeforeBuild });
+        assert.equal(history.length, freezeBeforeBuild ? 1 : 0);
+
+        const receipt = await verifyDatabaseCopy(databaseFile);
+        assert.equal(receipt.provenance.selectionContextMismatchCount, 0);
+        assert.equal(receipt.provenance.inputHashMismatchCount, 0);
+      } finally {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
   }
 });
 

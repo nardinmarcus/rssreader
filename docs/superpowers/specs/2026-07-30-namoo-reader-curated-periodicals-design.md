@@ -445,7 +445,7 @@ queued -> running -> succeeded
 
 shadow 验证不能把“重算后 content hash 自洽”当作 canonical Issue identity。验证器必须由 cadence/period key 独立推导 deterministic ID、上海自然窗口、coverage/status/revision/frozenAt 约束，并证明每个 cadence 的 volume 按周期从 1 连续递增；自洽重签后的错误 timezone、窗口、卷号或冻结身份必须拒绝。
 
-日报的 `frozenDailyHistory` 是构建时 preimage：以该修订唯一 succeeded job 的 `candidate_cutoff_at` 为可见性截点，只纳入当时已经冻结的更早日报。验证时后来才冻结的日报不得反向补入旧修订。`revision=0` 可以保留尚未发布的 durable task，但任何 succeeded task 都必须对应 revision 大于零、完整 Issue 与可重算 content hash。
+日报的 `frozenDailyHistory` 是构建时 preimage：以该修订唯一 succeeded job 的 `candidate_cutoff_at` 为可见性截点，截点前已冻结的更早日报必须纳入，截点后才冻结的不得反向补入。现有毫秒时间戳不能判定 `frozen_at === candidate_cutoff_at` 时的事务先后；该等号边界允许持久化 history 选择纳入或排除，但验证器仍须从对应 SQLite Frozen Daily 重建并逐项匹配所选 snapshot。`revision=0` 可以保留尚未发布的 durable task，但任何 succeeded task 都必须对应 revision 大于零、完整 Issue 与可重算 content hash。
 
 ## 13. 生命周期与并发
 

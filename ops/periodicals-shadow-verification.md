@@ -57,7 +57,7 @@ npm run verify:periodicals-shadow -- \
 - `source_preferences`、`custom_sources`、`entries`、`users`、密码摘要、`user_entry_states`、`entry_stats` 的行数和 SQLite type-tagged 原始值 SHA-256 完全一致；CRLF、Unicode 组合形式、SQLite 类型变化或两个相邻 REAL 值都必须改变摘要；
 - 每条 Evidence 都关联 SQLite Entry，Evidence/Entry 的 Source ID 一致，Source ID 来自内建或 SQLite 自定义 Source；日报的每个 Candidate 都必须保存完整构建时输入 preimage、稳定 Source ID，并关联同 Source 的 SQLite Entry，随后由该 preimage 重算候选哈希、再由稳定身份投影重算 `sourceInputHash`；
 - 每个 Issue 必须由 cadence/periodKey 重建 deterministic ID、`Asia/Shanghai` 自然窗口、合法 coverage/status/revision/frozenAt；各 cadence 的 volume 必须按周期从 1 连续递增。`contentHash` 即使在篡改后重新计算，也不能替代这组 canonical identity 与跨期拓扑检查；
-- Daily 必须从完整 candidate/source/history preimage 重算 `sourceInputHash → inputHash`；history 只包含唯一 succeeded job 的 `candidateCutoffAt` 之前已冻结的日报，不能把验证时才出现的晚到冻结补进构建时 preimage。`revision=0` 可以拥有 queued/running/retry 等草稿任务，但不得拥有 succeeded job；
+- Daily 必须从完整 candidate/source/history preimage 重算 `sourceInputHash → inputHash`；history 必须包含唯一 succeeded job 的 `candidateCutoffAt` 之前已冻结的日报，并排除之后才冻结的日报。若 `frozenAt` 与 cutoff 毫秒值相等，现有时间精度无法证明事务先后，可按该修订持久化 history 选择纳入或排除，但被选择的 snapshot 仍须从 SQLite Frozen Daily 完整重建并匹配。`revision=0` 可以拥有 queued/running/retry 等草稿任务，但不得拥有 succeeded job；
 - Weekly/Monthly 必须从 cadence/periodKey 推导完整 Asia/Shanghai 自然周期，按日逐项匹配唯一冻结 Daily 的 Issue ID、revision、日期边界与重算后的 contentHash，再重算自己的 `sourceInputHash → inputHash` 与精确 selection context。空集合、缺日、重复、范围外日报或错误 revision/contentHash 一律 fail closed；周/月 Evidence 只能追溯到这组完整输入日报；每期还必须绑定 deterministic ID、成功状态、as-of/cutoff、算法版本、score config 与计数均一致的唯一 succeeded job，且 `contentHash` 能从 SQLite 文档重算；
 - 输出不包含数据库路径或受保护字段。
 
