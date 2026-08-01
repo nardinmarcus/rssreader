@@ -72,5 +72,8 @@ test('periodical workspace defines three responsive bands, focus, touch, and ove
 test('ordinary reader routing yields periodical paths to the isolated periodical state machine', () => {
   assert.match(app, /function isPeriodicalWorkspacePath\(pathname[\s\S]*?\/\^\\\/periodicals/);
   assert.match(app, /addEventListener\('popstate'[\s\S]*?if \(isPeriodicalWorkspacePath\(\)\) return;/);
-  assert.match(app, /if \(!isPeriodicalWorkspacePath\(\)\) \{\s*await openEntryFromUrl\(\{ entriesLoaded: true \}\);/);
+  assert.match(
+    app,
+    /if \(isPeriodicalWorkspacePath\(\)\) \{\s*renderSidebar\(\);\s*\} else \{\s*await openEntryFromUrl\(\{ entriesLoaded: true \}\);/,
+  );
 });

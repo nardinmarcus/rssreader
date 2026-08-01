@@ -12157,7 +12157,9 @@ $('#reader-pane').addEventListener('scroll', hideArticleLinkMenu, { passive: tru
       loadContributors(),
     ]);
     renderAgent();
-    if (!isPeriodicalWorkspacePath()) {
+    if (isPeriodicalWorkspacePath()) {
+      renderSidebar();
+    } else {
       await openEntryFromUrl({ entriesLoaded: true });
     }
     // 首屏先使用 SQLite 中已有内容；后台刷新期间只轮询轻量状态，完成后再更新列表一次。
