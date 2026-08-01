@@ -501,6 +501,76 @@ test('shadow verifier repeats additive migration on a work copy without changing
   }
 });
 
+test('shadow verifier accepts the last successful Daily revision while it is finalizing', async () => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-finalizing-verification-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+    seedProtectedFacts(databaseFile);
+    db = new DatabaseSync(databaseFile);
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      aiAdapter: null,
+      logger() {},
+    });
+    const before = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-08-01' });
+
+    periodicals.finalizeDueIssues({ now: Date.parse('2026-08-01T16:00:00.001Z') });
+    const finalizing = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-08-01' });
+
+    assert.equal(finalizing.issue.status, 'finalizing');
+    assert.equal(finalizing.issue.revision, before.issue.revision);
+    assert.equal(finalizing.issue.contentHash, before.issue.contentHash);
+    db.close();
+    db = null;
+
+    const receipt = await verifyDatabaseCopy(databaseFile);
+    assert.equal(receipt.passed, true);
+    assert.equal(receipt.provenance.issueContentHashMismatchCount, 0);
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('shadow verifier rejects a Daily hash resigned against the finalizing workflow state', async () => {
+  const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
+  const dataDir = createTempDataDir('namoo-reader-periodicals-finalizing-resigned-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+    seedProtectedFacts(databaseFile);
+    db = new DatabaseSync(databaseFile);
+    const periodicals = createPeriodicalsModule({
+      db,
+      mode: 'shadow',
+      aiAdapter: null,
+      logger() {},
+    });
+    periodicals.finalizeDueIssues({ now: Date.parse('2026-08-01T16:00:00.001Z') });
+    const row = db.prepare('SELECT * FROM periodical_issues WHERE id = ?').get(VERIFIED_ISSUE_ID);
+    const resignedHash = computePeriodicalContentHash(readStoredPeriodicalIssue(db, row));
+
+    assert.notEqual(resignedHash, row.content_hash);
+    db.prepare('UPDATE periodical_issues SET content_hash = ? WHERE id = ?')
+      .run(resignedHash, VERIFIED_ISSUE_ID);
+    db.close();
+    db = null;
+
+    await assert.rejects(
+      verifyDatabaseCopy(databaseFile),
+      error => error.code === 'ERR_PERIODICAL_EVIDENCE_PROVENANCE',
+    );
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('shadow verifier fails closed when evidence introduces an external Source ID', async () => {
   const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
   const dataDir = createTempDataDir('namoo-reader-periodicals-provenance-');
