@@ -301,13 +301,15 @@
     const app = document.querySelector('#app');
     const trigger = document.querySelector('#periodicals-open');
     const nav = document.querySelector('#periodicals-nav');
+    const readerPane = document.querySelector('#reader-pane');
     const reader = document.querySelector('#periodicals-reader');
     const empty = document.querySelector('#periodicals-empty');
     const periodicalDocument = document.querySelector('#periodicals-document');
     const list = document.querySelector('#periodicals-list');
     const back = document.querySelector('#periodicals-back');
     const tabs = [...document.querySelectorAll('#periodicals-tabs [role="tab"]')];
-    if (!app || !trigger || !nav || !reader || !empty || !periodicalDocument || !list || !back) {
+    if (!app || !trigger || !nav || !readerPane || !reader || !empty
+      || !periodicalDocument || !list || !back) {
       return false;
     }
     const mobileLayout = Boolean(
@@ -398,7 +400,7 @@
         : element('span', 'periodical-evidence-link', title);
       if (entryAvailable) {
         entry.href = `/articles/${encodeURIComponent(entryId)}`;
-        entry.addEventListener('click', replaceHistoryState);
+        entry.addEventListener('click', () => replaceHistoryState());
       }
       evidence.append(
         source,
@@ -457,7 +459,7 @@
           ...(previous.periodicals || {}),
           ...state,
           listScroll: Number(list.scrollTop) || 0,
-          documentScroll: Number(reader.scrollTop) || 0,
+          documentScroll: Number(readerPane.scrollTop) || 0,
         },
       }, '', pathname);
     }
@@ -649,7 +651,7 @@
       },
       restoreScroll({ listScroll = 0, documentScroll = 0 } = {}) {
         list.scrollTop = Math.max(0, Number(listScroll) || 0);
-        reader.scrollTop = Math.max(0, Number(documentScroll) || 0);
+        readerPane.scrollTop = Math.max(0, Number(documentScroll) || 0);
       },
     };
     const request = async (url, options = {}) => {
@@ -757,7 +759,7 @@
     });
 
     list.addEventListener('scroll', replaceHistoryState);
-    reader.addEventListener('scroll', replaceHistoryState);
+    readerPane.addEventListener('scroll', replaceHistoryState);
     if (typeof root.addEventListener === 'function') {
       root.addEventListener('popstate', event => {
         const nextRoute = parsePeriodicalPath(root.location.pathname);

@@ -43,6 +43,7 @@ function fakeBrowser({ mode, pathname, responses = [], historyState = null, widt
     '#app': fakeElement(),
     '#periodicals-open': fakeElement(['hidden']),
     '#periodicals-nav': fakeElement(['hidden']),
+    '#reader-pane': fakeElement(),
     '#periodicals-reader': fakeElement(['hidden']),
     '#periodicals-empty': fakeElement(['hidden']),
     '#periodicals-document': fakeElement(['hidden']),
@@ -518,8 +519,8 @@ test('periodical workspace loads the next cursor and persists independent list a
 
   browser.elements['#periodicals-list'].scrollTop = 240;
   browser.elements['#periodicals-list'].dispatch('scroll');
-  browser.elements['#periodicals-reader'].scrollTop = 720;
-  browser.elements['#periodicals-reader'].dispatch('scroll');
+  browser.elements['#reader-pane'].scrollTop = 720;
+  browser.elements['#reader-pane'].dispatch('scroll');
 
   assert.deepEqual(browser.root.history.state.periodicals, {
     cadence: 'daily',
@@ -566,7 +567,7 @@ test('popstate restores cadence, period, cursor depth, and both scroll container
   assert.match(flattenedText(browser.elements['#periodicals-list']), /2026-W30/);
   assert.match(flattenedText(browser.elements['#periodicals-document']), /2026-W31/);
   assert.equal(browser.elements['#periodicals-list'].scrollTop, 180);
-  assert.equal(browser.elements['#periodicals-reader'].scrollTop, 560);
+  assert.equal(browser.elements['#reader-pane'].scrollTop, 560);
 });
 
 test('mobile cadence routes stay list-first and enter detail only after selecting an issue', async () => {
@@ -908,6 +909,12 @@ test('periodical mount renders an explainable issue with score reasons and SQLit
   );
   assert.equal(descendants(documentNode).some(node => node.tagName === 'DETAILS'), true);
   assert.equal(descendants(documentNode).some(node => node.tagName === 'SUMMARY'), true);
+
+  const internalEvidenceLink = links.find(link => link.href === '/articles/entry-one');
+  browser.elements['#reader-pane'].scrollTop = 360;
+  internalEvidenceLink.dispatch('click', { type: 'click' });
+  assert.equal(browser.root.location.pathname, '/periodicals/daily/2026-07-30');
+  assert.equal(browser.root.history.state.periodicals.documentScroll, 360);
 });
 
 test('Weekly deep link renders its index, detail, rollup score, and Frozen evidence', async () => {

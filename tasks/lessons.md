@@ -169,3 +169,5 @@
 - When SQLite's raw sort-key domain is wider than the public cursor grammar, encode a versioned opaque continuation token and prove the API accepts its own output; returning an invalid raw key can permanently hide older valid rows.
 - A validation-filtered keyset page should stop as soon as it is full unless the cursor also carries any prefetched visible row; ordinary lookahead plus a cursor at the last returned item repeats every intervening semantic validation.
 - After patching a multiline boolean expression, run the syntax checker before semantic tests; a stray statement terminator can turn an intended continuation condition into an immediate parse failure.
+- Persist scroll against the element that actually owns overflow at the active breakpoint; an inner document can have the full content height while its parent pane owns the nonzero `scrollTop`.
+- Never pass a history-state writer directly as a DOM event listener when its first parameter is a pathname; wrap the listener so the browser event cannot become a literal `[object Event]` route.
