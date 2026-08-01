@@ -1,5 +1,7 @@
 # Deployment lessons
 
+- When a cold deep link deliberately bypasses the ordinary route opener, render every shared projection that opener previously hydrated after the common API load; DOM-preservation assertions need a real cold-load browser comparison because static source checks cannot reveal an unpainted sidebar.
+- When route ownership becomes conditional, update static performance guards to assert both the preserved call order and the new route predicate; replacing the old unconditional source fragment with a loose presence check can hide either duplicate initialization or a missing ordinary-reader path.
 - Cadence recovery must select the oldest eligible period that is not yet Frozen, not only the most recently completed period; test startup after multiple missed boundaries so durable work and cadence-local volume numbers cannot skip or reorder history.
 - When extracting a cadence-shared rollup pipeline, preserve existing cadence-specific prose exactly; deterministic overview text is both a user-facing contract and part of the frozen content hash, so run the established cadence regression before adding new cadence cases.
 - Build cache keys from the same normalized query values used to execute the request. A raw invalid or out-of-range `limit` must not produce one result shape while colliding with the default-list cache key; prove the invalid-first then valid-request order in a regression test.
@@ -167,3 +169,6 @@
 - When SQLite's raw sort-key domain is wider than the public cursor grammar, encode a versioned opaque continuation token and prove the API accepts its own output; returning an invalid raw key can permanently hide older valid rows.
 - A validation-filtered keyset page should stop as soon as it is full unless the cursor also carries any prefetched visible row; ordinary lookahead plus a cursor at the last returned item repeats every intervening semantic validation.
 - After patching a multiline boolean expression, run the syntax checker before semantic tests; a stray statement terminator can turn an intended continuation condition into an immediate parse failure.
+- Persist scroll against the element that actually owns overflow at the active breakpoint; an inner document can have the full content height while its parent pane owns the nonzero `scrollTop`.
+- Never pass a history-state writer directly as a DOM event listener when its first parameter is a pathname; wrap the listener so the browser event cannot become a literal `[object Event]` route.
+- When a JavaScript state machine branches on a CSS breakpoint, subscribe to the same live `MediaQueryList` and test its change event; mount-time viewport checks drift after an in-session resize.

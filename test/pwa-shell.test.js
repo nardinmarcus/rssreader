@@ -108,6 +108,7 @@ test('index.html links the manifest and theme-color fallback', () => {
   assert.match(html, /id="pwa-install-btn"/);
   assert.match(html, /id="shell-update-banner"/);
   assert.match(html, /id="network-banner"/);
+  assert.match(html, /id="network-banner"[^>]*>需要连接网络<\/div>/);
 });
 
 test('service worker precaches the minimal reading shell and never claims /api', () => {
@@ -135,6 +136,7 @@ test('service worker precaches the minimal reading shell and never claims /api',
   assert.match(sw, /\/apple-touch-icon\.png/);
   assert.doesNotMatch(sw, /vendor\/persona/);
   assert.match(sw, /pathname\.startsWith\(['"]\/api\/['"]\)/);
+  assert.doesNotMatch(sw, /['"]\/api\/periodicals/);
   assert.match(sw, /mode === ['"]navigate['"]/);
   assert.match(sw, /SKIP_WAITING/);
   assert.doesNotMatch(sw, /caches\.open\([^)]*\)[\s\S]{0,200}\/api\//);
@@ -150,7 +152,8 @@ test('client registers the service worker only outside local development hosts',
   assert.match(app, /beforeinstallprompt/);
   assert.match(app, /shell-update-banner|showShellUpdatePrompt|Shell Update/);
   assert.match(app, /SKIP_WAITING/);
-  assert.match(app, /需要网络|当前离线/);
+  assert.match(app, /需要连接网络/);
+  assert.doesNotMatch(app, /当前离线[，·]?\s*内容需要网络/);
   assert.match(app, /theme-color|syncThemeColor/);
 });
 

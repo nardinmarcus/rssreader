@@ -444,6 +444,7 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
     assert.equal(body.events[0].score.sourceQuality.points, 30);
     assert.deepEqual(body.events[0].summaryEvidenceIds, ['entry-evidence']);
     assert.deepEqual(body.evidence[0].sourceLabels, ['AI', '产品']);
+    assert.equal(body.evidence[0].entryAvailable, undefined);
     assert.equal(body.generatedAt, 390);
     assert.equal(body.frozenAt, 400);
     assert.equal(JSON.stringify(body).includes('private-source-input'), false);
@@ -454,6 +455,40 @@ test('periodical detail returns frozen SQLite evidence through an allowlist proj
       headers: { 'If-None-Match': `"${contentHash}"` },
     });
     assert.equal(notModified.status, 304);
+
+    const availableResponse = await fetch(
+      `${server.baseUrl}/api/periodicals/daily/2026-07-30/evidence-availability`,
+    );
+    assert.equal(availableResponse.status, 200);
+    assert.match(String(availableResponse.headers.get('cache-control')), /no-store/);
+    assert.deepEqual(await availableResponse.json(), {
+      evidence: [{
+        eventId: 'event-one',
+        entryId: 'entry-evidence',
+        entryAvailable: true,
+      }],
+    });
+
+    const deleted = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    deleted.prepare('UPDATE entries SET deleted_at = ? WHERE id = ?').run(500, 'entry-evidence');
+    deleted.close();
+    const unavailableResponse = await fetch(`${server.baseUrl}/api/periodicals/daily/2026-07-30`, {
+      headers: { 'If-None-Match': `"${contentHash}"` },
+    });
+    assert.equal(unavailableResponse.status, 304);
+    assert.equal(unavailableResponse.headers.get('etag'), `"${contentHash}"`);
+    assert.equal(body.evidence[0].entryTitleZh, '中文标题');
+    assert.equal(body.evidence[0].summaryExcerpt, 'Evidence excerpt.');
+    const unavailableAvailability = await fetch(
+      `${server.baseUrl}/api/periodicals/daily/2026-07-30/evidence-availability`,
+    );
+    assert.deepEqual(await unavailableAvailability.json(), {
+      evidence: [{
+        eventId: 'event-one',
+        entryId: 'entry-evidence',
+        entryAvailable: false,
+      }],
+    });
 
     const corrupted = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
     corrupted.exec(`
@@ -526,6 +561,9 @@ test('periodical shell routes are public only when PERIODICALS_MODE is on', { ti
   const dataDir = createTempDataDir('namoo-reader-periodicals-shell-');
   const paths = [
     '/periodicals',
+    '/periodicals/daily',
+    '/periodicals/weekly',
+    '/periodicals/monthly',
     '/periodicals/daily/2026-07-30',
     '/periodicals/weekly/2026-W31',
     '/periodicals/monthly/2026-07',
