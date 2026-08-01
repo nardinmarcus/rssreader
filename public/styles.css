@@ -8624,7 +8624,7 @@ body[data-periodicals-mode="off"] .periodicals-open {
   min-height: 44px;
   margin: 12px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--bg-1);
   color: var(--text-1);
   font-weight: 700;
@@ -11133,7 +11133,7 @@ body[data-periodicals-mode="off"] .periodicals-open {
     margin: 12px 16px 0;
     padding: 0 12px;
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: 8px;
     background: var(--bg-1);
     color: var(--text-1);
     font-weight: 700;

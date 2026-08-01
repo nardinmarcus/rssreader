@@ -225,12 +225,12 @@
         if (!await loadMore()) break;
         if (cursor === targetCursor) break;
       }
-      if (indexOnly && !route.periodKey) {
+      if (current.issues.length === 0) {
+        view.renderEmpty(route.cadence);
         restoreViewScroll(restore);
         return true;
       }
-      if (current.issues.length === 0) {
-        view.renderEmpty(route.cadence);
+      if (indexOnly && !route.periodKey) {
         restoreViewScroll(restore);
         return true;
       }
@@ -312,9 +312,8 @@
       || !periodicalDocument || !list || !back) {
       return false;
     }
-    const mobileLayout = Boolean(
-      root.matchMedia && root.matchMedia('(max-width: 860px)').matches,
-    );
+    const mobileMedia = root.matchMedia && root.matchMedia('(max-width: 860px)');
+    let mobileLayout = Boolean(mobileMedia && mobileMedia.matches);
     const selectedPeriodKeys = new Map();
 
     function element(tagName, className, text) {
@@ -446,7 +445,7 @@
 
     let controller = null;
 
-    function replaceHistoryState(pathname = root.location.pathname) {
+    function replaceHistoryState(pathname = root.location.pathname, scroll = null) {
       if (!controller || !root.history || typeof root.history.replaceState !== 'function') return;
       const state = controller.getState();
       if (!state) return;
@@ -458,10 +457,23 @@
         periodicals: {
           ...(previous.periodicals || {}),
           ...state,
-          listScroll: Number(list.scrollTop) || 0,
-          documentScroll: Number(readerPane.scrollTop) || 0,
+          listScroll: Number((scroll && scroll.listScroll) ?? list.scrollTop) || 0,
+          documentScroll: Number((scroll && scroll.documentScroll) ?? readerPane.scrollTop) || 0,
         },
       }, '', pathname);
+    }
+
+    function recordHistoryScroll(element, field) {
+      const scrollTop = Number(element && element.scrollTop) || 0;
+      const clientHeight = Number(element && element.clientHeight) || 0;
+      const scrollHeight = Number(element && element.scrollHeight) || 0;
+      if (scrollTop === 0 && scrollHeight <= clientHeight) return;
+      const previous = root.history && root.history.state
+        && root.history.state.periodicals || {};
+      replaceHistoryState(root.location.pathname, {
+        listScroll: field === 'listScroll' ? scrollTop : previous.listScroll,
+        documentScroll: field === 'documentScroll' ? scrollTop : previous.documentScroll,
+      });
     }
 
     const view = {
@@ -758,8 +770,8 @@
       return navigateCadence(state && state.cadence || 'daily');
     });
 
-    list.addEventListener('scroll', () => replaceHistoryState());
-    readerPane.addEventListener('scroll', () => replaceHistoryState());
+    list.addEventListener('scroll', () => recordHistoryScroll(list, 'listScroll'));
+    readerPane.addEventListener('scroll', () => recordHistoryScroll(readerPane, 'documentScroll'));
     if (typeof root.addEventListener === 'function') {
       root.addEventListener('popstate', event => {
         const nextRoute = parsePeriodicalPath(root.location.pathname);
@@ -769,6 +781,21 @@
         }
         const nextRestore = event && event.state && event.state.periodicals;
         return openPath(root.location.pathname, { restore: nextRestore || null });
+      });
+    }
+    if (mobileMedia && typeof mobileMedia.addEventListener === 'function') {
+      mobileMedia.addEventListener('change', event => {
+        const nextMobileLayout = Boolean(event && event.matches);
+        if (nextMobileLayout === mobileLayout) return undefined;
+        mobileLayout = nextMobileLayout;
+        const nextRestore = root.history && root.history.state
+          && root.history.state.periodicals;
+        return openPath(root.location.pathname, { restore: nextRestore || null }).then(opened => {
+          if (opened && nextRestore) {
+            replaceHistoryState(root.location.pathname, nextRestore);
+          }
+          return opened;
+        });
       });
     }
 

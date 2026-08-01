@@ -65,6 +65,8 @@ test('periodical workspace defines three responsive bands, focus, touch, and ove
   assert.match(styles, /#app\.periodicals-mode[\s\S]*?overflow-x:\s*hidden/);
   assert.match(styles, /\.periodicals-tabs \[role="tab"\]:focus-visible/);
   assert.match(styles, /\.periodicals-load-more[\s\S]*?min-height:\s*44px/);
+  assert.match(styles, /\.periodicals-load-more\s*\{[^}]*border-radius:\s*8px/);
+  assert.match(styles, /\.periodicals-back\s*\{[^}]*border-radius:\s*8px/);
   assert.match(styles, /@media \(max-width: 860px\)[\s\S]*?\.periodicals-tabs \[role="tab"\][\s\S]*?min-height:\s*44px/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });

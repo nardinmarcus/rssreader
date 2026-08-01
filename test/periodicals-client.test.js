@@ -12,12 +12,15 @@ function fakeElement(classes = [], tagName = 'DIV') {
   const values = new Set(classes);
   const listeners = new Map();
   const attributes = new Map();
+  let scrollLocked = false;
+  let scrollValue = 0;
   const node = {
     attributes,
     children: [],
     className: '',
+    clientHeight: 100,
     dataset: {},
-    scrollTop: 0,
+    scrollHeight: 200,
     tagName,
     classList: {
       add: value => values.add(value),
@@ -30,8 +33,23 @@ function fakeElement(classes = [], tagName = 'DIV') {
       return listeners.get(type)?.({ preventDefault() {}, ...event });
     },
     focus() { this.focused = true; },
+    get scrollTop() { return scrollValue; },
     removeAttribute: name => attributes.delete(name),
     replaceChildren(...children) { this.children = children; },
+    set scrollTop(value) {
+      if (!scrollLocked) scrollValue = Number(value) || 0;
+    },
+    setScrollLocked(value) {
+      scrollLocked = Boolean(value);
+      if (scrollLocked) {
+        scrollValue = 0;
+        this.clientHeight = 0;
+        this.scrollHeight = 0;
+      } else {
+        this.clientHeight = 100;
+        this.scrollHeight = 200;
+      }
+    },
     setAttribute: (name, value) => attributes.set(name, String(value)),
     textContent: '',
   };
@@ -39,6 +57,13 @@ function fakeElement(classes = [], tagName = 'DIV') {
 }
 
 function fakeBrowser({ mode, pathname, responses = [], historyState = null, width = 1280, online = true }) {
+  const mobileMediaListeners = [];
+  const mobileMedia = {
+    matches: width <= 860,
+    addEventListener(type, listener) {
+      if (type === 'change') mobileMediaListeners.push(listener);
+    },
+  };
   const elements = {
     '#app': fakeElement(),
     '#periodicals-open': fakeElement(['hidden']),
@@ -117,7 +142,9 @@ function fakeBrowser({ mode, pathname, responses = [], historyState = null, widt
     history,
     innerWidth: width,
     location,
-    matchMedia: query => ({ matches: /max-width:\s*860px/.test(query) && width <= 860 }),
+    matchMedia: query => (/max-width:\s*860px/.test(query)
+      ? mobileMedia
+      : { matches: false }),
     navigator: { onLine: online },
   };
   return {
@@ -126,6 +153,10 @@ function fakeBrowser({ mode, pathname, responses = [], historyState = null, widt
     fetched,
     fetchCount: () => fetchCount,
     pushed,
+    async setMobileLayout(matches) {
+      mobileMedia.matches = Boolean(matches);
+      await Promise.all(mobileMediaListeners.map(listener => listener({ matches: mobileMedia.matches })));
+    },
     tabs,
     root,
   };
@@ -611,6 +642,57 @@ test('mobile cadence routes stay list-first and enter detail only after selectin
 
   browser.elements['#periodicals-back'].dispatch('click');
   assert.equal(browser.root.history.backCalls, 1);
+});
+
+test('mobile cadence routes render their empty state instead of a blank list', async () => {
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/weekly',
+    width: 390,
+    responses: [{ issues: [], nextCursor: null }],
+  });
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  assert.equal(browser.elements['#periodicals-empty'].classList.contains('hidden'), false);
+  assert.equal(browser.elements['#periodicals-empty'].textContent, '暂无精选周报');
+});
+
+test('periodical routing follows live changes across the mobile breakpoint', async () => {
+  const issue = { cadence: 'daily', periodKey: '2026-07-30', status: 'frozen' };
+  const page = { issues: [issue], nextCursor: null };
+  const detail = { issue, themes: [], events: [], evidence: [] };
+  const browser = fakeBrowser({
+    mode: 'on',
+    pathname: '/periodicals/daily/2026-07-30',
+    responses: [page, detail, page, detail, page, detail],
+  });
+  const mounted = mountPeriodicals(browser.root);
+  await mounted.ready;
+
+  assert.equal(browser.elements['#app'].classList.contains('periodical-detail-open'), false);
+  browser.elements['#periodicals-list'].scrollTop = 180;
+  browser.elements['#periodicals-list'].dispatch('scroll');
+  browser.elements['#reader-pane'].scrollTop = 240;
+  browser.elements['#reader-pane'].dispatch('scroll');
+  assert.equal(browser.root.history.state.periodicals.listScroll, 180);
+  assert.equal(browser.root.history.state.periodicals.documentScroll, 240);
+  browser.elements['#periodicals-list'].setScrollLocked(true);
+  browser.elements['#reader-pane'].setScrollLocked(true);
+  await browser.setMobileLayout(true);
+  assert.equal(browser.elements['#app'].classList.contains('periodical-detail-open'), true);
+  assert.equal(browser.elements['#periodicals-back'].classList.contains('hidden'), false);
+  browser.elements['#periodicals-list'].dispatch('scroll');
+  browser.elements['#reader-pane'].dispatch('scroll');
+  assert.equal(browser.root.history.state.periodicals.listScroll, 180);
+  assert.equal(browser.root.history.state.periodicals.documentScroll, 240);
+
+  browser.elements['#periodicals-list'].setScrollLocked(false);
+  browser.elements['#reader-pane'].setScrollLocked(false);
+  await browser.setMobileLayout(false);
+  assert.equal(browser.elements['#app'].classList.contains('periodical-detail-open'), false);
+  assert.equal(browser.elements['#periodicals-back'].classList.contains('hidden'), true);
+  assert.equal(browser.fetchCount(), 6);
 });
 
 test('desktop canonicalizes the current issue into the URL and remembers selection per cadence', async () => {

@@ -171,3 +171,4 @@
 - After patching a multiline boolean expression, run the syntax checker before semantic tests; a stray statement terminator can turn an intended continuation condition into an immediate parse failure.
 - Persist scroll against the element that actually owns overflow at the active breakpoint; an inner document can have the full content height while its parent pane owns the nonzero `scrollTop`.
 - Never pass a history-state writer directly as a DOM event listener when its first parameter is a pathname; wrap the listener so the browser event cannot become a literal `[object Event]` route.
+- When a JavaScript state machine branches on a CSS breakpoint, subscribe to the same live `MediaQueryList` and test its change event; mount-time viewport checks drift after an in-session resize.
