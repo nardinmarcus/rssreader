@@ -172,3 +172,6 @@
 - Persist scroll against the element that actually owns overflow at the active breakpoint; an inner document can have the full content height while its parent pane owns the nonzero `scrollTop`.
 - Never pass a history-state writer directly as a DOM event listener when its first parameter is a pathname; wrap the listener so the browser event cannot become a literal `[object Event]` route.
 - When a JavaScript state machine branches on a CSS breakpoint, subscribe to the same live `MediaQueryList` and test its change event; mount-time viewport checks drift after an in-session resize.
+- `gh api -f` selects POST unless the method is explicitly GET; tracker bootstrap probes must use `-X GET` or query parameters in the URL, then reread Issue/assignee/comment state before claiming a failed request was non-mutating.
+- Production-scale SQLite identity checks must stream rows in deterministic primary-key order; `.all()` can turn a logically read-only verifier into an out-of-memory failure when Entry bodies dominate the database.
+- Keep the production SQLite mount read-only during online backup, but allow the separate temporary copy directory to create SQLite auxiliary files while checking it; a read-only copy bind can fail before `query_only` is applied even though the source backup is sound.

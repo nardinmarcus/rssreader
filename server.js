@@ -3346,6 +3346,14 @@ app.get('/api/admin/versioned-pipeline-status', requireAdmin, (req, res) => {
   }
 });
 
+app.get('/api/admin/periodicals-status', requireAdmin, (req, res) => {
+  try {
+    res.json(store.periodicals.getAdminStatus());
+  } catch (error) {
+    sendError(res, error, 'periodicals status failed');
+  }
+});
+
 app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req, res) => {
   try {
     const result = await fetcher.approveSubmissionRequest(req.params.id, {
