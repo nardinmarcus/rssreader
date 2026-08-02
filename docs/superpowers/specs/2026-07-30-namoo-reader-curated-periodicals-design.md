@@ -210,6 +210,8 @@ inputHash = SHA256(canonical(
 
 Canonical JSON 沿用仓库现有的稳定键顺序和 Unicode 规范化方式。普通巡检不会仅因墙钟前进就重建开放日报；有新文章、来源偏好变化或已启用的行为信号变化时才产生新修订。日终定稿无条件以 `periodEndAt` 重算一次。相同完整输入不创建新修订、不重复调用 AI。
 
+为使 shadow 审计能重算这条身份链，日报的 `selection_context_json` 同时持久化按稳定 ID 排序的 `candidateSnapshot` 与 `sourceSnapshot` preimage。Candidate snapshot 保存 `entryId`、稳定 `sourceId`、候选内容哈希、有效发布时间，以及生成该候选哈希的完整构建时 Source/Entry 输入 preimage；Source snapshot 保存稳定 ID、构建时名称、分类、启用状态、编辑优先级和标签。审计逐条证明 Candidate 对应 SQLite Entry 且 Source 归属一致，并由 preimage 重算候选哈希；`sourceInputHash` 仍只使用稳定的 Candidate 身份投影，不把冗余审计字段引入逻辑输入。公开渲染仍只读取冻结 Evidence；这些 preimage 只用于构建身份与审计，不以 runtime cache 代替。
+
 ## 9. 事件合并
 
 ### 9.1 规范化
@@ -291,6 +293,8 @@ importanceScore = round(sum(componentPoints), 1)
 
 周报和月报只接收冻结日报事件及其哈希。跨日事件仍使用第 9 节的保守匹配规则合并，并记录所有输入日报事件 ID。
 
+汇总输入身份按自然周期逐日绑定冻结日报的 Issue ID、revision、日期边界与 content hash；`sourceInputHash` 对这份完整有序状态计算，`inputHash` 再绑定 cadence 的 input/selection/event 版本、score config 与 summary version。持久化 selection context 必须与这些版本及自然周期日数精确一致；冻结汇总还必须存在唯一 canonical succeeded job，绑定 deterministic job ID、两个输入哈希、period-end as-of/cutoff 和同一组算法版本。
+
 汇总分数：
 
 ```text
@@ -345,7 +349,7 @@ AI 可以依据已选事件证据把每个事件归入且只归入一个主题�
 | `selection_version` | TEXT | 例如 `importance-v1` |
 | `summary_version` | TEXT | Prompt、Schema 与验证规则身份 |
 | `source_input_hash` | TEXT | 不含墙钟的候选、来源和有效行为输入身份 |
-| `selection_context_json` | TEXT | 权重、阈值、行为开关、候选/来源快照摘要 |
+| `selection_context_json` | TEXT | 权重、阈值、行为开关，以及可重算 `source_input_hash` 的完整候选/来源 snapshot preimage |
 | `input_hash` | TEXT | 本修订完整输入身份 |
 | `content_hash` | TEXT | 当前完整渲染语义内容身份 |
 | `summary_status` | TEXT | `generated` 或 `fallback` |
@@ -438,6 +442,10 @@ queued -> running -> succeeded
 - 冻结必须在同一事务中完成最终内容写入、`content_hash` 校验和状态切换。
 
 `contentHash = SHA256(canonical(issue semantic fields + ordered themes + ordered events + ordered frozen evidence + ordered issue inputs))`。计算排除 `last_built_at`、`updated_at`、任务 ID 和租约等观察元数据，包含所有会改变渲染或证据解释的字段。
+
+shadow 验证不能把“重算后 content hash 自洽”当作 canonical Issue identity。验证器必须由 cadence/period key 独立推导 deterministic ID、上海自然窗口、coverage/status/revision/frozenAt 约束，并证明每个 cadence 的 volume 按周期从 1 连续递增；自洽重签后的错误 timezone、窗口、卷号或冻结身份必须拒绝。
+
+日报的 `frozenDailyHistory` 是构建时 preimage：以该修订唯一 succeeded job 的 `candidate_cutoff_at` 为可见性截点，截点前已冻结的更早日报必须纳入，截点后才冻结的不得反向补入。现有毫秒时间戳不能判定 `frozen_at === candidate_cutoff_at` 时的事务先后；该等号边界允许持久化 history 选择纳入或排除，但验证器仍须从对应 SQLite Frozen Daily 重建并逐项匹配所选 snapshot。`revision=0` 可以保留尚未发布的 durable task，但任何 succeeded task 都必须对应 revision 大于零、完整 Issue 与可重算 content hash。
 
 ## 13. 生命周期与并发
 
@@ -696,6 +704,7 @@ GET /api/periodicals/monthly/2026-07
 
 ### 20.6 迁移与生产只读验收
 
+- 验证输入必须是独立 SQLite 副本；除 `realpath` 外还要比较 device/inode 并拒绝活动库的硬链接别名，避免因别名使用不同 WAL sidecar 而把陈旧主文件误报为 PASS。
 - 在临时数据库和生产 SQLite 副本上重复初始化，`PRAGMA quick_check=ok` 且外键无错误。
 - 迁移前后来源偏好、文章数、用户数、管理员密码摘要、阅读/收藏/浏览数据完全不变。
 - `shadow` 期刊的每条证据都能追溯到 SQLite entry 与当次来源快照，且不存在外部新增 source ID。

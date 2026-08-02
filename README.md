@@ -195,6 +195,7 @@ The DB filename `qmreader.sqlite` is a compatibility name for in-place upgrades,
 | `GET`/`POST` | `/api/entry/:id/onepage` | Onepage versions |
 | `POST` | `/api/onepages/:onepageId/publish` | Explicit publish |
 | `GET` | `/api/admin/*` | Submissions, users, disable/restore |
+| `GET` | `/api/admin/periodicals-status` | Admin-only selected-periodicals SQLite health |
 | `GET` | `/assets` · `/assets.xml` | Public asset catalog and RSS |
 
 ## Development

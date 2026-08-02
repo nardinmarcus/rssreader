@@ -23,7 +23,7 @@ async function freePort() {
   });
 }
 
-async function startServer(dataDir, mode) {
+async function startServer(dataDir, mode, extraEnv = {}) {
   const port = await freePort();
   const logs = [];
   const child = spawn(process.execPath, ['server.js'], {
@@ -40,6 +40,7 @@ async function startServer(dataDir, mode) {
       TRANSLATION_WORKER_DISABLED: '1',
       UMAMI_SRC: '',
       UMAMI_WEBSITE_ID: '',
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -56,6 +57,37 @@ async function startServer(dataDir, mode) {
   }
   child.kill('SIGTERM');
   throw new Error(`server did not start: ${logs.join('')}`);
+}
+
+async function jsonRequest(baseUrl, pathname, options = {}) {
+  const response = await fetch(`${baseUrl}${pathname}`, options);
+  let body = null;
+  try { body = await response.json(); } catch { body = null; }
+  return { response, body };
+}
+
+async function loginCookie(baseUrl, email, password) {
+  const { response, body } = await jsonRequest(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  return String(response.headers.get('set-cookie') || '').split(';')[0];
+}
+
+async function registerReader(baseUrl) {
+  const { response, body } = await jsonRequest(baseUrl, '/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'periodicals-status-reader@example.com',
+      password: 'reader-password-123',
+      displayName: 'Status Reader',
+    }),
+  });
+  assert.equal(response.status, 200, JSON.stringify(body));
+  return String(response.headers.get('set-cookie') || '').split(';')[0];
 }
 
 async function stopServer(server) {
@@ -88,6 +120,48 @@ test('periodical index is public only when PERIODICALS_MODE is on', { timeout: 3
       }
     }
   } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('periodical admin status is protected and returns only aggregate SQLite health', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir('namoo-reader-periodicals-status-api-');
+  let server = null;
+  try {
+    server = await startServer(dataDir, 'shadow', {
+      ADMIN_EMAIL: 'admin@example.com',
+      ADMIN_PASSWORD: 'test-password-123',
+      COOKIE_SECURE: '0',
+      PERIODICAL_WORKER_DISABLED: '1',
+    });
+    const readerCookie = await registerReader(server.baseUrl);
+    const adminCookie = await loginCookie(
+      server.baseUrl,
+      'admin@example.com',
+      'test-password-123',
+    );
+
+    const anonymous = await jsonRequest(server.baseUrl, '/api/admin/periodicals-status');
+    const reader = await jsonRequest(server.baseUrl, '/api/admin/periodicals-status', {
+      headers: { Cookie: readerCookie },
+    });
+    const admin = await jsonRequest(server.baseUrl, '/api/admin/periodicals-status', {
+      headers: { Cookie: adminCookie },
+    });
+
+    assert.equal(anonymous.response.status, 403);
+    assert.equal(reader.response.status, 403);
+    assert.equal(admin.response.status, 200, JSON.stringify(admin.body));
+    assert.equal(admin.body.mode, 'shadow');
+    assert.deepEqual(Object.keys(admin.body).sort(), ['generatedAt', 'issues', 'jobs', 'mode']);
+    assert.deepEqual(admin.body.issues.counts, { open: 0, finalizing: 0, frozen: 0 });
+    assert.deepEqual(admin.body.jobs.errorsByCode, {});
+    assert.doesNotMatch(
+      JSON.stringify(admin.body),
+      /admin@example|reader@example|password|cookie|session|token|prompt|provider raw/i,
+    );
+  } finally {
+    await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });

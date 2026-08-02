@@ -595,6 +595,12 @@ test('unconfigured AI and provider failures keep a complete fallback with safe d
     ['5xx', Object.assign(new Error('user-id-should-not-leak'), {
       statusCode: 502,
     }), 'provider_unavailable'],
+    ['cookie', Object.assign(new Error('Cookie: namoo_session=cookie-must-not-leak'), {
+      statusCode: 500,
+    }), 'provider_unavailable'],
+    ['session', Object.assign(new Error('session-token-must-not-leak'), {
+      code: 'provider rejected session',
+    }), 'provider_error'],
   ];
 
   for (const [name, failure, expectedCode] of failures) {
@@ -624,6 +630,8 @@ test('unconfigured AI and provider failures keep a complete fallback with safe d
         'full prompt must not leak',
         'raw provider response must not leak',
         'user-id-should-not-leak',
+        'cookie-must-not-leak',
+        'session-token-must-not-leak',
       ]) assert.equal(serialized.includes(secret), false, secret);
     });
   }
