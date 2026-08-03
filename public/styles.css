@@ -9133,6 +9133,16 @@ body[data-periodicals-mode="off"] .periodicals-open {
   gap: 0;
   justify-content: center;
   flex: none;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-1);
+}
+
+#app #sidebar .brand .brand-action:hover {
+  background: var(--bg-2);
+  border-color: transparent;
+  color: var(--text-0);
 }
 
 #app #sidebar .brand .brand-action .periodicals-open-label,
@@ -9148,7 +9158,8 @@ body[data-periodicals-mode="off"] .periodicals-open {
 }
 
 #app #sidebar .brand .brand-action .periodicals-open-icon .app-icon,
-#app #sidebar .brand .brand-action .submit-icon .app-icon {
+#app #sidebar .brand .brand-action .submit-icon .app-icon,
+#app #sidebar #sidebar-toggle .app-icon {
   --icon-size: 16px;
 }
 
@@ -9157,20 +9168,20 @@ body[data-periodicals-mode="off"] .periodicals-open {
   z-index: 12;
   top: 22px;
   right: -13px;
-  width: 26px;
-  height: 26px;
-  min-width: 26px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
   padding: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-2);
-  box-shadow: 0 2px 8px var(--shadow-soft);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  box-shadow: none;
 }
 
 #app #sidebar #sidebar-toggle:hover,
 #app #sidebar #sidebar-toggle:focus-visible {
-  border-color: var(--border-strong);
   background: var(--bg-2);
   color: var(--text-0);
 }
