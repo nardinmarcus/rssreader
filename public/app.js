@@ -1352,6 +1352,12 @@ function adminUrlFor() {
 
 function setWorkspacePage(page = '') {
   const next = page === 'dashboard' || page === 'contributor' ? page : '';
+  // Opening a workspace page must leave periodicals mode, otherwise the
+  // `#reader-pane > :not(#periodicals-reader){display:none}` rule keeps the
+  // workspace page hidden even after it is unhidden below.
+  if (next && window.NamooPeriodicals && typeof window.NamooPeriodicals.leave === 'function') {
+    window.NamooPeriodicals.leave();
+  }
   state.workspacePage = next;
   const app = $('#app');
   app.classList.toggle('workspace-page-open', Boolean(next));

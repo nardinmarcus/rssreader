@@ -3,7 +3,8 @@
   if (typeof module === 'object' && module.exports) module.exports = periodicals;
   if (root) {
     root.NamooPeriodicals = periodicals;
-    periodicals.mountPeriodicals(root);
+    const mounted = periodicals.mountPeriodicals(root);
+    if (mounted && typeof mounted.leave === 'function') periodicals.leave = mounted.leave;
   }
 }(typeof window === 'undefined' ? null : window, () => {
   const CADENCES = new Set(['daily', 'weekly', 'monthly']);
