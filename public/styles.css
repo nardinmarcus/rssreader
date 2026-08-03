@@ -1038,13 +1038,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   display: none;
 }
 #app.sidebar-collapsed .sidebar-submit-link {
-  width: 44px;
+  width: 36px;
   min-width: 0;
   height: 36px;
   padding: 0;
-}
-#app.sidebar-collapsed .sidebar-submit-link .submit-label {
-  display: none;
 }
 /* ============ Entry list ============ */
 #entry-pane {
@@ -1085,24 +1082,23 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .pane-actions { min-width: 0; display: flex; align-items: center; gap: 6px; }
 .submit-link-open {
   flex: none;
-  min-width: 68px;
+  width: 32px;
+  min-width: 0;
   height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  border: 1px solid var(--accent);
+  gap: 0;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--accent);
-  color: var(--brand-logo-fg);
-  font-size: 12.5px;
-  font-weight: 800;
-  line-height: 1;
-  padding: 0 10px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  padding: 0;
 }
 .submit-link-open:hover {
-  filter: brightness(0.94);
-  box-shadow: 0 2px 8px var(--shadow);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .source-refresh-btn {
   width: 32px;
@@ -7044,13 +7040,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     padding-right: 8px;
   }
   .sidebar-submit-link {
-    width: 44px;
+    width: 36px;
     height: 36px;
     padding: 0;
     min-width: 0;
-  }
-  .sidebar-submit-link .submit-label {
-    display: none;
   }
   .view-btn,
   .feed-item {
@@ -7279,13 +7272,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     padding-right: 8px;
   }
   .sidebar-submit-link {
-    width: 44px;
+    width: 36px;
     height: 36px;
     padding: 0;
     min-width: 0;
-  }
-  .sidebar-submit-link .submit-label {
-    display: none;
   }
   .view-btn,
   .feed-item {
@@ -8215,13 +8205,10 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
     display: none;
   }
   #app.reading .sidebar-submit-link {
-    width: 44px;
+    width: 36px;
     min-width: 0;
     height: 36px;
     padding: 0;
-  }
-  #app.reading .sidebar-submit-link .submit-label {
-    display: none;
   }
 }
 
@@ -9145,20 +9132,17 @@ body[data-periodicals-mode="off"] .periodicals-open {
   color: var(--text-0);
 }
 
-#app #sidebar .brand .brand-action .periodicals-open-label,
-#app #sidebar .brand .brand-action .submit-label {
+#app #sidebar .brand .brand-action .periodicals-open-label {
   display: none;
 }
 
-#app #sidebar .brand .brand-action .periodicals-open-icon,
-#app #sidebar .brand .brand-action .submit-icon {
+#app #sidebar .brand .brand-action .periodicals-open-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
 #app #sidebar .brand .brand-action .periodicals-open-icon .app-icon,
-#app #sidebar .brand .brand-action .submit-icon .app-icon,
 #app #sidebar #sidebar-toggle .app-icon {
   --icon-size: 16px;
 }
@@ -9488,7 +9472,6 @@ body[data-periodicals-mode="off"] .periodicals-open {
 }
 
 #app.sidebar-collapsed #sidebar .brand-name,
-#app.sidebar-collapsed #sidebar .sidebar-submit-link .submit-label,
 #app.sidebar-collapsed #sidebar .view-label,
 #app.sidebar-collapsed #sidebar .count,
 #app.sidebar-collapsed #sidebar .sidebar-source-heading,
@@ -9499,7 +9482,7 @@ body[data-periodicals-mode="off"] .periodicals-open {
 }
 
 #app.sidebar-collapsed #sidebar .sidebar-submit-link {
-  width: 44px;
+  width: 36px;
   height: 36px;
   padding: 0;
 }
@@ -9617,7 +9600,6 @@ body[data-periodicals-mode="off"] .periodicals-open {
   #app #sidebar .sidebar-submit-link { height: 36px; padding: 0; }
 
   #app #sidebar .brand-name,
-  #app #sidebar .sidebar-submit-link .submit-label,
   #app #sidebar .view-label,
   #app #sidebar .count,
   #app #sidebar .sidebar-source-heading,
@@ -10818,8 +10800,7 @@ body[data-periodicals-mode="off"] .periodicals-open {
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .feed-item .fcount,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .view-label,
   #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .count,
-  #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .group-label,
-  #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .sidebar-submit-link .submit-label {
+  #app.reading:not(.sidebar-collapsed):not(.left-collapsed):not(.reader-immersive) .group-label {
     display: inline-flex !important;
   }
 
@@ -11047,7 +11028,6 @@ body[data-periodicals-mode="off"] .periodicals-open {
   #app.periodicals-mode #sidebar #sidebar-toggle,
   #app.periodicals-mode #sidebar .brand-name,
   #app.periodicals-mode #sidebar .periodicals-open-label,
-  #app.periodicals-mode #sidebar .sidebar-submit-link .submit-label,
   #app.periodicals-mode #sidebar .sidebar-type-meta,
   #app.periodicals-mode #sidebar .view-label,
   #app.periodicals-mode #sidebar .count,
