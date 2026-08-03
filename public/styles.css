@@ -9121,6 +9121,37 @@ body[data-periodicals-mode="off"] .periodicals-open {
   box-shadow: none;
 }
 
+/* Compact icon-only action buttons in the desktop brand row.
+   Keeps the full "Namoo Reader" wordmark visible by trimming the low-frequency
+   精选 / 提交 actions down to icons; labels stay in the DOM so collapsed and
+   mobile breakpoints keep their own display rules. */
+#app #sidebar .brand .brand-action {
+  min-width: 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  flex: none;
+}
+
+#app #sidebar .brand .brand-action .periodicals-open-label,
+#app #sidebar .brand .brand-action .submit-label {
+  display: none;
+}
+
+#app #sidebar .brand .brand-action .periodicals-open-icon,
+#app #sidebar .brand .brand-action .submit-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#app #sidebar .brand .brand-action .periodicals-open-icon .app-icon,
+#app #sidebar .brand .brand-action .submit-icon .app-icon {
+  --icon-size: 16px;
+}
+
 #app #sidebar #sidebar-toggle {
   position: absolute;
   z-index: 12;
