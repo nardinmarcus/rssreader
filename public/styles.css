@@ -9077,6 +9077,7 @@ body[data-periodicals-mode="off"] .periodicals-open {
   min-width: 0;
   flex: 1 1 auto;
   gap: 8px;
+  overflow: hidden;
 }
 
 #app #sidebar .brand-logo {
@@ -9087,9 +9088,10 @@ body[data-periodicals-mode="off"] .periodicals-open {
 
 #app #sidebar .brand-name {
   display: block;
-  min-width: max-content;
-  overflow: visible;
-  text-overflow: clip;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 15px;
   font-weight: 760;
   letter-spacing: -0.01em;
