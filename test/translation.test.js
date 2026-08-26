@@ -345,6 +345,138 @@ test('finish_reason length rejects truncated model output', async () => {
   }
 });
 
+test('zhipu glm thinking models disable thinking to protect max_tokens budget', async () => {
+  const originalFetch = global.fetch;
+  const payloads = [];
+  global.fetch = async (url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return openAiResponse('pong');
+  };
+  try {
+    await deepseek.testConnection(providerOptions({
+      provider: 'zhipu',
+      providerName: '智谱',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4.6',
+    }));
+    assert.equal(payloads.length, 1);
+    assert.deepEqual(payloads[0].thinking, { type: 'disabled' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('zhipu forced-thinking glm-5.3 keeps the thinking parameter absent', async () => {
+  const originalFetch = global.fetch;
+  const payloads = [];
+  global.fetch = async (url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return openAiResponse('pong');
+  };
+  try {
+    await deepseek.testConnection(providerOptions({
+      provider: 'zhipu',
+      providerName: '智谱',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-5.3',
+    }));
+    assert.equal(payloads.length, 1);
+    assert.equal('thinking' in payloads[0], false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('zhipu legacy glm-4 models and non-zhipu providers never send the thinking parameter', async () => {
+  const originalFetch = global.fetch;
+  const payloads = [];
+  global.fetch = async (url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return openAiResponse('pong');
+  };
+  try {
+    await deepseek.testConnection(providerOptions({
+      provider: 'zhipu',
+      providerName: '智谱',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4-plus',
+    }));
+    await deepseek.testConnection(providerOptions());
+    assert.equal(payloads.length, 2);
+    for (const payload of payloads) {
+      assert.equal('thinking' in payload, false);
+    }
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('kimi fixed-sampling models omit temperature and disable optional thinking', async () => {
+  const originalFetch = global.fetch;
+  const payloads = [];
+  global.fetch = async (url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return openAiResponse('pong');
+  };
+  try {
+    await deepseek.testConnection(providerOptions({
+      provider: 'moonshot',
+      providerName: 'Kimi (Moonshot)',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2.6',
+    }));
+    assert.equal(payloads.length, 1);
+    assert.equal('temperature' in payloads[0], false);
+    assert.deepEqual(payloads[0].thinking, { type: 'disabled' });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('kimi forced-thinking models omit temperature and never send the thinking parameter', async () => {
+  const originalFetch = global.fetch;
+  const payloads = [];
+  global.fetch = async (url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return openAiResponse('pong');
+  };
+  try {
+    await deepseek.testConnection(providerOptions({
+      provider: 'moonshot',
+      providerName: 'Kimi (Moonshot)',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'kimi-k2.7-code',
+    }));
+    assert.equal(payloads.length, 1);
+    assert.equal('temperature' in payloads[0], false);
+    assert.equal('thinking' in payloads[0], false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('moonshot-v1 models keep caller temperature and never send the thinking parameter', async () => {
+  const originalFetch = global.fetch;
+  const payloads = [];
+  global.fetch = async (url, options) => {
+    payloads.push(JSON.parse(options.body));
+    return openAiResponse('pong');
+  };
+  try {
+    await deepseek.testConnection(providerOptions({
+      provider: 'moonshot',
+      providerName: 'Kimi (Moonshot)',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      model: 'moonshot-v1-8k',
+    }));
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].temperature, 0);
+    assert.equal('thinking' in payloads[0], false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('temporary model resource interruption retries once and discards partial output', async () => {
   const originalFetch = global.fetch;
   let calls = 0;
