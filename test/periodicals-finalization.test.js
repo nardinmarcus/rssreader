@@ -452,6 +452,41 @@ test('a successful final build freezes the previous Daily with period-end scorin
   }
 });
 
+test('Daily excerpts preserve supplementary Unicode across SQLite publication and freezing', async t => {
+  const samples = [
+    { name: 'emoji before the old cut', prefix: 277, character: '😀', expected: `${'A'.repeat(277)}😀…` },
+    { name: 'emoji spanning the old cut', prefix: 278, character: '😀', expected: `${'A'.repeat(278)}😀…` },
+    { name: 'supplementary CJK spanning the old cut', prefix: 278, character: '𠮷', expected: `${'A'.repeat(278)}𠮷…` },
+  ];
+  for (const sample of samples) {
+    await t.test(sample.name, async () => {
+      const db = fixtureDatabase();
+      try {
+        db.prepare('UPDATE entries SET summary = ?').run(
+          `${'A'.repeat(sample.prefix)}${sample.character} trailing material`,
+        );
+        const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+        periodicals.syncOpenDaily({ now: OPEN_BUILD_AT, trigger: 'unicode-regression' });
+        const openJob = await periodicals.runNextBuild({ now: OPEN_BUILD_AT });
+        assert.equal(openJob.status, 'succeeded');
+
+        periodicals.finalizeDueIssues({ now: FINALIZATION_DEADLINE });
+        const finalJob = await periodicals.runNextBuild({ now: FINALIZATION_DEADLINE + 1 });
+        assert.equal(finalJob.status, 'succeeded', finalJob.errorCode);
+        const frozen = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-29' });
+        assert.equal(frozen.issue.status, 'frozen');
+        assert.equal(frozen.issue.revision, 2);
+        assert.equal(frozen.evidence.length, 1);
+        assert.equal(frozen.evidence[0].summaryExcerpt, sample.expected);
+        assert.equal(frozen.events[0].summary, sample.expected);
+        assert.equal(frozen.evidence[0].summaryExcerpt.isWellFormed(), true);
+      } finally {
+        db.close();
+      }
+    });
+  }
+});
+
 test('finalization retries AI only inside the window and freezes deterministic fallback at the deadline', async () => {
   const db = fixtureDatabase();
   let aiCalls = 0;
