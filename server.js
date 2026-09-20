@@ -1,3 +1,4 @@
+const { createWorkerRecovery } = require('./lib/worker-recovery');
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -69,10 +70,6 @@ const TEST_PERIODICAL_WORKER_PATH = process.env.NODE_ENV === 'test'
   : '';
 const PERIODICAL_WORKER_PATH = TEST_PERIODICAL_WORKER_PATH
   || path.join(__dirname, 'scripts', 'periodical-worker.js');
-const TRANSLATION_WORKER_RESTART_BASE_MS = 250;
-const TRANSLATION_WORKER_RESTART_MAX_MS = 5000;
-const PERIODICAL_WORKER_RESTART_BASE_MS = 250;
-const PERIODICAL_WORKER_RESTART_MAX_MS = 5000;
 const PERIODICAL_WORKER_SAFE_LOG = /^\[periodical-build\] issue=(?:periodical:(?:daily|weekly|monthly):[0-9-]+|-) job=(?:periodical-job:[a-f0-9]{64}|-) source=(?:[a-f0-9]{1,12}|-) input=(?:[a-f0-9]{1,12}|-) revision=\d+ candidates=\d+ events=\d+ state=(?:queued|running|retry_wait|succeeded|failed|superseded|noop|worker_failed|check_failed) durationMs=\d+$/;
 const DEFAULT_TITLE = 'Namoo Reader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。';
@@ -173,12 +170,6 @@ let refreshLast = null;
 let aiWorker = null;
 let aiJob = null;
 let aiLast = null;
-let translationWorker = null;
-let translationWorkerRestartTimer = null;
-let translationWorkerRestartAttempts = 0;
-let periodicalWorker = null;
-let periodicalWorkerRestartTimer = null;
-let periodicalWorkerRestartAttempts = 0;
 let periodicalFinalizationTimer = null;
 const aiQueuedSourceIds = new Set();
 let autoRewriteRunning = false;
@@ -211,134 +202,58 @@ function createRateLimiter({ windowMs, max, message, key: keyForRequest = null }
   };
 }
 
-function scheduleTranslationWorkerRestart() {
-  if (translationWorker || translationWorkerRestartTimer) return false;
-  const delay = Math.min(
-    TRANSLATION_WORKER_RESTART_MAX_MS,
-    TRANSLATION_WORKER_RESTART_BASE_MS * (2 ** Math.min(translationWorkerRestartAttempts, 8)),
-  );
-  translationWorkerRestartAttempts += 1;
-  translationWorkerRestartTimer = setTimeout(() => {
-    translationWorkerRestartTimer = null;
-    wakeTranslationWorker();
-  }, delay);
-  return true;
-}
-
-function durableTranslationWorkRemains() {
-  try {
-    return store.hasActiveTranslationJobs();
-  } catch (error) {
-    console.warn('Translation worker active-job check failed:', error.message || error);
-    return true;
-  }
-}
-
-function wakeTranslationWorker() {
-  if (process.env.NODE_ENV === 'test' && process.env.TRANSLATION_WORKER_DISABLED === '1') return false;
-  if (translationWorker) return false;
-  if (translationWorkerRestartTimer) {
-    clearTimeout(translationWorkerRestartTimer);
-    translationWorkerRestartTimer = null;
-  }
-  const worker = fork(TRANSLATION_WORKER_PATH, [], {
-    cwd: __dirname,
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-  });
-  translationWorker = worker;
-  worker.stdout.on('data', chunk => {
-    translationWorkerRestartAttempts = 0;
+const translationRecovery = createWorkerRecovery({
+  enabled: () => !(process.env.NODE_ENV === 'test' && process.env.TRANSLATION_WORKER_DISABLED === '1'),
+  hasWork: () => store.hasActiveTranslationJobs(),
+  start: () => fork(TRANSLATION_WORKER_PATH, [], {
+    cwd: __dirname, env: process.env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  }),
+  stdout: chunk => {
     for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) console.log(`[translation-worker] ${line}`);
-  });
-  worker.stderr.on('data', chunk => {
+  },
+  stderr: chunk => {
     for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) console.warn(`[translation-worker] ${line}`);
-  });
-  let finished = false;
-  const finishWorker = (code, error = null) => {
-    if (finished) return;
-    finished = true;
+  },
+  failed: (code, error) => {
     if (error) console.warn('Translation worker failed:', error.message || error);
     if (code) console.warn(`Translation worker exited with code ${code}`);
-    if (translationWorker === worker) translationWorker = null;
-    if (durableTranslationWorkRemains()) {
-      scheduleTranslationWorkerRestart();
-    } else {
-      translationWorkerRestartAttempts = 0;
-    }
-  };
-  worker.on('error', error => finishWorker(1, error));
-  worker.on('exit', code => finishWorker(code));
-  return true;
+  },
+  checkFailed: error => console.warn('Translation worker active-job check failed:', error.message || error),
+});
+
+function wakeTranslationWorker() {
+  return translationRecovery.wake();
 }
 
 function wakeTranslationWorkerIfNeeded() {
-  return store.hasActiveTranslationJobs() ? wakeTranslationWorker() : false;
+  return translationRecovery.wakeIfNeeded();
 }
 
-function durablePeriodicalWorkRemains() {
-  try {
-    return store.periodicals.hasActiveBuildJobs();
-  } catch {
-    return true;
-  }
-}
-
-function schedulePeriodicalWorkerRestart() {
-  if (periodicalWorker || periodicalWorkerRestartTimer) return false;
-  const delay = Math.min(
-    PERIODICAL_WORKER_RESTART_MAX_MS,
-    PERIODICAL_WORKER_RESTART_BASE_MS * (2 ** Math.min(periodicalWorkerRestartAttempts, 8)),
-  );
-  periodicalWorkerRestartAttempts += 1;
-  periodicalWorkerRestartTimer = setTimeout(() => {
-    periodicalWorkerRestartTimer = null;
-    wakePeriodicalWorker();
-  }, delay);
-  return true;
-}
-
-function wakePeriodicalWorker() {
-  if (store.periodicals.mode === 'off') return false;
-  if (process.env.NODE_ENV === 'test' && process.env.PERIODICAL_WORKER_DISABLED === '1') return false;
-  if (periodicalWorker) return false;
-  if (periodicalWorkerRestartTimer) {
-    clearTimeout(periodicalWorkerRestartTimer);
-    periodicalWorkerRestartTimer = null;
-  }
-  const worker = fork(PERIODICAL_WORKER_PATH, [], {
-    cwd: __dirname,
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'ignore', 'ipc'],
-  });
-  periodicalWorker = worker;
-  worker.stdout.on('data', chunk => {
-    periodicalWorkerRestartAttempts = 0;
+const periodicalRecovery = createWorkerRecovery({
+  enabled: () => store.periodicals.mode !== 'off'
+    && !(process.env.NODE_ENV === 'test' && process.env.PERIODICAL_WORKER_DISABLED === '1'),
+  hasWork: () => store.periodicals.hasActiveBuildJobs(),
+  start: () => fork(PERIODICAL_WORKER_PATH, [], {
+    cwd: __dirname, env: process.env, stdio: ['ignore', 'pipe', 'ignore', 'ipc'],
+  }),
+  stdout: chunk => {
     for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
       if (PERIODICAL_WORKER_SAFE_LOG.test(line)) console.log(line);
     }
-  });
-  let finished = false;
-  const finishWorker = (code, error = null) => {
-    if (finished) return;
-    finished = true;
+  },
+  failed: (code, error) => {
     if (error || code) {
       console.warn('[periodical-build] issue=- job=- source=- input=- revision=0 candidates=0 events=0 state=worker_failed durationMs=0');
     }
-    if (periodicalWorker === worker) periodicalWorker = null;
-    if (durablePeriodicalWorkRemains()) {
-      schedulePeriodicalWorkerRestart();
-    } else {
-      periodicalWorkerRestartAttempts = 0;
-    }
-  };
-  worker.on('error', error => finishWorker(1, error));
-  worker.on('exit', code => finishWorker(code));
-  return true;
+  },
+});
+
+function wakePeriodicalWorker() {
+  return periodicalRecovery.wake();
 }
 
 function wakePeriodicalWorkerIfNeeded() {
-  return store.periodicals.hasActiveBuildJobs() ? wakePeriodicalWorker() : false;
+  return periodicalRecovery.wakeIfNeeded();
 }
 
 const registerRateLimit = createRateLimiter({

@@ -125,7 +125,7 @@ test('periodical worker derives retry sleep from SQLite next wake time', () => {
 test('server forwards only allowlisted periodical worker log lines', () => {
   const serverSource = fs.readFileSync(path.join(projectDir, 'server.js'), 'utf8');
   const workerSource = serverSource.slice(
-    serverSource.indexOf('function wakePeriodicalWorker()'),
+    serverSource.indexOf('const periodicalRecovery ='),
     serverSource.indexOf('function wakePeriodicalWorkerIfNeeded()'),
   );
   assert.match(serverSource, /PERIODICAL_WORKER_SAFE_LOG/);
