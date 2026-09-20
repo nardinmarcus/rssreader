@@ -1,3 +1,4 @@
+const { createAiInputPreparation, plainText } = require('./lib/ai-input-preparation');
 const { createWorkerRecovery } = require('./lib/worker-recovery');
 const express = require('express');
 const path = require('path');
@@ -2151,83 +2152,11 @@ function requestAuthor(req) {
   return req.user ? req.user.displayName : '读者';
 }
 
-function plainText(value) {
-  return String(value || '')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function entryPlainText(entry) {
-  const official = entry && entry.officialSiteContext;
-  return plainText([
-    entry && (entry.content || entry.summary),
-    official && official.title,
-    official && official.summary,
-    official && official.content,
-  ].filter(Boolean).join('\n\n'));
-}
-
-function shouldAutoFetchOriginal(entry) {
-  if (!entry || !/^https?:\/\//i.test(entry.link || '')) return false;
-  if (entry.sourceId === 'hackernews') {
-    return !entry.originalFetchedAt && !/news\.ycombinator\.com\/item\?/i.test(entry.link || '');
-  }
-  const contentText = plainText(entry.content);
-  const summaryText = plainText(entry.summary);
-  const textLength = (contentText || summaryText).length;
-  if (textLength >= 600) return false;
-  if (!contentText || contentText.length < 300) return true;
-  return Boolean(summaryText && contentText.length <= summaryText.length + 25);
-}
-
-async function prepareEntryForAiAsset(entry, reason = 'AI asset', { productHuntOfficialSite = true } = {}) {
-  if (productHuntOfficialSite && entry && entry.sourceId === 'producthunt') {
-    try {
-      const officialSiteContext = await fetcher.fetchProductHuntOfficialContext(entry);
-      if (officialSiteContext && entryPlainText({ content: officialSiteContext.content, summary: officialSiteContext.summary }).length >= 80) {
-        console.log(`${reason}: fetched Product Hunt official-site context for ${entry.id}`);
-        wakeTranslationWorkerIfNeeded();
-        return {
-          entry: {
-            ...entry,
-            officialSiteContext,
-          },
-          fetched: true,
-          officialSiteFetched: true,
-        };
-      }
-    } catch (error) {
-      console.warn(`${reason}: Product Hunt official-site context skipped for ${entry.id}:`, error.message || error);
-      return {
-        entry,
-        fetched: false,
-        officialSiteFetched: false,
-        error: String(error.message || error).slice(0, 200),
-      };
-    }
-  }
-  if (!shouldAutoFetchOriginal(entry)) return { entry, fetched: false };
-  try {
-    const updated = await fetcher.fetchEntryOriginal(entry);
-    if (updated && entryPlainText(updated).length > entryPlainText(entry).length) {
-      console.log(`${reason}: fetched original content for ${entry.id}`);
-      wakeTranslationWorkerIfNeeded();
-      return { entry: updated, fetched: true };
-    }
-  } catch (error) {
-    console.warn(`${reason}: original content auto-fetch skipped for ${entry.id}:`, error.message || error);
-    return {
-      entry,
-      fetched: false,
-      error: String(error.message || error).slice(0, 200),
-    };
-  }
-  return { entry: fetcher.getEntryById(entry.id) || entry, fetched: false };
-}
+const prepareEntryForAiAsset = createAiInputPreparation({
+  fetcher,
+  intent: 'interactive',
+  wake: wakeTranslationWorkerIfNeeded,
+});
 
 function translationResponse(entry, viewer = null, assetId = '') {
   const exactAssetId = String(assetId || '').trim();

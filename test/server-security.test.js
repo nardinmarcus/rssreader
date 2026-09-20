@@ -206,7 +206,7 @@ test('server-funded AI ignores caller routing and tuning headers', { timeout: 30
       model: 'site-model',
       outboundModel: 'site-model',
       outboundTemperature: 0,
-      outboundMaxTokens: 32,
+      outboundMaxTokens: 2048,
     });
   } finally {
     await stopServer(server);
