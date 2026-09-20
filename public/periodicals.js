@@ -4,7 +4,7 @@
   if (root) {
     root.NamooPeriodicals = periodicals;
     const mounted = periodicals.mountPeriodicals(root);
-    if (mounted && typeof mounted.leave === 'function') periodicals.leave = mounted.leave;
+    if (mounted) Object.assign(periodicals, mounted);
   }
 }(typeof window === 'undefined' ? null : window, () => {
   const CADENCES = new Set(['daily', 'weekly', 'monthly']);
@@ -179,6 +179,7 @@
       const route = parsePeriodicalPath(pathname);
       if (!route || route.invalid) return false;
       const sequence = ++requestSequence;
+      loadingMore = false;
       view.enter(route.cadence);
       current = {
         cadence: route.cadence,
@@ -226,6 +227,7 @@
         if (!await loadMore()) break;
         if (cursor === targetCursor) break;
       }
+      if (sequence !== requestSequence) return false;
       if (current.issues.length === 0) {
         view.renderEmpty(route.cadence);
         restoreViewScroll(restore);
@@ -241,6 +243,7 @@
           `/api/periodicals/${route.cadence}/${periodKey}`,
           { cache: 'no-cache' },
         );
+        if (sequence !== requestSequence) return false;
         const detail = await joinEvidenceAvailability(storedDetail, route.cadence, periodKey);
         if (sequence !== requestSequence) return false;
         view.renderIssue(detail);
@@ -278,7 +281,7 @@
         }
         return false;
       } finally {
-        loadingMore = false;
+        if (sequence === requestSequence) loadingMore = false;
       }
     }
 
@@ -292,7 +295,12 @@
       };
     }
 
-    return { getState, loadMore, open };
+    function leave() {
+      requestSequence += 1;
+      loadingMore = false;
+    }
+
+    return { getState, loadMore, open, leave };
   }
 
   function mountPeriodicals(root) {
@@ -316,6 +324,11 @@
     const mobileMedia = root.matchMedia && root.matchMedia('(max-width: 860px)');
     let mobileLayout = Boolean(mobileMedia && mobileMedia.matches);
     const selectedPeriodKeys = new Map();
+    const navigation = typeof root.getWorkspaceNavigation === 'function'
+      ? root.getWorkspaceNavigation()
+      : (root.namooWorkspaceNavigation ||= (root.NamooWorkspaceNavigation
+        || require('./workspace-navigation')).createWorkspaceNavigation(root));
+    let periodicalOwner = null;
 
     function element(tagName, className, text) {
       const node = document.createElement(tagName);
@@ -436,17 +449,17 @@
     }
 
     function leave() {
-      app.classList.remove('periodicals-mode');
-      app.classList.remove('periodical-detail-open');
-      trigger.removeAttribute('aria-current');
-      nav.classList.add('hidden');
-      reader.classList.add('hidden');
-      back.classList.add('hidden');
+      return navigation.go({ view: 'reading' });
+    }
+
+    function invalidate() {
+      if (controller) controller.leave();
     }
 
     let controller = null;
 
     function replaceHistoryState(pathname = root.location.pathname, scroll = null) {
+      if (!periodicalOwner?.isCurrent() || !app.classList.contains('periodicals-mode')) return;
       if (!controller || !root.history || typeof root.history.replaceState !== 'function') return;
       const state = controller.getState();
       if (!state) return;
@@ -479,11 +492,6 @@
 
     const view = {
       enter(cadence) {
-        app.classList.add('periodicals-mode');
-        app.classList.remove('periodical-detail-open');
-        trigger.setAttribute('aria-current', 'page');
-        nav.classList.remove('hidden');
-        reader.classList.remove('hidden');
         empty.classList.add('hidden');
         periodicalDocument.classList.add('hidden');
         back.classList.add('hidden');
@@ -524,9 +532,10 @@
           const loadMore = element('button', 'periodicals-load-more', '加载更多');
           loadMore.type = 'button';
           loadMore.addEventListener('click', async () => {
+            const owner = periodicalOwner;
             loadMore.disabled = true;
             await controller.loadMore();
-            replaceHistoryState();
+            if (owner?.isCurrent()) replaceHistoryState();
           });
           items.push(loadMore);
         }
@@ -686,15 +695,20 @@
     };
     controller = createPeriodicalsController({ request, view });
 
-    async function openPath(pathname, {
-      push = false,
-      restore = null,
-      returnPath = '',
-    } = {}) {
+    function openPath(pathname, options = {}) {
+      const route = parsePeriodicalPath(pathname);
+      if (!route || route.invalid) return Promise.resolve(false);
+      return options.restoring
+        ? navigation.restore({ url: pathname, state: root.history?.state, ...options })
+        : navigation.go({ view: 'periodicals', pathname, ...options });
+    }
+
+    async function loadPath({ pathname, push = false, restore = null, historyState = null, returnPath = '' }, owner) {
       const route = parsePeriodicalPath(pathname);
       if (!route || route.invalid) return false;
+      restore ||= historyState?.periodicals || null;
+      periodicalOwner = owner;
       if (push) {
-        replaceHistoryState();
         if (!root.history || typeof root.history.pushState !== 'function') {
           root.location.assign(pathname);
           return false;
@@ -712,7 +726,7 @@
         }, '', pathname);
       }
       const opened = await controller.open(pathname, { restore, indexOnly: mobileLayout });
-      if (opened) {
+      if (opened && owner.isCurrent()) {
         const state = controller.getState();
         if (state && state.periodKey) selectedPeriodKeys.set(state.cadence, state.periodKey);
         const canonicalPath = !route.periodKey
@@ -722,7 +736,7 @@
           : pathname;
         replaceHistoryState(canonicalPath);
       }
-      return opened;
+      return opened && owner.isCurrent();
     }
 
     function navigateCadence(cadence) {
@@ -773,17 +787,6 @@
 
     list.addEventListener('scroll', () => recordHistoryScroll(list, 'listScroll'));
     readerPane.addEventListener('scroll', () => recordHistoryScroll(readerPane, 'documentScroll'));
-    if (typeof root.addEventListener === 'function') {
-      root.addEventListener('popstate', event => {
-        const nextRoute = parsePeriodicalPath(root.location.pathname);
-        if (!nextRoute || nextRoute.invalid) {
-          leave();
-          return false;
-        }
-        const nextRestore = event && event.state && event.state.periodicals;
-        return openPath(root.location.pathname, { restore: nextRestore || null });
-      });
-    }
     if (mobileMedia && typeof mobileMedia.addEventListener === 'function') {
       mobileMedia.addEventListener('change', event => {
         const nextMobileLayout = Boolean(event && event.matches);
@@ -791,8 +794,11 @@
         mobileLayout = nextMobileLayout;
         const nextRestore = root.history && root.history.state
           && root.history.state.periodicals;
-        return openPath(root.location.pathname, { restore: nextRestore || null }).then(opened => {
-          if (opened && nextRestore) {
+        if (!periodicalOwner?.isCurrent() || !app.classList.contains('periodicals-mode')) return false;
+        const opening = openPath(root.location.pathname, { restore: nextRestore || null, restoring: true });
+        const owner = periodicalOwner;
+        return opening.then(opened => {
+          if (opened && owner.isCurrent() && nextRestore) {
             replaceHistoryState(root.location.pathname, nextRestore);
           }
           return opened;
@@ -805,23 +811,20 @@
       event.preventDefault();
       root.location.assign('/periodicals');
     });
-    document.addEventListener('click', event => {
-      if (!app.classList.contains('periodicals-mode')) return;
-      const target = event.target && typeof event.target.closest === 'function'
-        ? event.target.closest('#brand-home, [data-sidebar-category], [data-view], #feed-groups button')
-        : null;
-      if (target) leave();
-    });
 
     const route = parsePeriodicalPath(root.location.pathname);
     const saved = root.history && root.history.state && root.history.state.periodicals;
     const restore = route && !route.invalid && saved && saved.cadence === route.cadence
       ? saved
       : null;
-    const ready = openPath(root.location.pathname, { restore });
+    root.NamooPeriodicals = { ...root.NamooPeriodicals, leave, invalidate, capture: replaceHistoryState, open: loadPath };
+    const ready = openPath(root.location.pathname, { restore, restoring: true });
 
     return {
       leave,
+      invalidate,
+      capture: replaceHistoryState,
+      open: loadPath,
       ready,
     };
   }

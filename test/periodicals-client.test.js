@@ -1204,3 +1204,137 @@ test('Monthly deep link renders its index, detail, rollup score, and Frozen evid
   assert.match(detailText, /Frozen Source 1/);
   assert.match(detailText, /Frozen Daily evidence 4/);
 });
+
+test('leaving periodicals invalidates late index success and preserves the destination', async () => {
+  const browser = fakeBrowser({ mode: 'on', pathname: '/periodicals/daily' });
+  let release;
+  browser.root.fetch = () => new Promise(resolve => { release = resolve; });
+  const mounted = mountPeriodicals(browser.root);
+  mounted.leave();
+  browser.root.history.pushState({ dashboard: true }, '', '/me');
+  const title = browser.root.document.title;
+  release({ ok: true, json: async () => ({ issues: [], nextCursor: null }) });
+  await mounted.ready;
+  assert.equal(browser.root.location.pathname, '/me');
+  assert.deepEqual(browser.root.history.state, { dashboard: true });
+  assert.equal(browser.root.document.title, title);
+  assert.equal(browser.elements['#periodicals-list'].children.length, 0);
+});
+
+function mountWithApp(browser) {
+  const appFunctions = require('./helpers/workspace-app');
+  const { createWorkspaceNavigation } = require('../public/workspace-navigation');
+  const root = browser.root;
+  for (const selector of ['#reader', '#reader-empty', '#my-dashboard-page', '#contributor-page', '#my-comments-list']) {
+    browser.elements[selector] = fakeElement();
+  }
+  root.NamooWorkspaceNavigation = { createWorkspaceNavigation };
+  root.location.href = `https://reader.invalid${root.location.pathname}`;
+  const state = { me: { id: 'me' }, dashboardTab: 'profile' };
+  const app = appFunctions({
+    window: root, document: root.document, history: root.history, state,
+    $: selector => root.document.querySelector(selector),
+    api: async () => ({}), normalizeDashboardTab: x => x,
+    setDashboardTab: tab => { state.dashboardTab = tab; }, dashboardUrlFor: () => '/me',
+    renderProfileEditor() {}, loadNotifications() {}, renderMyAssetTabs() {}, renderMyAssets() {},
+    openAuth() {}, updateListTitle() {}, renderSidebar() {},
+    routeStateFromUrl: () => ({}),
+  }, ['getWorkspaceNavigation', 'prepareWorkspaceRestore', 'openMyCommentsModal', 'loadMyComments', 'openEntryFromUrl']);
+  root.getWorkspaceNavigation = app.getWorkspaceNavigation;
+  return { app, mounted: mountPeriodicals(root) };
+}
+
+for (const width of [1280, 760]) {
+  test(`real personal opener restores periodical issue and scroll without adding history at width ${width}`, async () => {
+    const browser = fakeBrowser({ mode: 'on', pathname: '/periodicals/daily/2026-07-30', width,
+      responses: [
+        { issues: [{ periodKey: '2026-07-30' }] },
+        { issue: { cadence: 'daily', periodKey: '2026-07-30' }, evidence: [] },
+        { issues: [{ periodKey: '2026-07-30' }] },
+        { issue: { cadence: 'daily', periodKey: '2026-07-30' }, evidence: [] },
+      ], historyState: { unknown: 'keep' } });
+    const { app, mounted } = mountWithApp(browser);
+    await mounted.ready;
+    browser.elements['#periodicals-list'].scrollTop = 41;
+    browser.elements['#reader-pane'].scrollTop = 182;
+    let outgoing;
+    const push = browser.root.history.pushState.bind(browser.root.history);
+    browser.root.history.pushState = (...args) => { outgoing = browser.root.history.state; push(...args); };
+    await app.openMyCommentsModal();
+    assert.equal(browser.root.location.pathname, '/me');
+    assert.equal(outgoing.unknown, 'keep');
+    assert.equal(outgoing.periodicals.documentScroll, 182);
+    assert.equal(browser.elements['#app'].classList.contains('periodicals-mode'), false);
+    browser.root.history.state = outgoing;
+    browser.root.location.pathname = '/periodicals/daily/2026-07-30';
+    await browser.root.dispatchEvent({ type: 'popstate', state: outgoing });
+    assert.equal(browser.pushed.length, 1);
+    assert.equal(browser.elements['#periodicals-list'].scrollTop, 41);
+    assert.equal(browser.elements['#reader-pane'].scrollTop, 182);
+    assert.equal(browser.root.history.state.unknown, 'keep');
+    assert.equal(browser.elements['#app'].classList.contains('workspace-page-open'), false);
+    assert.equal(browser.elements['#app'].classList.contains('periodical-detail-open'), width <= 860);
+  });
+}
+
+test('real popstate listeners preserve periodicals when personal-space authentication is denied', async () => {
+  const browser = fakeBrowser({ mode: 'on', pathname: '/periodicals/daily' });
+  const { app, mounted } = mountWithApp(browser);
+  await mounted.ready;
+  app.state.me = null;
+  // Production app listener runs before the periodical script's listener.
+  // Read its actual callback rather than constructing a desired navigation.
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../public/app.js'), 'utf8');
+  const marker = "window.addEventListener('popstate',";
+  const start = source.indexOf(marker);
+  if (start >= 0) {
+    vm.runInContext(source.slice(start, source.indexOf('\n});', start) + 4), vm.createContext({
+      window: browser.root, isPeriodicalWorkspacePath: () => false,
+      openEntryFromUrl: app.openEntryFromUrl,
+    }));
+  }
+  browser.root.location.pathname = '/me';
+  browser.root.location.href = 'https://reader.invalid/me';
+  browser.root.history.state = { dashboard: true };
+  await browser.root.dispatchEvent({ type: 'popstate', state: browser.root.history.state });
+  assert.equal(browser.elements['#app'].classList.contains('periodicals-mode'), true);
+  assert.equal(browser.elements['#periodicals-reader'].classList.contains('hidden'), false);
+});
+
+for (const phase of ['index', 'detail', 'availability']) {
+  for (const outcome of ['success', 'error']) {
+    test(`real periodical ${phase} late ${outcome} cannot mutate the personal destination`, async () => {
+      const browser = fakeBrowser({ mode: 'on', pathname: '/periodicals/daily/2026-07-30' });
+      const pending = [];
+      browser.root.fetch = url => new Promise((resolve, reject) => pending.push({ url, reject,
+        resolve: body => resolve({ ok: true, json: async () => body }) }));
+      const { app, mounted } = mountWithApp(browser);
+      const index = { issues: [{ periodKey: '2026-07-30' }] };
+      const detail = { issue: { cadence: 'daily', periodKey: '2026-07-30' },
+        evidence: [{ entryId: 'article', eventId: 'event' }] };
+      if (phase !== 'index') {
+        pending[0].resolve(index);
+        await new Promise(setImmediate);
+      }
+      if (phase === 'availability') {
+        pending[1].resolve(detail);
+        await new Promise(setImmediate);
+      }
+      await app.openMyCommentsModal();
+      const title = browser.root.document.title;
+      const state = browser.root.history.state;
+      const emptyText = browser.elements['#periodicals-empty'].textContent;
+      const late = pending.at(-1);
+      if (outcome === 'error') late.reject(new Error('obsolete'));
+      else late.resolve(phase === 'index' ? index : phase === 'detail' ? detail : { evidence: [] });
+      await mounted.ready;
+      assert.equal(browser.root.location.pathname, '/me');
+      assert.equal(browser.root.document.title, title);
+      assert.equal(browser.root.history.state, state);
+      assert.equal(browser.elements['#periodicals-empty'].textContent, emptyText);
+      assert.equal(browser.elements['#app'].classList.contains('periodicals-mode'), false);
+    });
+  }
+}

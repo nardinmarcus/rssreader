@@ -120,6 +120,10 @@ test('service worker precaches the minimal reading shell and never claims /api',
   const lucideVersion = html.match(/<script src="\/lucide-icons\.js\?v=([^"]+)"/)?.[1];
 
   assert.ok(appVersion && periodicalsVersion && stylesVersion && lucideVersion);
+  const navigationVersion = html.match(/<script src="\/workspace-navigation\.js\?v=([^"]+)"/)?.[1];
+  assert.equal(navigationVersion, contentHash('workspace-navigation.js'));
+  assert.ok(sw.includes(`/workspace-navigation.js?v=${navigationVersion}`));
+  assert.ok(html.indexOf('/workspace-navigation.js?') < html.indexOf('/app.js?'));
   assert.equal(appVersion, contentHash('app.js'));
   assert.equal(periodicalsVersion, contentHash('periodicals.js'));
   assert.equal(stylesVersion, contentHash('styles.css'));

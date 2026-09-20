@@ -323,13 +323,11 @@ test('helpful Onepage previews and item lists select topHelpfulOnepage', () => {
   assert.doesNotMatch(listHtml, /data-id="comment-top"/);
 });
 
-test('opening a My Asset keeps the destination URL available for article navigation', () => {
+test('opening a My Asset delegates directly to article navigation without clearing its destination URL', () => {
   const openMyAsset = sourceForFunction(app, 'openMyAsset');
-  assert.match(openMyAsset, /closeMyCommentsModal\(\{\s*clearUrl:\s*false\s*\}\)/);
-  assert.ok(
-    openMyAsset.indexOf('closeMyCommentsModal') < openMyAsset.indexOf('openEntryById'),
-    'the dashboard must close without clearing the URL before the article opens',
-  );
+  assert.match(openMyAsset, /openEntryById\(entryId, \{/);
+  assert.match(openMyAsset, /updateUrl: true,[\s\S]*replaceUrl: false/);
+  assert.doesNotMatch(openMyAsset, /closeMyCommentsModal|clearReaderUrl|history\./);
 });
 
 test('internal translation jumps propagate syncUrl false without writing history', () => {
@@ -360,6 +358,7 @@ test('internal translation jumps propagate syncUrl false without writing history
 
   const pendingJumpCalls = [];
   executeFunction('settlePendingAssetJump', ['translation'], {
+    getWorkspaceNavigation: () => ({ current: () => ({ isCurrent: () => true }) }),
     state: { pendingAssetJump: 'translation', activeEntry: { id: 'entry-1' } },
     setTimeout: callback => callback(),
     performArticleAssetJump: (...args) => pendingJumpCalls.push(args),
@@ -455,7 +454,7 @@ test('reload without a reader clears article AI context before normalizing layou
   };
   const normalizationCalls = [];
   const context = {
-    args: [{ keepReader: false, clearUrl: false }],
+    args: [{ keepReader: false, clearUrl: false, navigation: { isCurrent: () => true } }],
     result: undefined,
     state,
     loadEntries: async () => {},
@@ -484,7 +483,7 @@ test('reload without a reader clears article AI context before normalizing layou
     renderAgent: () => {},
   };
   vm.runInNewContext(
-    `${sourceForAsyncFunction(app, 'reload')}\nresult = reload(...args);`,
+    `${sourceForAsyncFunction(app, 'reloadContent')}\nresult = reloadContent(...args);`,
     context,
   );
 

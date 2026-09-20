@@ -264,16 +264,16 @@ test('user management keeps server pagination and responsive selection in URL-ba
 test('restricted dashboard routes normalize both the selected panel and browser URL', () => {
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
   const openDashboard = app.slice(
-    app.indexOf('async function openMyCommentsModal'),
+    app.indexOf('async function loadMyComments'),
     app.indexOf('function closeMyCommentsModal'),
   );
   const openAdmin = app.slice(
-    app.indexOf('async function openAdminPage'),
+    app.indexOf('async function loadAdminPage'),
     app.indexOf('function closeAdminPage'),
   );
 
-  assert.match(openDashboard, /requestedTab !== state\.dashboardTab[\s\S]*history\.replaceState/);
-  assert.match(openAdmin, /openMyCommentsModal\(\{ push: false, tab: 'profile' \}\)[\s\S]*history\.replaceState/);
+  assert.match(openDashboard, /requestedTab !== state\.dashboardTab[\s\S]*owner\.replace/);
+  assert.match(openAdmin, /loadMyComments\(\{ navigation, push: false, tab: 'profile' \}\)[\s\S]*navigation\.replace/);
 });
 
 test('user management actions require confirmed snapshots and recover from conflicts without optimistic mutation', () => {

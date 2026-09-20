@@ -2,6 +2,12 @@
 
 Namoo Reader is a personal RSS reading and creation workspace. This file is the project glossary: shared names for product concepts, not implementation notes.
 
+## Workspace Views
+
+**Workspace View**:
+One of Namoo Reader's mutually exclusive main content views: ordinary reading, curated periodicals, personal space, or a contributor profile. Source selection, article asset tabs, and periodical cadence are choices within a Workspace View, not separate Workspace Views.
+_Avoid_: modal, source, browser tab
+
 ## Information Sources
 
 **Built-in Source**:

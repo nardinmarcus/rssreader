@@ -101,7 +101,7 @@ test('sidebar category changes paint a local preview before exact API revalidati
     app.indexOf('function selectView('),
   );
   const previewIndex = selectCategory.indexOf('renderSidebarCategoryPreview(');
-  const reloadIndex = selectCategory.indexOf('await reload()');
+  const reloadIndex = selectCategory.indexOf('const loading = reload()');
   assert.ok(previewIndex >= 0, 'category selection must render its cached or derived preview');
   assert.ok(reloadIndex > previewIndex, 'exact API revalidation must happen after the preview is painted');
 });
@@ -279,7 +279,7 @@ test('browser startup and entry opening keep critical requests off the old slow 
   const storeSource = fs.readFileSync(path.join(projectDir, 'lib', 'store.js'), 'utf8');
 
   assert.match(app, /const detailPromise = content \? null : api\(`\/api\/entry\/\$\{encodeURIComponent\(e\.id\)\}`\)/);
-  assert.match(app, /const \[, data\] = await Promise\.all\(\[\s*loadMe\(\),\s*loadSources\(\),\s*loadEntries\(\),\s*loadContributors\(\)/s);
+  assert.match(app, /const \[, data, entriesLoaded\] = await Promise\.all\(\[\s*loadMe\(\),\s*loadSources\(\),\s*loadEntries\(\),\s*loadContributors\(\)/s);
   assert.match(app, /if \(!state\.contributors\.length \|\| state\.view === 'contributors'\) requests\.push\(loadContributors\(\)\)/);
   assert.match(app, /await openEntryFromUrl\(\{ entriesLoaded: true \}\)/);
   assert.doesNotMatch(fetcher, /for \(const c of Object\.values\(cache\)\)[\s\S]{0,300}function getEntryByIdPrefix/);
@@ -314,7 +314,7 @@ test('versioned translation jobs poll with progress and reject late entry, asset
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
 
   assert.match(app, /translationRequestSequence:\s*0/);
-  assert.match(app, /function isTranslationRequestCurrent\(\{ entryId, assetId, jobId, sequence \}\)/);
+  assert.match(app, /function isTranslationRequestCurrent\(\{ entryId, assetId, jobId, sequence, navigation \}\)/);
   assert.match(app, /state\.activeEntry\?\.id !== entryId/);
   assert.match(app, /currentTranslationAssetId\(\) !== assetId/);
   assert.match(app, /state\.translationJob\?\.id !== jobId/);
@@ -336,9 +336,9 @@ test('reader navigation cancels translation polling before changing article iden
   const app = fs.readFileSync(path.join(projectDir, 'public', 'app.js'), 'utf8');
 
   assert.match(app, /function resetTranslationRequestState\(\)[\s\S]*?clearTimeout\(state\.translationPollTimer\)[\s\S]*?state\.translationRequestSequence \+= 1/);
-  assert.match(app, /async function openEntry\([\s\S]{0,520}resetTranslationRequestState\(\);[\s\S]{0,220}state\.activeEntry = e/);
-  assert.match(app, /function closeReaderFromRoute\(\)[\s\S]{0,180}resetTranslationRequestState\(\)/);
-  assert.match(app, /async function reload\([\s\S]*?if \(!keepReader\) \{\s*resetTranslationRequestState\(\)/);
+  assert.match(app, /async function loadEntry\([\s\S]{0,640}resetTranslationRequestState\(\);[\s\S]{0,220}state\.activeEntry = e/);
+  assert.match(app, /function closeReaderFromRoute\([\s\S]{0,240}resetTranslationRequestState\(\)/);
+  assert.match(app, /async function reloadContent\([\s\S]*?if \(!keepReader\) \{\s*resetTranslationRequestState\(\)/);
 });
 
 test.after(() => {
