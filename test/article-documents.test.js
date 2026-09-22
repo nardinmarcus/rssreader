@@ -52,6 +52,7 @@ test('feed documents compile the supported structure and remove unsafe HTML and 
   assert.match(document.documentHash, /^[a-f0-9]{64}$/);
   assert.match(document.sourceHash, /^[a-f0-9]{64}$/);
   assert.deepEqual(Object.keys(documents).sort(), [
+    'articleDocumentSegments',
     'compileFeedDocument',
     'compileFetchedDocument',
     'compileLegacyDocument',
