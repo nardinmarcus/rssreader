@@ -144,6 +144,109 @@ test('shadow worker persists a Custom Source event and timestamp fallback throug
   }
 });
 
+test('Daily Input Snapshot agrees across SQLite scheduling, compilation and publication at eligibility cutoffs', async () => {
+  const db = fixtureDatabase();
+  try {
+    const periodStart = Date.parse('2026-07-29T16:00:00.000Z');
+    const periodEnd = Date.parse('2026-07-30T16:00:00.000Z');
+    const tolerance = 6 * 60 * 60 * 1000;
+    const sourceId = 'snapshot-source';
+    const insertSource = db.prepare(`
+      INSERT INTO custom_sources (
+        id, name, feed_url, category, labels_json, created_at, updated_at
+      ) VALUES (?, 'Snapshot Source', ?, 'article', '["产品","社区"]', ?, ?)
+    `);
+    for (const [id, feed, enabled] of [
+      [sourceId, 'https://snapshot.example/feed.xml', 1],
+      ['disabled-source', 'https://disabled.example/feed.xml', 0],
+      ['no-feed-source', '', 1],
+    ]) {
+      insertSource.run(id, feed, NOW, NOW);
+      db.prepare(`
+        INSERT INTO source_preferences (
+          source_id, enabled, editorial_priority, display_order, updated_at
+        ) VALUES (?, ?, 'high', 0, '2026-07-30T04:00:00.000Z')
+      `).run(id, enabled);
+    }
+    const candidates = [
+      { id: 'at-start', publishedTs: periodStart, createdAt: periodStart },
+      { id: 'before-start', publishedTs: periodStart - 1 },
+      { id: 'future-at-period-end', publishedTs: periodEnd },
+      { id: 'at-cutoff', createdAt: NOW },
+      { id: 'after-cutoff', createdAt: NOW + 1 },
+      { id: 'future-at-tolerance', publishedTs: NOW + tolerance },
+      { id: 'future-beyond-tolerance', publishedTs: NOW + tolerance + 1 },
+      { id: 'missing-published', publishedTs: 0 },
+      { id: 'deleted', deletedAt: NOW },
+      { id: 'disabled', sourceId: 'disabled-source' },
+      { id: 'no-feed', sourceId: 'no-feed-source' },
+    ].map(item => ({
+      sourceId,
+      title: `Evidence ${item.id}`,
+      titleZh: null,
+      link: `https://snapshot.example/${item.id}?utm_source=feed`,
+      summary: 'Snapshot evidence.',
+      summaryZh: null,
+      content: '<p>Snapshot evidence.</p>',
+      contentHash: `hash-${item.id}`,
+      publishedTs: NOW - 1000,
+      createdAt: NOW - 1000,
+      deletedAt: null,
+      ...item,
+    }));
+    const insertEntry = db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, summary, content,
+        content_hash, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const item of candidates) {
+      insertEntry.run(item.id, item.sourceId, item.title, item.link, item.publishedTs,
+        item.summary, item.content, item.contentHash, item.createdAt, NOW, item.deletedAt);
+    }
+    const before = structuredClone(candidates);
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    const queued = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    let compiled;
+    const built = await periodicals.runNextBuild({
+      now: NOW,
+      compileIssue(input) {
+        compiled = compileOpenDaily(input);
+        // The pure compiler sees unfiltered input; SQLite has already narrowed it.
+        const unfiltered = compileOpenDaily({ ...input, candidates });
+        assert.deepEqual(unfiltered, compiled);
+        return compiled;
+      },
+    });
+    const stored = periodicals.getIssue({ cadence: 'daily', periodKey: '2026-07-30' });
+
+    assert.equal(queued.action, 'queued');
+    assert.equal(built.status, 'succeeded');
+    assert.equal(compiled.issue.sourceInputHash, queued.sourceInputHash);
+    assert.equal(compiled.issue.inputHash, queued.inputHash);
+    assert.equal(stored.issue.contentHash, compiled.issue.contentHash);
+    assert.deepEqual(stored.evidence, compiled.evidence);
+    const snapshot = compiled.issue.selectionContext.candidateSnapshot;
+    assert.deepEqual(snapshot.map(item => item.entryId), [
+      'at-cutoff', 'at-start', 'future-at-period-end', 'future-at-tolerance',
+      'future-beyond-tolerance', 'missing-published',
+    ]);
+    assert.equal(snapshot.find(item => item.entryId === 'future-at-tolerance')
+      .input.entry.timestampFallback, false);
+    const future = snapshot.find(item => item.entryId === 'future-beyond-tolerance');
+    assert.equal(future.input.entry.timestampFallback, true);
+    assert.equal(future.effectivePublishedAt, NOW - 1000);
+    const futureEnd = snapshot.find(item => item.entryId === 'future-at-period-end');
+    assert.equal(futureEnd.input.entry.timestampFallback, true,
+      'a publication time outside the Daily can still fall back to an eligible creation time');
+    assert.equal(futureEnd.effectivePublishedAt, NOW - 1000);
+    assert.deepEqual(candidates, before);
+    assert.equal(periodicals.syncOpenDaily({ now: NOW, trigger: 'test' }).action, 'noop');
+  } finally {
+    db.close();
+  }
+});
+
 test('wall-clock movement is a no-op while a SQLite preference change replaces the open revision', async () => {
   const db = fixtureDatabase();
   try {

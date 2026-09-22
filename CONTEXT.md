@@ -18,6 +18,16 @@ _Avoid_: bundled feed, default subscription, hard-coded source
 A publication subscribed by an administrator for the current workspace without making it part of Namoo Reader's shared curation.
 _Avoid_: built-in source, temporary feed
 
+## Curated Periodicals
+
+**Daily Input Snapshot**:
+The source choices, eligible article candidates, evidence, and earlier frozen daily history used for a particular daily edition build. It describes the build inputs rather than the selected events or published edition; the candidate cutoff and scoring time remain distinct.
+_Avoid_: published revision, selected events, live source catalog
+
+**Published Revision**:
+A built revision of a periodical issue whose content and content hash are fixed once published. Later workflow states, including finalizing and frozen, advance state without rewriting the published revision.
+_Avoid_: editable issue, live draft
+
 ## Progressive Web App
 
 **Installable Shell**:

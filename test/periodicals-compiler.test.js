@@ -199,6 +199,46 @@ test('Shanghai window, build cutoff, and future timestamp fallback are strict an
   assert.equal(endBoundary.events.length, 0);
 });
 
+test('Daily Input Snapshot keeps candidate admission separate from the evidence clock without mutating input', () => {
+  const cutoffAt = NOW + (10 * 60 * 1000);
+  const input = {
+    now: NOW,
+    candidateCutoffAt: cutoffAt,
+    sources: [highPrioritySource({ labels: ['产品', '产品', ' 社区 '] })],
+    candidates: [
+      candidate({ id: 'admitted-after-scoring', createdAt: NOW + 1 }),
+      candidate({ id: 'at-cutoff', createdAt: cutoffAt }),
+      candidate({ id: 'after-cutoff', createdAt: cutoffAt + 1 }),
+      candidate({
+        id: 'future-fallback',
+        publishedTs: NOW + (6 * 60 * 60 * 1000) + 1,
+        createdAt: NOW - 1000,
+      }),
+    ].map(item => ({ ...item, link: `https://example.com/${item.id}` })),
+    frozenDailyHistory: [{
+      periodKey: '2026-07-29',
+      status: 'frozen',
+      contentHash: 'previous-daily-hash',
+      topics: [{ topicKey: 'previous-topic', independentSourceCount: 2 }],
+    }],
+  };
+  const before = structuredClone(input);
+  const result = compileOpenDaily(input);
+  const snapshot = result.issue.selectionContext.candidateSnapshot;
+
+  assert.deepEqual(snapshot.map(item => item.entryId), [
+    'admitted-after-scoring', 'at-cutoff', 'future-fallback',
+  ]);
+  const future = snapshot.find(item => item.entryId === 'future-fallback');
+  assert.equal(future.effectivePublishedAt, NOW - 1000);
+  assert.equal(future.input.entry.timestampFallback, true,
+    'the later admission cutoff must not extend the evidence clock tolerance');
+  assert.deepEqual(input, before);
+  const reversed = compileOpenDaily({ ...input, candidates: [...input.candidates].reverse() });
+  assert.deepEqual(reversed, result);
+  assert.deepEqual(input, before);
+});
+
 test('AI HOT canonical syndication merges evidence without counting body links as confirmation', () => {
   const source = highPrioritySource({
     id: 'aihot-daily',
