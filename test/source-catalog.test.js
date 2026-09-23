@@ -346,7 +346,22 @@ test('stale refresh failures keep the last snapshot and retry attempts stay dura
   }
 });
 
-for (const mode of ['empty', 'whitespace', 'malformed', 'truncated-after-valid', 'mismatched-close', 'too-many-entries', 'giant-attribute', 'xxe', 'oversize', 'http-error']) {
+test('comments are ignored and only real outlines enter the catalog', { timeout: 40000 }, async () => {
+  const dataDir = createTempDataDir('namoo-reader-catalog-');
+  let server = null;
+  try {
+    server = await startCatalogServer(dataDir, { MOCK_CATALOG_MODE: 'commented-and-real' });
+    const { body } = await getJson(server.baseUrl, '/api/source-catalog');
+    assert.equal(body.total, 1, 'commented-out outlines must never be ingested');
+    assert.deepEqual(body.items.map(item => item.name), ['真实号']);
+    assert.equal(JSON.stringify(body).includes('注释号'), false);
+  } finally {
+    if (server) await server.stop();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+for (const mode of ['empty', 'whitespace', 'malformed', 'truncated-after-valid', 'mismatched-close', 'too-many-entries', 'giant-attribute', 'unclosed-element', 'concatenated-roots', 'xxe', 'oversize', 'http-error']) {
   test(`cold start with ${mode} catalog response yields an explicit unavailable state`, { timeout: 40000 }, async () => {
     const dataDir = createTempDataDir('namoo-reader-catalog-');
     let server = null;

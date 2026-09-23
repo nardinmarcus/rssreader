@@ -76,6 +76,26 @@ function giantAttributeBody() {
     + '</body></opml>';
 }
 
+function unclosedElementBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><body>'
+    + '<outline text="完好号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/unclosed0000000000000000000001.xml"/>'
+    + '<unclosed></body></opml>';
+}
+
+function concatenatedRootsBody() {
+  const root = (name, id) => '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><body>'
+    + `<outline text="${name}" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/${id}.xml"/>`
+    + '</body></opml>';
+  return root('拼接一号', 'concat0000000000000000000000000001') + root('拼接二号', 'concat0000000000000000000000000002');
+}
+
+function commentedAndRealBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><head><title>Comments</title></head><body>'
+    + '<!-- <outline text="注释号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/comment00000000000000000000001.xml"/> -->'
+    + '<outline text="真实号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/realcmp0000000000000000000001.xml"/>'
+    + '</body></opml>';
+}
+
 function textResponse(body, status = 200) {
   return new Response(body, {
     status,
@@ -97,6 +117,9 @@ globalThis.fetch = async (input, init) => {
     case 'mismatched-close': return textResponse(mismatchedCloseBody());
     case 'too-many-entries': return textResponse(tooManyEntriesBody());
     case 'giant-attribute': return textResponse(giantAttributeBody());
+    case 'unclosed-element': return textResponse(unclosedElementBody());
+    case 'concatenated-roots': return textResponse(concatenatedRootsBody());
+    case 'commented-and-real': return textResponse(commentedAndRealBody());
     case 'xxe': return textResponse(externalEntityBody());
     case 'oversize': return textResponse(oversizedBody());
     case 'http-error': return textResponse('service unavailable', 503);
