@@ -96,6 +96,18 @@ function commentedAndRealBody() {
     + '</body></opml>';
 }
 
+function tagAfterRootBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><body>'
+    + '<outline text="根后号" type="rss" xmlUrl="https://x.example/feed/z1.xml"/>'
+    + '</body></opml><foo/>';
+}
+
+function bodyInHeadBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><head><body>'
+    + '<outline text="错位号" type="rss" xmlUrl="https://x.example/feed/z2.xml"/>'
+    + '</body></head></opml>';
+}
+
 function textResponse(body, status = 200) {
   return new Response(body, {
     status,
@@ -120,6 +132,8 @@ globalThis.fetch = async (input, init) => {
     case 'unclosed-element': return textResponse(unclosedElementBody());
     case 'concatenated-roots': return textResponse(concatenatedRootsBody());
     case 'commented-and-real': return textResponse(commentedAndRealBody());
+    case 'tag-after-root': return textResponse(tagAfterRootBody());
+    case 'body-in-head': return textResponse(bodyInHeadBody());
     case 'xxe': return textResponse(externalEntityBody());
     case 'oversize': return textResponse(oversizedBody());
     case 'http-error': return textResponse('service unavailable', 503);

@@ -361,7 +361,7 @@ test('comments are ignored and only real outlines enter the catalog', { timeout:
   }
 });
 
-for (const mode of ['empty', 'whitespace', 'malformed', 'truncated-after-valid', 'mismatched-close', 'too-many-entries', 'giant-attribute', 'unclosed-element', 'concatenated-roots', 'xxe', 'oversize', 'http-error']) {
+for (const mode of ['empty', 'whitespace', 'malformed', 'truncated-after-valid', 'mismatched-close', 'too-many-entries', 'giant-attribute', 'unclosed-element', 'concatenated-roots', 'tag-after-root', 'body-in-head', 'xxe', 'oversize', 'http-error']) {
   test(`cold start with ${mode} catalog response yields an explicit unavailable state`, { timeout: 40000 }, async () => {
     const dataDir = createTempDataDir('namoo-reader-catalog-');
     let server = null;
