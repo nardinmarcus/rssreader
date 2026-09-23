@@ -9,6 +9,7 @@ const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
 const documentPipeline = require('./lib/document-pipeline');
 const { createOnepageModule } = require('./lib/onepage');
+const { createSourceDiscovery } = require('./lib/source-discovery');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const translationJobs = require('./lib/translation-jobs');
@@ -28,6 +29,14 @@ const onepageService = createOnepageModule({
   store,
   generatePayload: deepseek.generateOnepagePayload,
 });
+const sourceDiscovery = createSourceDiscovery({
+  store,
+  isSourceOnline: sourceId => {
+    const source = fetcher.getSourceById(sourceId);
+    return Boolean(source && fetcher.isEnabled(source));
+  },
+  fetchCatalogText: url => fetcher.fetchText(url, 20000, 5 * 1024 * 1024),
+});
 app.disable('x-powered-by');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -45,6 +54,7 @@ const DAILY_REFRESH_HOUR_SHANGHAI = 8;
 const STARTUP_REFRESH_DELAY_MS = parseInt(process.env.STARTUP_REFRESH_DELAY_MS || '30000', 10);
 const SOURCE_INTERACTION_REFRESH_COOLDOWN_MS = parseInt(process.env.SOURCE_INTERACTION_REFRESH_COOLDOWN_MS || `${5 * MINUTE_MS}`, 10);
 const FRESHNESS_SWEEP_INTERVAL_MS = parseInt(process.env.FRESHNESS_SWEEP_INTERVAL_MS || `${5 * MINUTE_MS}`, 10);
+const SOURCE_CATALOG_REFRESH_INTERVAL_MS = parseInt(process.env.SOURCE_CATALOG_REFRESH_INTERVAL_MS || `${24 * HOUR_MS}`, 10);
 const FRESHNESS_STARTUP_DELAY_MS = parseInt(process.env.FRESHNESS_STARTUP_DELAY_MS || `${2 * MINUTE_MS}`, 10);
 const FRESHNESS_SWEEP_BATCH_SIZE = parseInt(process.env.FRESHNESS_SWEEP_BATCH_SIZE || '3', 10);
 const FRESHNESS_SWEEP_MAX_COST = parseInt(process.env.FRESHNESS_SWEEP_MAX_COST || '6', 10);
@@ -4018,6 +4028,38 @@ app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
   }
 });
 
+// Read-only discovery catalog: browse/search the persisted snapshot and the
+// verified show registry. No login required; apply/activate actions belong to
+// later slices. A cold start coalesces into one merged catalog refresh.
+app.get('/api/source-catalog', async (req, res) => {
+  try {
+    await sourceDiscovery.ensureSourceCatalogFresh();
+    const projection = sourceDiscovery.getPublicSourceCatalog({
+      platform: req.query.platform,
+      q: req.query.q,
+      cursor: req.query.cursor,
+      limit: req.query.limit,
+    });
+    res.json(projection);
+  } catch (e) {
+    sendError(res, e, 'source catalog unavailable');
+  }
+});
+
+function scheduleSourceCatalogRefresh() {
+  if (!Number.isFinite(SOURCE_CATALOG_REFRESH_INTERVAL_MS) || SOURCE_CATALOG_REFRESH_INTERVAL_MS <= 0) {
+    console.log('Source catalog daily refresh disabled');
+    return;
+  }
+  const interval = Math.max(60 * 1000, SOURCE_CATALOG_REFRESH_INTERVAL_MS);
+  const timer = setInterval(() => {
+    sourceDiscovery.ensureSourceCatalogFresh().catch(error => {
+      console.warn(`[source-catalog] scheduled check failed: ${error && error.message || error}`);
+    });
+  }, interval);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
 app.listen(PORT, HOST, () => {
   console.log(`Namoo Reader listening on http://${HOST}:${PORT}`);
   seedAdminFromEnv();
@@ -4025,6 +4067,7 @@ app.listen(PORT, HOST, () => {
   scheduleStartupRefresh();
   scheduleDailyRefresh();
   scheduleFreshnessRefresh();
+  scheduleSourceCatalogRefresh();
   if (process.env.NODE_ENV !== 'test' || process.env.PERIODICAL_WORKER_STARTUP === '1') {
     schedulePeriodicalBuilds();
   }

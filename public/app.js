@@ -2477,6 +2477,14 @@ function renderSidebar() {
   const sourceHeadingLabel = activeCategory === 'all' ? '订阅源' : `${CATEGORY_LABELS[activeCategory]}订阅`;
   sourceHeading.innerHTML = `<strong>${escapeHtml(sourceHeadingLabel)}</strong><span>${list.length}</span>`;
   sourceTools.appendChild(sourceHeading);
+  const discoveryOpen = document.createElement('button');
+  discoveryOpen.id = 'source-discovery-open';
+  discoveryOpen.className = 'ghost-btn source-discovery-open';
+  discoveryOpen.type = 'button';
+  discoveryOpen.setAttribute('aria-haspopup', 'dialog');
+  discoveryOpen.innerHTML = iconButtonLabel('rss', '发现', { labelClass: 'source-discovery-open-label' });
+  discoveryOpen.onclick = () => openSourceDiscovery();
+  sourceTools.appendChild(discoveryOpen);
   wrap.appendChild(sourceTools);
 
   if (!list.length) {
@@ -4005,6 +4013,177 @@ function openSubmitLinkModal(prefill = {}) {
 
 function closeSubmitLinkModal() {
   $('#submit-link-modal').classList.add('hidden');
+}
+
+/* ---------- Source discovery (read-only overlay) ---------- */
+const discoveryState = {
+  open: false,
+  platform: '',
+  query: '',
+  items: [],
+  recommended: [],
+  total: 0,
+  nextCursor: null,
+  catalog: { status: 'ok', updatedAt: null },
+  requestSeq: 0,
+  error: '',
+  opener: null,
+};
+
+function isCurrentDiscoveryResponse(seq) {
+  return seq === discoveryState.requestSeq;
+}
+
+function discoveryEntryHtml(item, kind = 'catalog') {
+  const badge = item.online
+    ? '<span class="discovery-badge discovery-badge-online">已上线</span>'
+    : '<span class="discovery-badge discovery-badge-offline">未接入</span>';
+  const action = item.online && item.sourceId
+    ? `<button class="ghost-btn primary discovery-open-reading" type="button" data-discovery-source="${escapeHtml(item.sourceId)}">进入阅读</button>`
+    : '';
+  const meta = [];
+  if (kind === 'recommended' && item.description) meta.push(`<span class="discovery-entry-description">${escapeHtml(item.description)}</span>`);
+  if (item.siteUrl) {
+    meta.push(`<a class="discovery-entry-site" href="${escapeHtml(item.siteUrl)}" target="_blank" rel="noopener noreferrer">节目主页</a>`);
+  }
+  const kindLabel = item.platform === 'podcast' ? '播客' : item.platform === 'wechat' ? '公众号' : item.platform;
+  return `<div class="discovery-entry discovery-entry-${kind}${item.online ? ' discovery-entry-online' : ''}">`
+    + `<div class="discovery-entry-main">`
+    + `<span class="discovery-entry-name">${escapeHtml(item.name)}</span>`
+    + `<span class="discovery-entry-platform">${escapeHtml(kindLabel)}</span>`
+    + badge
+    + `</div>`
+    + (meta.length ? `<div class="discovery-entry-meta">${meta.join('')}</div>` : '')
+    + (action ? `<div class="discovery-entry-action">${action}</div>` : '')
+    + `</div>`;
+}
+
+function discoveryStatusText(catalog) {
+  if (!catalog || !catalog.updatedAt) {
+    return catalog && catalog.status === 'unavailable' ? '目录暂时不可用，请稍后再试' : '';
+  }
+  const time = timeAgo(Date.parse(catalog.updatedAt));
+  if (catalog.status === 'stale') return `目录更新失败，展示最近成功快照（${time}更新）`;
+  return `目录更新于 ${time}`;
+}
+
+function renderSourceDiscoveryStatus() {
+  const target = $('#source-discovery-status');
+  if (target) target.textContent = discoveryStatusText(discoveryState.catalog);
+}
+
+function renderSourceDiscoveryEmpty(message) {
+  const empty = $('#source-discovery-empty');
+  if (!empty) return;
+  empty.textContent = message;
+  empty.classList.remove('hidden');
+}
+
+function renderSourceDiscovery() {
+  const recommendedTarget = $('#source-discovery-recommended');
+  const listTarget = $('#source-discovery-list');
+  const moreButton = $('#source-discovery-more');
+  if (!recommendedTarget || !listTarget) return;
+
+  const recommendedHtml = discoveryState.recommended
+    .map(item => discoveryEntryHtml(item, 'recommended'))
+    .join('');
+  recommendedTarget.innerHTML = recommendedHtml
+    ? '<h3>精选播客</h3><div class="discovery-entries">' + recommendedHtml + '</div>'
+    : '';
+  recommendedTarget.querySelectorAll('[data-discovery-source]').forEach(btn => {
+    btn.onclick = () => selectDiscoverySource(btn.dataset.discoverySource);
+  });
+
+  const itemsHtml = discoveryState.items
+    .map(item => discoveryEntryHtml(item, 'catalog'))
+    .join('');
+  listTarget.innerHTML = itemsHtml
+    ? '<h3>公众号目录</h3><div class="discovery-entries">' + itemsHtml + '</div>'
+    : '';
+
+  renderSourceDiscoveryStatus();
+  const empty = $('#source-discovery-empty');
+  if (empty) empty.classList.add('hidden');
+  const hasAny = Boolean(recommendedHtml || itemsHtml);
+  if (!hasAny) {
+    renderSourceDiscoveryEmpty(discoveryState.query ? '没有匹配的来源' : '目录暂无内容');
+  }
+  if (moreButton) moreButton.classList.toggle('hidden', !discoveryState.nextCursor);
+}
+
+function renderSourceDiscoveryOffline() {
+  const recommendedTarget = $('#source-discovery-recommended');
+  const listTarget = $('#source-discovery-list');
+  if (recommendedTarget) recommendedTarget.innerHTML = '';
+  if (listTarget) listTarget.innerHTML = '';
+  renderSourceDiscoveryStatus();
+  renderSourceDiscoveryEmpty('需要连接网络才能浏览来源目录');
+  const moreButton = $('#source-discovery-more');
+  if (moreButton) moreButton.classList.add('hidden');
+}
+
+async function loadSourceCatalog(options = {}) {
+  const reset = !(options && options.reset === false);
+  if (typeof navigator.onLine === 'boolean' && navigator.onLine === false) {
+    discoveryState.error = 'offline';
+    renderSourceDiscoveryOffline();
+    return;
+  }
+  discoveryState.requestSeq += 1;
+  const seq = discoveryState.requestSeq;
+  try {
+    const params = new URLSearchParams();
+    if (discoveryState.platform) params.set('platform', discoveryState.platform);
+    if (discoveryState.query) params.set('q', discoveryState.query);
+    if (!reset && discoveryState.nextCursor) params.set('cursor', discoveryState.nextCursor);
+    const data = await api(`/api/source-catalog?${params.toString()}`);
+    if (!discoveryState.open || !isCurrentDiscoveryResponse(seq)) return;
+    discoveryState.recommended = Array.isArray(data.recommended) ? data.recommended : [];
+    discoveryState.items = reset
+      ? (Array.isArray(data.items) ? data.items : [])
+      : discoveryState.items.concat(Array.isArray(data.items) ? data.items : []);
+    discoveryState.total = Number(data.total) || 0;
+    discoveryState.nextCursor = data.nextCursor || null;
+    if (data.catalog) discoveryState.catalog = data.catalog;
+    discoveryState.error = '';
+    renderSourceDiscovery();
+  } catch (err) {
+    if (!discoveryState.open || !isCurrentDiscoveryResponse(seq)) return;
+    discoveryState.error = err.message || '目录加载失败';
+    renderSourceDiscoveryStatus();
+    renderSourceDiscoveryEmpty(`目录加载失败：${discoveryState.error}`);
+  }
+}
+
+async function selectDiscoverySource(sourceId) {
+  if (!sourceId) return;
+  closeSourceDiscovery({ restoreFocus: false });
+  await selectSource(sourceId);
+}
+
+function openSourceDiscovery() {
+  if (discoveryState.open) return;
+  discoveryState.open = true;
+  discoveryState.opener = document.activeElement;
+  const modal = $('#source-discovery-modal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  const search = $('#source-discovery-search');
+  if (search && discoveryState.query) search.value = discoveryState.query;
+  loadSourceCatalog({ reset: true });
+  setTimeout(() => (search || $('#source-discovery-close')).focus(), 30);
+}
+
+function closeSourceDiscovery(options = {}) {
+  const restoreFocus = !(options && options.restoreFocus === false);
+  if (!discoveryState.open) return;
+  discoveryState.open = false;
+  const modal = $('#source-discovery-modal');
+  if (modal) modal.classList.add('hidden');
+  const opener = discoveryState.opener;
+  discoveryState.opener = null;
+  if (restoreFocus && opener && typeof opener.focus === 'function') opener.focus();
 }
 
 async function submitReaderLink() {
@@ -12080,6 +12259,29 @@ $('#change-password-form').onsubmit = (e) => {
 $('#submit-link-open').onclick = openSubmitLinkModal;
 $('#submit-link-close').onclick = closeSubmitLinkModal;
 $('#submit-link-modal').onclick = (e) => { if (e.target.id === 'submit-link-modal') closeSubmitLinkModal(); };
+$('#source-discovery-close').onclick = () => closeSourceDiscovery();
+$('#source-discovery-modal').onclick = (e) => { if (e.target.id === 'source-discovery-modal') closeSourceDiscovery(); };
+$('#source-discovery-more').onclick = () => loadSourceCatalog({ reset: false });
+let discoverySearchTimer = null;
+$('#source-discovery-search').oninput = (e) => {
+  clearTimeout(discoverySearchTimer);
+  discoverySearchTimer = setTimeout(() => {
+    if (!discoveryState.open) return;
+    discoveryState.query = e.target.value.trim();
+    loadSourceCatalog({ reset: true });
+  }, 300);
+};
+$$('.source-discovery-platform [data-catalog-platform]').forEach(btn => {
+  btn.onclick = () => {
+    discoveryState.platform = btn.dataset.catalogPlatform || '';
+    $$('.source-discovery-platform [data-catalog-platform]').forEach(other => {
+      const active = other === btn;
+      other.classList.toggle('active', active);
+      other.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    loadSourceCatalog({ reset: true });
+  };
+});
 $('#submit-link-form').onsubmit = (e) => {
   e.preventDefault();
   submitReaderLink();
@@ -12210,6 +12412,11 @@ document.addEventListener('keydown', (e) => {
     if ($('#user-management-dialog')?.open) {
       e.preventDefault();
       closeUserManagementAction();
+      return;
+    }
+    if (discoveryState.open) {
+      e.preventDefault();
+      closeSourceDiscovery();
       return;
     }
     if (!$('#theme-menu')?.classList.contains('hidden')) {

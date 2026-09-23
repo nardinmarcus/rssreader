@@ -31,7 +31,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=35039b1e8ab8" />
+  <link rel="stylesheet" href="/styles.css?v=9360aaa54c56" />
   <!-- social-meta:start -->
   <meta name="description" content="围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。" />
   <link rel="canonical" href="https://rss.namooca.com/" />
@@ -734,6 +734,33 @@
     </div>
   </div>
 
+  <div id="source-discovery-modal" class="modal hidden">
+    <div class="modal-box source-discovery-box">
+      <header>
+        <div>
+          <h2>发现来源</h2>
+          <p>浏览公众号目录与精选播客；未接入的来源会在后续版本开放申请。</p>
+        </div>
+        <button id="source-discovery-close" class="icon-btn" type="button" aria-label="关闭发现来源"><span data-qm-icon="x"></span></button>
+      </header>
+      <div class="source-discovery-toolbar">
+        <input id="source-discovery-search" type="search" placeholder="搜索公众号或播客" aria-label="搜索来源目录" autocomplete="off" />
+        <div class="source-discovery-platform" role="group" aria-label="按平台筛选">
+          <button class="ghost-btn active" type="button" data-catalog-platform="" aria-pressed="true">全部</button>
+          <button class="ghost-btn" type="button" data-catalog-platform="wechat" aria-pressed="false">公众号</button>
+          <button class="ghost-btn" type="button" data-catalog-platform="podcast" aria-pressed="false">播客</button>
+        </div>
+      </div>
+      <div id="source-discovery-status" class="source-discovery-status" role="status"></div>
+      <div class="source-discovery-scroll">
+        <section id="source-discovery-recommended" class="source-discovery-recommended" aria-label="精选播客"></section>
+        <section id="source-discovery-list" class="source-discovery-list" aria-label="公众号目录"></section>
+        <div id="source-discovery-empty" class="source-discovery-empty hidden"></div>
+        <button id="source-discovery-more" class="ghost-btn source-discovery-more hidden" type="button">加载更多</button>
+      </div>
+    </div>
+  </div>
+
   <div id="article-link-menu" class="article-link-menu hidden" role="menu" aria-label="链接操作">
     <div id="article-link-menu-url" class="article-link-menu-url"></div>
     <button id="article-link-open" type="button" role="menuitem">打开网页</button>
@@ -899,7 +926,7 @@
   <script src="/purify.min.js"></script>
   <script src="/lucide-icons.js?v=a9a83d7ad66b"></script>
   <script src="/workspace-navigation.js?v=155a40f466a1"></script>
-  <script src="/app.js?v=42f83bbe0790"></script>
+  <script src="/app.js?v=17abf593a8d7"></script>
   <script src="/periodicals.js?v=fc9fb02c7629"></script>
 </body>
 </html>
