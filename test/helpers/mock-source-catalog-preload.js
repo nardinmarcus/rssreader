@@ -47,6 +47,35 @@ function malformedBody() {
   return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><body><outline text="截断" type="rss"';
 }
 
+function truncatedAfterValidBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><head><title>Truncated</title></head><body>'
+    + '<outline text="完整号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/trunc000000000000000000000000001.xml"/>'
+    + '<outline text="残缺号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/trunc000000000000000000000000002';
+}
+
+function mismatchedCloseBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><body>'
+    + '<outline text="错配号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/mism000000000000000000000000001.xml"/>'
+    + '</opml>';
+}
+
+function tooManyEntriesBody() {
+  const outlines = [];
+  for (let index = 1; index <= 5001; index += 1) {
+    const id = String(index).padStart(12, '0');
+    outlines.push(`<outline text="超限账号 ${id}" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/over${id}"/>`);
+  }
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><head><title>Over limit</title></head><body>'
+    + outlines.join('') + '</body></opml>';
+}
+
+function giantAttributeBody() {
+  return '<?xml version="1.0" encoding="UTF-8"?><opml version="1.0"><body>'
+    + '<outline text="正常号" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/giant00000000000000000000000001.xml"/>'
+    + '<outline text="' + 'x'.repeat(9000) + '" type="rss" xmlUrl="https://wechat2rss.bestblogs.dev/feed/giant00000000000000000000000002.xml"/>'
+    + '</body></opml>';
+}
+
 function textResponse(body, status = 200) {
   return new Response(body, {
     status,
@@ -64,6 +93,10 @@ globalThis.fetch = async (input, init) => {
     case 'empty': return textResponse('');
     case 'whitespace': return textResponse('   \n  ');
     case 'malformed': return textResponse(malformedBody());
+    case 'truncated-after-valid': return textResponse(truncatedAfterValidBody());
+    case 'mismatched-close': return textResponse(mismatchedCloseBody());
+    case 'too-many-entries': return textResponse(tooManyEntriesBody());
+    case 'giant-attribute': return textResponse(giantAttributeBody());
     case 'xxe': return textResponse(externalEntityBody());
     case 'oversize': return textResponse(oversizedBody());
     case 'http-error': return textResponse('service unavailable', 503);

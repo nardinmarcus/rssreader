@@ -291,22 +291,27 @@ test('catalog snapshot survives a server restart without any external request', 
   }
 });
 
-test('stale catalog refresh failure keeps the last successful snapshot and reports explicit staleness', { timeout: 40000 }, async () => {
+test('stale refresh failures keep the last snapshot and retry attempts stay durably bounded', { timeout: 40000 }, async () => {
   const dataDir = createTempDataDir('namoo-reader-catalog-');
   let first = null;
   let second = null;
   try {
-    first = await startCatalogServer(dataDir);
+    first = await startCatalogServer(dataDir, { SOURCE_CATALOG_MAX_AGE_MS: '300' });
     const initial = await getJson(first.baseUrl, '/api/source-catalog');
     assert.equal(initial.body.catalog.status, 'ok');
     const updatedAt = initial.body.catalog.updatedAt;
     await first.stop();
     first = null;
+    // The helper derives the capture file from the data dir; start the second
+    // server's request log from zero so counts only cover this server.
+    fs.rmSync(path.join(dataDir, 'catalog-requests.json'), { force: true });
+    await new Promise(resolve => setTimeout(resolve, 350));
 
-    // Malformed catalog body on refresh: old snapshot must survive, never be cleared.
+    // Malformed catalog body on refresh: old snapshot must survive, never be
+    // cleared, and the failure must be visible as staleness.
     second = await startCatalogServer(dataDir, {
       MOCK_CATALOG_MODE: 'malformed',
-      SOURCE_CATALOG_MAX_AGE_MS: '0',
+      SOURCE_CATALOG_MAX_AGE_MS: '300',
     });
     const stale = await getJson(second.baseUrl, '/api/source-catalog');
     assert.equal(stale.response.status, 200);
@@ -315,18 +320,25 @@ test('stale catalog refresh failure keeps the last successful snapshot and repor
     assert.equal(stale.body.catalog.updatedAt, updatedAt, 'snapshot update time stays at last success');
     assert.equal(stale.body.catalog.status, 'stale', 'public projection marks the stale snapshot truthfully');
     const requests = await readCapture(second.captureFile);
-    assert.ok(requests.length >= 1 && requests.length <= 2, `one merged refresh attempt expected: ${JSON.stringify(requests)}`);
+    assert.equal(requests.length, 1, `exactly one retry attempt expected, saw: ${JSON.stringify(requests)}`);
     assert.ok(requests.every(request => request.url === CATALOG_FEED_URL));
 
-    // After the failed attempt settles, the snapshot is still fully readable
-    // and still projected as stale (never unavailable, never cleared).
-    await new Promise(resolve => setTimeout(resolve, 400));
-    const settled = await getJson(second.baseUrl, '/api/source-catalog');
-    assert.equal(settled.response.status, 200);
-    assert.equal(settled.body.total, FIXTURE_UNIQUE_ENTRIES, 'settled failed refresh keeps the old catalog');
-    assert.equal(settled.body.items.length, 50);
-    assert.equal(settled.body.catalog.status, 'stale');
-    assert.equal(settled.body.catalog.updatedAt, updatedAt);
+    // Immediate follow-up reads must not fan out new refresh attempts: the
+    // durable bound is the last attempt time, not the last success time.
+    for (let burst = 0; burst < 3; burst += 1) {
+      const burstRead = await getJson(second.baseUrl, '/api/source-catalog');
+      assert.equal(burstRead.body.total, FIXTURE_UNIQUE_ENTRIES);
+      const burstRequests = await readCapture(second.captureFile);
+      assert.equal(burstRequests.length, 1, `burst read ${burst} must not re-attempt the refresh`);
+    }
+
+    // After the freshness window passes, exactly one legitimate retry is due.
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const retried = await getJson(second.baseUrl, '/api/source-catalog');
+    assert.equal(retried.body.total, FIXTURE_UNIQUE_ENTRIES, 'old snapshot still served during retry');
+    assert.equal(retried.body.catalog.status, 'stale');
+    const afterWindow = await readCapture(second.captureFile);
+    assert.equal(afterWindow.length, 2, 'legitimate next-window retry must not be blocked forever');
   } finally {
     if (first) await first.stop();
     if (second) await second.stop();
@@ -334,7 +346,7 @@ test('stale catalog refresh failure keeps the last successful snapshot and repor
   }
 });
 
-for (const mode of ['empty', 'whitespace', 'malformed', 'xxe', 'oversize', 'http-error']) {
+for (const mode of ['empty', 'whitespace', 'malformed', 'truncated-after-valid', 'mismatched-close', 'too-many-entries', 'giant-attribute', 'xxe', 'oversize', 'http-error']) {
   test(`cold start with ${mode} catalog response yields an explicit unavailable state`, { timeout: 40000 }, async () => {
     const dataDir = createTempDataDir('namoo-reader-catalog-');
     let server = null;
@@ -342,7 +354,7 @@ for (const mode of ['empty', 'whitespace', 'malformed', 'xxe', 'oversize', 'http
       server = await startCatalogServer(dataDir, { MOCK_CATALOG_MODE: mode });
       const { response, body } = await getJson(server.baseUrl, '/api/source-catalog');
       assert.equal(response.status, 200);
-      assert.deepEqual(body.items, []);
+      assert.deepEqual(body.items, [], `${mode} must never yield a partial catalog`);
       assert.equal(body.total, 0);
       assert.equal(body.catalog.status, 'unavailable');
       assert.equal(body.catalog.updatedAt, null);
@@ -371,8 +383,17 @@ test('recovery: after a failed cold start, a later good refresh fills the catalo
     await first.stop();
     first = null;
 
-    second = await startCatalogServer(dataDir, { SOURCE_CATALOG_MAX_AGE_MS: '5000' });
-    const recovered = await getJson(second.baseUrl, '/api/source-catalog');
+    second = await startCatalogServer(dataDir, { SOURCE_CATALOG_MAX_AGE_MS: '1000' });
+    // The failed attempt from the first server is durably recorded, so the
+    // retry becomes due once the freshness window passes; poll until it lands.
+    let recovered = null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      recovered = await getJson(second.baseUrl, '/api/source-catalog');
+      if (recovered.body.catalog.status === 'ok') break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    const recoveredStatus = recovered && recovered.body ? recovered.body.catalog.status : null;
+    assert.equal(recoveredStatus, 'ok', 'durable attempt bound must not block the legitimate retry forever');
     assert.equal(recovered.body.catalog.status, 'ok');
     assert.equal(recovered.body.total, FIXTURE_UNIQUE_ENTRIES);
     assert.ok(recovered.body.catalog.updatedAt);

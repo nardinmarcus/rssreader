@@ -11319,8 +11319,8 @@ body[data-periodicals-mode="off"] .periodicals-open {
 }
 
 .discovery-badge-online {
-  color: #2f6f4e;
-  background: color-mix(in srgb, #2f6f4e 12%, transparent);
+  color: var(--semantic-green);
+  background: color-mix(in srgb, var(--semantic-green) 12%, var(--surface));
 }
 
 .discovery-badge-offline {
