@@ -113,6 +113,15 @@ test('catalog activation is admin-only, exposes explicit restore, and reports We
   assert.match(publicActiveHtml, /早于当前供给窗口的历史覆盖未知/);
 
   context.isAdmin = () => true;
+  const onlineLegacyHtml = context.discoveryEntryHtml({
+    ...catalogItem,
+    online: true,
+    sourceId: 'legacy-source',
+    activated: false,
+  });
+  assert.match(onlineLegacyHtml, /data-discovery-source="legacy-source"/);
+  assert.match(onlineLegacyHtml, /data-discovery-activate="wechat:ABC12345"/);
+  assert.match(onlineLegacyHtml, /完成接入/);
   const archivedHtml = context.discoveryEntryHtml({ ...catalogItem, archived: true, activated: true });
   assert.match(archivedHtml, /data-discovery-restore="true"/);
   assert.match(archivedHtml, /恢复来源/);

@@ -382,6 +382,187 @@ test('PATCH cannot route an ordinary Custom Source through an unverified WeChat 
   }
 });
 
+test('legacy catalog WeChat Custom Sources fail closed when enabled before explicit activation', { timeout: 60000 }, async () => {
+  const dataDir = createTempDataDir();
+  const sourceCapturePath = path.join(dataDir, 'source-requests.json');
+  const aiCapturePath = path.join(dataDir, 'ai-requests.json');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const feedUrl = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  const modePath = path.join(dataDir, 'feed-mode.txt');
+  const sourceId = 'custom-legacy-unregistered-wechat';
+  const legacyEntryId = 'legacy-unregistered-readable-entry';
+  let server = null;
+  try {
+    fs.writeFileSync(modePath, 'mixed-same-account');
+    server = await startServer(dataDir);
+    await adminCookie(server.baseUrl);
+    await stopServer(server);
+    server = null;
+
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const now = Date.now();
+      database.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, site_url, category, description, labels_json, archived_at, created_at, updated_at)
+        VALUES (?, '人人都是产品经理', ?, 'https://www.woshipm.com/', 'article', 'legacy catalog URL without enrollment', '[]', NULL, ?, ?)`).run(
+        sourceId, feedUrl, now, now,
+      );
+      database.prepare(`INSERT INTO source_preferences (source_id, enabled, editorial_priority, display_order, updated_at)
+        VALUES (?, 0, 'normal', 4, ?)`).run(sourceId, new Date(now).toISOString());
+      database.prepare(`INSERT INTO entries
+        (id, source_id, title, link, published, published_ts, summary, content, content_hash, platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+        VALUES (?, ?, '旧公众号条目', 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=9001&idx=1&sn=legacy', '', ?, '旧摘要', '<p>Legacy readable content remains available.</p>', 'legacy-unregistered-hash', 'wechat:MzA1:9001:1', 'unknown', NULL, ?, ?)`).run(
+        legacyEntryId, sourceId, now - 60 * 60 * 1000, now, now,
+      );
+      assert.equal(database.prepare('SELECT source_id FROM source_ingestion_sources WHERE source_id = ?').get(sourceId), undefined,
+        'the legacy source intentionally has no verified ingestion enrollment');
+    } finally {
+      database.close();
+    }
+
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: sourceCapturePath,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: aiCapturePath,
+      MOCK_SOURCE_INGESTION_MODE_PATH: modePath,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+      VERSIONED_TRANSLATION_MODE: 'off',
+      PERIODICALS_MODE: 'off',
+      AI_PROVIDER: 'openai-compatible',
+      AI_PROVIDER_TYPE: 'openai_compatible',
+      AI_API_KEY: 'fixture-ai-key',
+      AI_BASE_URL: 'https://mock-source-ai.example/v1',
+      AI_MODEL: 'mock-model',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const enabled = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(enabled.response.status, 200, JSON.stringify(enabled.body));
+    assert.equal(enabled.body.source.enabled, true);
+    const enabledBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+    const directRefresh = await jsonRequest(server.baseUrl, '/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ sourceId }),
+    });
+    assert.equal(directRefresh.response.status, 200, JSON.stringify(directRefresh.body));
+    const directBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+
+    const disabledToggle = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}/toggle`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(disabledToggle.response.status, 200, JSON.stringify(disabledToggle.body));
+    assert.equal(disabledToggle.body.enabled, false);
+    const enabledToggle = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}/toggle`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(enabledToggle.response.status, 200, JSON.stringify(enabledToggle.body));
+    assert.equal(enabledToggle.body.enabled, true);
+    const toggleBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+
+    const discovered = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat', { headers: { Cookie: cookie } });
+    assert.equal(discovered.response.status, 200, JSON.stringify(discovered.body));
+    const legacyCatalogItem = discovered.body.items.find(item => item.key === catalogKey);
+    assert.equal(legacyCatalogItem.online, true);
+    assert.equal(legacyCatalogItem.sourceId, sourceId);
+    assert.equal(legacyCatalogItem.activated, false,
+      'an online legacy URL match remains distinguishable from an explicitly activated source');
+
+    const entriesDatabase = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    let entryRows;
+    try {
+      entryRows = entriesDatabase.prepare('SELECT id, content, auto_ai_excluded_at FROM entries WHERE source_id = ? ORDER BY id').all(sourceId);
+    } finally {
+      entriesDatabase.close();
+    }
+    const sourceList = await jsonRequest(server.baseUrl, '/api/sources', { headers: { Cookie: cookie } });
+    const sourceMeta = sourceList.body.sources.find(source => source.id === sourceId);
+    const supplierFetchCount = (JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests || [])
+      .filter(request => request.url === feedUrl).length;
+    const state = {
+      refreshStatuses: [
+        enabledBackground.fetch.last.refresh.status,
+        directBackground.fetch.last.refresh.status,
+        toggleBackground.fetch.last.refresh.status,
+      ],
+      automaticAiJobsStarted: [
+        Boolean(enabledBackground.ai.last),
+        Boolean(directBackground.ai.last),
+        Boolean(toggleBackground.ai.last),
+      ],
+      sourceMetaStatus: sourceMeta.status,
+      sourceError: String(sourceMeta.error || ''),
+      activationRequired: /catalog.*activat|activat.*catalog/i.test(String(sourceMeta.error || '')),
+      supplierFetchCount,
+      entryIds: entryRows.map(entry => entry.id),
+      oldEntryReadable: entryRows.some(entry => entry.id === legacyEntryId
+        && /Legacy readable content remains available/.test(entry.content)
+        && entry.auto_ai_excluded_at === null),
+      automaticAiCalls: readAiCalls(aiCapturePath).length,
+    };
+    assert.deepEqual(state, {
+      refreshStatuses: ['stale', 'stale', 'stale'],
+      automaticAiJobsStarted: [false, false, false],
+      sourceMetaStatus: 'stale',
+      sourceError: `WeChat catalog feed requires explicit catalog-key activation before refresh (catalog key: ${catalogKey})`,
+      activationRequired: true,
+      supplierFetchCount: 0,
+      entryIds: [legacyEntryId],
+      oldEntryReadable: true,
+      automaticAiCalls: 0,
+    });
+    const oldEntry = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(legacyEntryId)}`);
+    assert.equal(oldEntry.response.status, 200);
+    assert.match(oldEntry.body.entry.content, /Legacy readable content remains available/);
+
+    const activated = await jsonRequest(server.baseUrl, `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(activated.response.status, 200, JSON.stringify(activated.body));
+    assert.equal(activated.body.source.id, sourceId, 'explicit catalog activation reconciles the legacy source in place');
+    assert.equal(activated.body.created, false);
+    assert.ok(activated.body.activationCutoff > 0);
+    const afterActivation = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const ingestion = afterActivation.prepare(`SELECT source_id, platform, catalog_key, feed_url, activation_cutoff, activation_completed_at
+        FROM source_ingestion_sources WHERE source_id = ?`).get(sourceId);
+      const rows = afterActivation.prepare(`SELECT id, platform_identity, content, auto_ai_excluded_at
+        FROM entries WHERE source_id = ? ORDER BY id`).all(sourceId);
+      assert.equal(ingestion.platform, 'wechat');
+      assert.equal(ingestion.catalog_key, catalogKey);
+      assert.equal(ingestion.feed_url, feedUrl);
+      assert.equal(ingestion.activation_cutoff, activated.body.activationCutoff);
+      assert.ok(ingestion.activation_completed_at > 0);
+      const reconciledOldEntry = rows.find(entry => entry.id === legacyEntryId);
+      assert.ok(reconciledOldEntry);
+      assert.equal(reconciledOldEntry.platform_identity, 'wechat:MzA1:9001:1');
+      assert.match(reconciledOldEntry.content, /Legacy readable content remains available/);
+      assert.equal(reconciledOldEntry.auto_ai_excluded_at, activated.body.activationCutoff);
+      assert.ok(rows.every(entry => entry.auto_ai_excluded_at === activated.body.activationCutoff));
+      assert.equal(rows.length, 4, 'the preserved legacy row and three validated feed entries share the original source');
+    } finally {
+      afterActivation.close();
+    }
+    assert.equal((JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests || [])
+      .filter(request => request.url === feedUrl).length, 1,
+    'supplier fetch occurs only inside explicit catalog activation');
+    assert.deepEqual(readAiCalls(aiCapturePath), [], 'activation does not launch automatic AI work');
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('administrator activates a WeChat catalog key into one readable Custom Source', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir();
   const capturePath = path.join(dataDir, 'source-ingestion-requests.json');
