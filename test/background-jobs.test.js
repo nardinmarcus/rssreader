@@ -206,6 +206,7 @@ test('title translation candidates skip article bodies, asset summaries, and sta
       includeContent: false,
       includeAssetSummaries: false,
       includeStats: false,
+      excludeAutoAi: true,
     });
   } finally {
     restoreDeepseek();

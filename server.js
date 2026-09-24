@@ -10,6 +10,7 @@ const deepseek = require('./lib/deepseek');
 const documentPipeline = require('./lib/document-pipeline');
 const { createOnepageModule } = require('./lib/onepage');
 const { createSourceDiscovery } = require('./lib/source-discovery');
+const { createSourceIngestion } = require('./lib/source-ingestion');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const translationJobs = require('./lib/translation-jobs');
@@ -37,6 +38,7 @@ const sourceDiscovery = createSourceDiscovery({
   },
   fetchCatalogText: url => fetcher.fetchText(url, 20000, 5 * 1024 * 1024),
 });
+const sourceIngestion = createSourceIngestion({ store, sourceDiscovery, fetcher });
 app.disable('x-powered-by');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -3919,8 +3921,24 @@ app.post('/api/refresh', requireLogin, async (req, res) => {
   res.json({ started: result.started, running: result.running, job: result.job, progress: result.progress, autoRewrite: result.autoRewrite });
 });
 
-app.post('/api/sources', requireAdmin, (req, res) => {
+app.post('/api/admin/source-catalog/:key/activate', requireAdmin, async (req, res) => {
   try {
+    const result = await sourceIngestion.activateWechatCatalogKey(req.params.key, {
+      restore: Boolean(req.body && req.body.restore === true),
+    });
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (e) {
+    sendError(res, e, 'WeChat source activation failed');
+  }
+});
+
+app.post('/api/sources', requireAdmin, async (req, res) => {
+  try {
+    const catalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(req.body && req.body.feedUrl);
+    if (catalogKey) {
+      const result = await sourceIngestion.activateWechatCatalogKey(catalogKey);
+      return res.status(result.created ? 201 : 200).json(result);
+    }
     const source = fetcher.createCustomSource(req.body);
     const refresh = startBackgroundJob({
       kind: 'refresh',
@@ -4028,9 +4046,8 @@ app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
   }
 });
 
-// Read-only discovery catalog: browse/search the persisted snapshot and the
-// verified show registry. No login required; apply/activate actions belong to
-// later slices. A cold start coalesces into one merged catalog refresh.
+// The persisted catalog remains publicly browsable. Only admins receive
+// activation/restore affordances; the mutation itself is guarded below.
 app.get('/api/source-catalog', async (req, res) => {
   try {
     await sourceDiscovery.ensureSourceCatalogFresh();
@@ -4039,6 +4056,7 @@ app.get('/api/source-catalog', async (req, res) => {
       q: req.query.q,
       cursor: req.query.cursor,
       limit: req.query.limit,
+      admin: Boolean(req.user && req.user.role === 'admin'),
     });
     res.json(projection);
   } catch (e) {

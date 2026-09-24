@@ -93,6 +93,35 @@ test('managed sources sort enabled first, then enabled priority, then persisted 
   );
 });
 
+test('catalog activation is admin-only, exposes explicit restore, and reports WeChat content scope', () => {
+  const context = {
+    discoveryState: { activatingKey: '' },
+    isAdmin: () => true,
+    escapeHtml: value => String(value || ''),
+  };
+  vm.createContext(context);
+  vm.runInContext(`${extractFunction('discoveryEntryHtml')}\n${extractFunction('wechatContentScopeLabel')}`, context);
+  const catalogItem = { key: 'wechat:ABC12345', platform: 'wechat', name: '公众号', online: false };
+  const adminHtml = context.discoveryEntryHtml(catalogItem);
+  assert.match(adminHtml, /data-discovery-activate="wechat:ABC12345"/);
+  assert.match(adminHtml, /加入自定义来源/);
+
+  context.isAdmin = () => false;
+  const publicHtml = context.discoveryEntryHtml(catalogItem);
+  assert.doesNotMatch(publicHtml, /data-discovery-activate/);
+
+  context.isAdmin = () => true;
+  const archivedHtml = context.discoveryEntryHtml({ ...catalogItem, archived: true, activated: true });
+  assert.match(archivedHtml, /data-discovery-restore="true"/);
+  assert.match(archivedHtml, /恢复来源/);
+  assert.equal(context.wechatContentScopeLabel({ platformIdentity: 'wechat:MzA1:1:1', contentScope: 'feed-body' }), '供给正文，完整性未验证');
+  assert.equal(context.wechatContentScopeLabel({ platformIdentity: 'wechat:MzA1:1:1', contentScope: 'summary' }), '仅摘要');
+  assert.equal(context.wechatContentScopeLabel({ platformIdentity: 'wechat:MzA1:1:1', contentScope: 'unknown' }), '内容范围未知');
+  assert.equal(context.wechatContentScopeLabel({ platformIdentity: '', contentScope: 'unknown' }), '');
+  assert.match(styles, /\.discovery-badge-archived/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.discovery-entry-action button\s*\{\s*width:\s*100%/);
+});
+
 test('managed source filters expose an accessible responsive search control', () => {
   const renderFilters = extractFunction('renderSourceManageFilters');
 

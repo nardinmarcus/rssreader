@@ -4027,6 +4027,8 @@ const discoveryState = {
   catalog: { status: 'ok', updatedAt: null },
   requestSeq: 0,
   error: '',
+  activationMessage: '',
+  activatingKey: '',
   opener: null,
 };
 
@@ -4035,12 +4037,24 @@ function isCurrentDiscoveryResponse(seq) {
 }
 
 function discoveryEntryHtml(item, kind = 'catalog') {
-  const badge = item.online
-    ? '<span class="discovery-badge discovery-badge-online">已上线</span>'
-    : '<span class="discovery-badge discovery-badge-offline">未接入</span>';
-  const action = item.online && item.sourceId
-    ? `<button class="ghost-btn primary discovery-open-reading" type="button" data-discovery-source="${escapeHtml(item.sourceId)}">进入阅读</button>`
-    : '';
+  const admin = isAdmin();
+  const archived = Boolean(admin && item.archived);
+  const badge = archived
+    ? '<span class="discovery-badge discovery-badge-archived">已归档</span>'
+    : item.online
+      ? `<span class="discovery-badge discovery-badge-online">${item.platform === 'wechat' ? '已接入' : '已上线'}</span>`
+      : '<span class="discovery-badge discovery-badge-offline">未接入</span>';
+  const actions = [];
+  if (item.online && item.sourceId) {
+    actions.push(`<button class="ghost-btn primary discovery-open-reading" type="button" data-discovery-source="${escapeHtml(item.sourceId)}">进入阅读</button>`);
+  }
+  if (admin && item.platform === 'wechat' && (!item.activated || archived)) {
+    const restore = archived ? 'true' : 'false';
+    const label = archived ? '恢复来源' : item.online ? '完成接入' : '加入自定义来源';
+    const busy = discoveryState.activatingKey === item.key;
+    actions.push(`<button class="ghost-btn primary discovery-activate" type="button" data-discovery-activate="${escapeHtml(item.key)}" data-discovery-restore="${restore}" aria-label="${label}：${escapeHtml(item.name)}"${busy ? ' disabled' : ''}>${busy ? '处理中…' : label}</button>`);
+  }
+  const action = actions.length ? `<div class="discovery-entry-action">${actions.join('')}</div>` : '';
   const meta = [];
   if (kind === 'recommended' && item.description) meta.push(`<span class="discovery-entry-description">${escapeHtml(item.description)}</span>`);
   if (item.siteUrl) {
@@ -4054,7 +4068,7 @@ function discoveryEntryHtml(item, kind = 'catalog') {
     + badge
     + `</div>`
     + (meta.length ? `<div class="discovery-entry-meta">${meta.join('')}</div>` : '')
-    + (action ? `<div class="discovery-entry-action">${action}</div>` : '')
+    + action
     + `</div>`;
 }
 
@@ -4067,9 +4081,16 @@ function discoveryStatusText(catalog) {
   return `目录更新于 ${time}`;
 }
 
+function wechatContentScopeLabel(entry) {
+  if (!String(entry && entry.platformIdentity || '').startsWith('wechat:')) return '';
+  if (entry.contentScope === 'feed-body') return '供给正文，完整性未验证';
+  if (entry.contentScope === 'summary') return '仅摘要';
+  return '内容范围未知';
+}
+
 function renderSourceDiscoveryStatus() {
   const target = $('#source-discovery-status');
-  if (target) target.textContent = discoveryStatusText(discoveryState.catalog);
+  if (target) target.textContent = [discoveryStatusText(discoveryState.catalog), discoveryState.activationMessage].filter(Boolean).join(' · ');
 }
 
 function renderSourceDiscoveryEmpty(message) {
@@ -4094,6 +4115,9 @@ function renderSourceDiscovery() {
   recommendedTarget.querySelectorAll('[data-discovery-source]').forEach(btn => {
     btn.onclick = () => selectDiscoverySource(btn.dataset.discoverySource);
   });
+  recommendedTarget.querySelectorAll('[data-discovery-activate]').forEach(btn => {
+    btn.onclick = () => activateDiscoverySource(btn.dataset.discoveryActivate, btn.dataset.discoveryRestore === 'true');
+  });
 
   const itemsHtml = discoveryState.items
     .map(item => discoveryEntryHtml(item, 'catalog'))
@@ -4101,6 +4125,12 @@ function renderSourceDiscovery() {
   listTarget.innerHTML = itemsHtml
     ? '<h3>公众号目录</h3><div class="discovery-entries">' + itemsHtml + '</div>'
     : '';
+  listTarget.querySelectorAll('[data-discovery-source]').forEach(btn => {
+    btn.onclick = () => selectDiscoverySource(btn.dataset.discoverySource);
+  });
+  listTarget.querySelectorAll('[data-discovery-activate]').forEach(btn => {
+    btn.onclick = () => activateDiscoverySource(btn.dataset.discoveryActivate, btn.dataset.discoveryRestore === 'true');
+  });
 
   renderSourceDiscoveryStatus();
   const empty = $('#source-discovery-empty');
@@ -4160,6 +4190,39 @@ async function selectDiscoverySource(sourceId) {
   if (!sourceId) return;
   closeSourceDiscovery({ restoreFocus: false });
   await selectSource(sourceId);
+}
+
+async function activateDiscoverySource(catalogKey, restore = false) {
+  if (!isAdmin() || !/^wechat:[A-Za-z0-9_-]{6,80}$/.test(String(catalogKey || '')) || discoveryState.activatingKey) return;
+  discoveryState.activatingKey = catalogKey;
+  discoveryState.activationMessage = restore ? '正在恢复并校验公众号来源…' : '正在校验并加入公众号来源…';
+  renderSourceDiscovery();
+  let activatedSourceId = '';
+  try {
+    const result = await api(`/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(restore ? { restore: true } : {}),
+    });
+    const count = Number(result.entryCount) || 0;
+    activatedSourceId = String(result.source && result.source.id || '');
+    discoveryState.activationMessage = `${restore ? '来源已恢复' : '来源已接入'}：本次供给 ${count} 条；正文范围保留为供给正文/摘要/未知，不声明完整性；供给窗口之外的历史暂未验证。`;
+    await loadSources();
+    await loadSourceCatalog({ reset: true });
+    toast(restore ? '公众号来源已恢复' : '公众号来源已加入自定义来源');
+  } catch (error) {
+    discoveryState.activationMessage = `接入失败：${error.message || error}`;
+    toast(discoveryState.activationMessage);
+  } finally {
+    discoveryState.activatingKey = '';
+    renderSourceDiscovery();
+    if (discoveryState.open) {
+      const focusable = Array.from(document.querySelectorAll('[data-discovery-source], [data-discovery-activate]'))
+        .find(button => button.dataset.discoverySource === activatedSourceId
+          || button.dataset.discoveryActivate === catalogKey);
+      if (focusable) focusable.focus();
+    }
+  }
 }
 
 function openSourceDiscovery() {
@@ -9859,7 +9922,8 @@ async function loadEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   $('#reader-empty').classList.add('hidden');
   $('#reader').classList.remove('hidden');
   renderAdminEntryControls();
-  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>`;
+  const contentScopeLabel = wechatContentScopeLabel(e);
+  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>${contentScopeLabel ? `<span class="reader-source-scope">${escapeHtml(contentScopeLabel)}</span>` : ''}`;
   renderTitle(e);
   updateRewriteUiLabels(e);
   document.title = readerRouteTitle(e, requestedFocus);

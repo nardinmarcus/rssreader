@@ -501,6 +501,52 @@ test('shadow verifier repeats additive migration on a work copy without changing
   }
 });
 
+test('periodical scheduling excludes WeChat history marked as automatic-AI ineligible', async () => {
+  const dataDir = createTempDataDir('namoo-reader-periodicals-wechat-history-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const now = Date.now();
+    const capturedAt = now - 30_000;
+    db.prepare(`INSERT INTO custom_sources
+      (id, name, feed_url, category, labels_json, created_at, updated_at)
+      VALUES ('wechat-source', 'WeChat Source', 'https://wechat2rss.example/feed.xml', 'article', '[]', ?, ?)`).run(now, now);
+    db.prepare(`INSERT INTO source_preferences
+      (source_id, enabled, editorial_priority, display_order, updated_at)
+      VALUES ('wechat-source', 1, 'normal', 0, ?)`).run(new Date(now).toISOString());
+    const content = '<p>' + 'Feed-provided material with a preserved source and evidence trail. '.repeat(12) + '</p>';
+    const insertEntry = db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash, content_scope, auto_ai_excluded_at, created_at, updated_at)
+      VALUES (?, 'wechat-source', ?, ?, ?, ?, ?, ?, 'feed-body', ?, ?, ?)`);
+    insertEntry.run(
+      'wechat-historical-entry', 'Historical WeChat article', 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=11&idx=1',
+      capturedAt, 'Historical teaser', content, 'historical-content-hash', now, capturedAt, capturedAt,
+    );
+    insertEntry.run(
+      'wechat-post-cutoff-entry', 'New WeChat article', 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=12&idx=1',
+      capturedAt + 1, 'New article teaser', content, 'future-content-hash', null, capturedAt + 1, capturedAt + 1,
+    );
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter: null, logger() {} });
+    const scheduled = periodicals.syncOpenDaily({ now, trigger: 'wechat-history-exclusion-test' });
+    assert.equal(scheduled.job.candidateCount, 1, 'only the post-cutoff entry enters the daily candidate set');
+    const built = await periodicals.runNextBuild({ now: now + 1 });
+    assert.equal(built.status, 'succeeded');
+    const candidates = db.prepare(`
+      SELECT evidence.entry_id
+      FROM periodical_event_evidence AS evidence
+      INNER JOIN periodical_events AS event ON event.id = evidence.event_id
+      WHERE event.issue_id = ?
+      ORDER BY evidence.entry_id
+    `).all(scheduled.issueId).map(row => row.entry_id);
+    assert.ok(candidates.length > 0);
+    assert.ok(candidates.every(id => id === 'wechat-post-cutoff-entry'));
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('shadow verifier accepts the last successful Daily revision while it is finalizing', async () => {
   const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
   const dataDir = createTempDataDir('namoo-reader-periodicals-finalizing-verification-');
