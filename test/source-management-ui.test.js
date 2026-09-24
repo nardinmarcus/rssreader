@@ -109,6 +109,8 @@ test('catalog activation is admin-only, exposes explicit restore, and reports We
   context.isAdmin = () => false;
   const publicHtml = context.discoveryEntryHtml(catalogItem);
   assert.doesNotMatch(publicHtml, /data-discovery-activate/);
+  const publicActiveHtml = context.discoveryEntryHtml({ ...catalogItem, online: true, sourceId: 'public-source' });
+  assert.match(publicActiveHtml, /早于当前供给窗口的历史覆盖未知/);
 
   context.isAdmin = () => true;
   const archivedHtml = context.discoveryEntryHtml({ ...catalogItem, archived: true, activated: true });
@@ -120,6 +122,20 @@ test('catalog activation is admin-only, exposes explicit restore, and reports We
   assert.equal(context.wechatContentScopeLabel({ platformIdentity: '', contentScope: 'unknown' }), '');
   assert.match(styles, /\.discovery-badge-archived/);
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.discovery-entry-action button\s*\{\s*width:\s*100%/);
+});
+
+test('article readers see WeChat history coverage as unknown rather than complete', () => {
+  const context = {};
+  vm.createContext(context);
+  vm.runInContext(extractFunction('wechatHistoryCoverageLabel'), context);
+  assert.equal(
+    context.wechatHistoryCoverageLabel({ platformIdentity: 'wechat:MzA1:mid-1:0' }),
+    '早于当前供给窗口的历史覆盖未知',
+  );
+  assert.equal(context.wechatHistoryCoverageLabel({ platformIdentity: 'rss:entry-1' }), '');
+  assert.match(app, /wechatHistoryCoverageLabel\(e\)/);
+  assert.match(app, /class="reader-source-history"/);
+  assert.match(styles, /\.reader-source-history/);
 });
 
 test('managed source filters expose an accessible responsive search control', () => {

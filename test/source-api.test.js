@@ -586,6 +586,100 @@ test('activation reconciles a legacy manual feed source without changing its ide
   }
 });
 
+test('catalog projection exposes archived legacy URL variants only to admins and enables explicit restore', { timeout: 45000 }, async () => {
+  const dataDir = createTempDataDir();
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  const sourceId = 'custom-archived-legacy-wechat';
+  const urlVariant = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml?utm_source=legacy&from=manual';
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+    });
+    await adminCookie(server.baseUrl);
+    const firstCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat');
+    assert.equal(firstCatalog.response.status, 200, JSON.stringify(firstCatalog.body));
+    await stopServer(server);
+    server = null;
+
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const now = Date.now();
+      database.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, site_url, category, description, labels_json, archived_at, created_at, updated_at)
+        VALUES (?, '人人都是产品经理', ?, 'https://www.woshipm.com/', 'article', 'legacy URL variant', '[]', ?, ?, ?)`).run(
+        sourceId, urlVariant, now, now, now,
+      );
+      database.prepare(`INSERT INTO source_preferences
+        (source_id, enabled, editorial_priority, display_order, updated_at)
+        VALUES (?, 0, 'normal', 5, ?)`).run(sourceId, new Date(now).toISOString());
+    } finally {
+      database.close();
+    }
+
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+    });
+    const readerRegistration = await jsonRequest(server.baseUrl, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'legacy-reader@example.com', password: 'reader-password-123', displayName: 'Reader' }),
+    });
+    assert.equal(readerRegistration.response.status, 200, JSON.stringify(readerRegistration.body));
+    const readerCookie = String(readerRegistration.response.headers.get('set-cookie') || '').split(';')[0];
+    const admin = await adminCookie(server.baseUrl);
+
+    const guest = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat');
+    const guestItem = guest.body.items.find(item => item.key === catalogKey);
+    assert.equal(guestItem.online, false);
+    assert.equal(Object.hasOwn(guestItem, 'sourceId'), false);
+    assert.equal(Object.hasOwn(guestItem, 'archived'), false);
+    assert.equal(Object.hasOwn(guestItem, 'activated'), false);
+    const reader = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat', { headers: { Cookie: readerCookie } });
+    const readerItem = reader.body.items.find(item => item.key === catalogKey);
+    assert.equal(readerItem.online, false);
+    assert.equal(Object.hasOwn(readerItem, 'archived'), false);
+    assert.equal(Object.hasOwn(readerItem, 'activated'), false);
+    const adminCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat', { headers: { Cookie: admin } });
+    const adminItem = adminCatalog.body.items.find(item => item.key === catalogKey);
+    assert.equal(adminItem.online, false);
+    assert.equal(adminItem.archived, true, 'canonical catalog-key matching reveals the legacy source needs explicit restore');
+    assert.equal(adminItem.activated, false);
+    assert.equal(Object.hasOwn(adminItem, 'sourceId'), false);
+    assert.equal(Object.hasOwn(adminItem, 'feedUrl'), false);
+
+    const activatePath = `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`;
+    const denied = await jsonRequest(server.baseUrl, activatePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: admin },
+      body: JSON.stringify({}),
+    });
+    assert.equal(denied.response.status, 409, JSON.stringify(denied.body));
+    const restored = await jsonRequest(server.baseUrl, activatePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: admin },
+      body: JSON.stringify({ restore: true }),
+    });
+    assert.equal(restored.response.status, 200, JSON.stringify(restored.body));
+    assert.equal(restored.body.restored, true);
+    assert.equal(restored.body.source.id, sourceId);
+    const restoredCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat');
+    const restoredItem = restoredCatalog.body.items.find(item => item.key === catalogKey);
+    assert.equal(restoredItem.online, true);
+    assert.equal(restoredItem.sourceId, sourceId);
+    assert.equal(Object.hasOwn(restoredItem, 'archived'), false);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('invalid and redirected WeChat feeds fail without creating a Custom Source or article', { timeout: 60000 }, async () => {
   const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
   const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
@@ -669,6 +763,145 @@ test('a changed WeChat account identity cannot replace the last good source snap
     assert.equal(source.entryCount, 2, 'identity mismatch preserves all prior readable content');
     const requests = JSON.parse(fs.readFileSync(capturePath, 'utf8')).requests;
     assert.equal(requests.some(request => request.url.includes('mp.weixin.qq.com')), false);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('WeChat refresh keeps legitimate mixed identities and rejects mismatched unbound articles before persistence', { timeout: 60000 }, async () => {
+  const dataDir = createTempDataDir();
+  const capturePath = path.join(dataDir, 'source-requests.json');
+  const modePath = path.join(dataDir, 'feed-mode.txt');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  fs.writeFileSync(modePath, 'mixed-same-account');
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: capturePath,
+      MOCK_SOURCE_INGESTION_MODE_PATH: modePath,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const activated = await jsonRequest(server.baseUrl, `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(activated.response.status, 201, JSON.stringify(activated.body));
+    assert.equal(activated.body.entryCount, 3, 'same-account feeds may contain both Biz-bound and SN-only article identities');
+    const sourceId = activated.body.source.id;
+    const before = readIngestionDatabase(dataDir, sourceId);
+    const beforeIds = before.entries.map(entry => entry.id).sort();
+    assert.ok(before.entries.some(entry => entry.platform_identity === 'wechat:sn:unbound-refresh-entry'));
+
+    const refreshSameAccount = await jsonRequest(server.baseUrl, '/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ sourceId }),
+    });
+    assert.equal(refreshSameAccount.response.status, 200, JSON.stringify(refreshSameAccount.body));
+    const refreshed = await waitForBackgroundIdle(server.baseUrl, cookie);
+    assert.equal(refreshed.fetch.last.refresh.status, 'ok');
+    assert.deepEqual(readIngestionDatabase(dataDir, sourceId).entries.map(entry => entry.id).sort(), beforeIds);
+
+    fs.writeFileSync(modePath, 'mixed-title-mismatch');
+    const refreshMismatched = await jsonRequest(server.baseUrl, '/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ sourceId }),
+    });
+    assert.equal(refreshMismatched.response.status, 200, JSON.stringify(refreshMismatched.body));
+    const rejected = await waitForBackgroundIdle(server.baseUrl, cookie);
+    assert.equal(rejected.fetch.last.refresh.status, 'stale');
+    const after = readIngestionDatabase(dataDir, sourceId);
+    assert.deepEqual(after.entries.map(entry => entry.id).sort(), beforeIds,
+      'a mismatched feed title must not import the mixed feed\'s unbound SN-only article');
+    assert.ok(after.entries.some(entry => entry.platform_identity === 'wechat:sn:unbound-refresh-entry'));
+    assert.equal(after.ingestion.platform_account_id, 'MzA1');
+    const sourceList = await jsonRequest(server.baseUrl, '/api/sources', { headers: { Cookie: cookie } });
+    assert.equal(sourceList.body.sources.find(source => source.id === sourceId).entryCount, 3);
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('admin title translation skips excluded historical WeChat entries but still scans eligible entries', { timeout: 30000 }, async () => {
+  const dataDir = createTempDataDir();
+  const capturePath = path.join(dataDir, 'title-translation-request.json');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: capturePath,
+      SOURCE_CATALOG_FEED_URL: 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml',
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+      AI_PROVIDER: 'openai-compatible',
+      AI_PROVIDER_TYPE: 'openai_compatible',
+      AI_API_KEY: 'test-api-key',
+      AI_BASE_URL: 'https://mock-source-ai.example/v1',
+      AI_MODEL: 'test-title-model',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const now = Date.now();
+      database.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, category, created_at, updated_at)
+        VALUES ('custom-title-scan', 'WeChat title scan fixture', 'https://example.com/feed.xml', 'article', ?, ?)`).run(now, now);
+      database.prepare(`INSERT INTO source_preferences (source_id, enabled, editorial_priority, display_order, updated_at)
+        VALUES ('custom-title-scan', 1, 'normal', 0, ?)`).run(new Date(now).toISOString());
+      const insertEntry = database.prepare(`INSERT INTO entries
+        (id, source_id, title, link, published, published_ts, summary, content, content_hash,
+         platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+        VALUES (?, 'custom-title-scan', ?, ?, '', ?, '', '', ?, ?, 'summary', ?, ?, ?)`);
+      insertEntry.run(
+        'excluded-title-entry',
+        'Historical English title that must remain excluded',
+        'https://mp.weixin.qq.com/s?__biz=MzA1&mid=1&idx=1&sn=old',
+        now - 1000,
+        'hash-excluded',
+        'wechat:MzA1:1:1',
+        now - 1000,
+        now - 1000,
+        now - 1000,
+      );
+      insertEntry.run(
+        'eligible-title-entry',
+        'Future English title that remains eligible',
+        'https://mp.weixin.qq.com/s?__biz=MzA1&mid=2&idx=1&sn=future',
+        now + 1000,
+        'hash-eligible',
+        'wechat:MzA1:2:1',
+        null,
+        now,
+        now,
+      );
+    } finally {
+      database.close();
+    }
+
+    const result = await jsonRequest(server.baseUrl, '/api/translate-titles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ limit: 10 }),
+    });
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf8'));
+    const prompt = (captured.calls || [])
+      .flatMap(call => call.messages || [])
+      .filter(message => message.role === 'user')
+      .map(message => message.content)
+      .join('\n');
+    assert.doesNotMatch(prompt, /Historical English title that must remain excluded/);
+    assert.match(prompt, /Future English title that remains eligible/);
+    assert.equal(result.response.status, 200, JSON.stringify(result.body));
+    assert.deepEqual(result.body, { translated: 0 });
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });

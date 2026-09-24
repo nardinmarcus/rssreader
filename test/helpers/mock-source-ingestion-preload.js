@@ -50,6 +50,15 @@ function appendArticle(body, { suffix, published, title }) {
 }
 
 function feedForMode(mode) {
+  if (mode === 'mixed-same-account' || mode === 'mixed-title-mismatch') {
+    const feedTitle = mode === 'mixed-title-mismatch' ? 'Other account' : '人人都是产品经理';
+    return fixtureRss
+      .replace('<title>人人都是产品经理</title>', `<title>${feedTitle}</title>`)
+      .replace(
+        'https://mp.weixin.qq.com/s?from=timeline&amp;idx=1&amp;mid=1001&amp;__biz=MzA1&amp;sn=abc123',
+        'https://mp.weixin.qq.com/s?sn=unbound-refresh-entry',
+      );
+  }
   if (mode.startsWith('new-historical-')) {
     const suffix = mode.endsWith('-2') ? '2' : '1';
     return appendArticle(fixtureRss, {

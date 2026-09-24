@@ -2209,7 +2209,9 @@ async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
     includeContent: false,
     includeAssetSummaries: false,
     includeStats: false,
+    excludeAutoAi: true,
   })
+    .filter(entry => !entry.autoAiExcludedAt)
     .filter(entry => deepseek.isLikelyEnglish(entry.title) && !entry.titleZh)
     .slice(0, limit);
   let translated = 0;

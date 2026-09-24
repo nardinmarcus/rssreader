@@ -4057,6 +4057,9 @@ function discoveryEntryHtml(item, kind = 'catalog') {
   const action = actions.length ? `<div class="discovery-entry-action">${actions.join('')}</div>` : '';
   const meta = [];
   if (kind === 'recommended' && item.description) meta.push(`<span class="discovery-entry-description">${escapeHtml(item.description)}</span>`);
+  if (item.platform === 'wechat' && item.online) {
+    meta.push('<span class="discovery-history-coverage">早于当前供给窗口的历史覆盖未知</span>');
+  }
   if (item.siteUrl) {
     meta.push(`<a class="discovery-entry-site" href="${escapeHtml(item.siteUrl)}" target="_blank" rel="noopener noreferrer">节目主页</a>`);
   }
@@ -4086,6 +4089,12 @@ function wechatContentScopeLabel(entry) {
   if (entry.contentScope === 'feed-body') return '供给正文，完整性未验证';
   if (entry.contentScope === 'summary') return '仅摘要';
   return '内容范围未知';
+}
+
+function wechatHistoryCoverageLabel(entry) {
+  return String(entry && entry.platformIdentity || '').startsWith('wechat:')
+    ? '早于当前供给窗口的历史覆盖未知'
+    : '';
 }
 
 function renderSourceDiscoveryStatus() {
@@ -9923,7 +9932,8 @@ async function loadEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   $('#reader').classList.remove('hidden');
   renderAdminEntryControls();
   const contentScopeLabel = wechatContentScopeLabel(e);
-  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>${contentScopeLabel ? `<span class="reader-source-scope">${escapeHtml(contentScopeLabel)}</span>` : ''}`;
+  const historyCoverageLabel = wechatHistoryCoverageLabel(e);
+  $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>${contentScopeLabel ? `<span class="reader-source-scope">${escapeHtml(contentScopeLabel)}</span>` : ''}${historyCoverageLabel ? `<span class="reader-source-history">${escapeHtml(historyCoverageLabel)}</span>` : ''}`;
   renderTitle(e);
   updateRewriteUiLabels(e);
   document.title = readerRouteTitle(e, requestedFocus);

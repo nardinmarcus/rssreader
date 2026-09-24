@@ -49,3 +49,32 @@ test('WeChat refresh without account IDs falls back to the selected catalog name
     error => error.code === 'wechat-account-mismatch' && error.statusCode === 422,
   );
 });
+
+test('WeChat refresh rejects mismatched titles when Biz entries are mixed with unbound SN or path identities', () => {
+  for (const unboundIdentity of ['wechat:sn:unbound-hash', 'wechat:path:unbound-path-id']) {
+    assert.throws(
+      () => verifyWechatFeed({ name: 'Selected account' }, {
+        feedTitle: 'Different account',
+        entries: [article('wechat:MzA1YjY:mid-1:0', 1), article(unboundIdentity, 2)],
+      }, { expectedAccountId: 'MzA1YjY', validateName: false }),
+      error => error.code === 'wechat-account-mismatch' && error.statusCode === 422,
+      `${unboundIdentity} must not inherit the Biz article's account verification`,
+    );
+  }
+});
+
+test('WeChat refresh retains legitimate same-account mixed identities and bound-ID title changes', () => {
+  const mixed = verifyWechatFeed(catalogEntry, {
+    feedTitle: '人人都是产品经理',
+    entries: [article('wechat:MzA1YjY:mid-1:0', 1), article('wechat:sn:same-feed-entry', 2)],
+  }, { expectedAccountId: 'MzA1YjY', validateName: false });
+  assert.equal(mixed.platformAccountId, 'MzA1YjY');
+  assert.equal(mixed.entries.length, 2);
+
+  const renamed = verifyWechatFeed(catalogEntry, {
+    feedTitle: 'renamed account',
+    entries: [article('wechat:MzA1YjY:mid-3:0', 3)],
+  }, { expectedAccountId: 'MzA1YjY', validateName: false });
+  assert.equal(renamed.platformAccountId, 'MzA1YjY');
+  assert.equal(renamed.entries.length, 1);
+});
