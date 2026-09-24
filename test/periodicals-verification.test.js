@@ -547,6 +547,56 @@ test('periodical scheduling excludes WeChat history marked as automatic-AI ineli
   }
 });
 
+test('daily candidate selection excludes unregistered canonical WeChat sources but keeps ordinary sources', async () => {
+  const dataDir = createTempDataDir('namoo-reader-periodicals-unregistered-wechat-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const now = Date.now();
+    const wechatSourceId = 'legacy-unregistered-wechat-periodical';
+    const ordinarySourceId = 'ordinary-periodical-control';
+    const wechatFeedUrl = 'https://wechat2rss.bestblogs.dev/feed/abcdef123456.xml';
+    for (const [id, name, feedUrl] of [
+      [wechatSourceId, 'Legacy unregistered WeChat', wechatFeedUrl],
+      [ordinarySourceId, 'Ordinary control', 'https://ordinary.example/feed.xml'],
+    ]) {
+      db.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, category, labels_json, created_at, updated_at)
+        VALUES (?, ?, ?, 'article', '[]', ?, ?)`).run(id, name, feedUrl, now, now);
+      db.prepare(`INSERT INTO source_preferences
+        (source_id, enabled, editorial_priority, display_order, updated_at)
+        VALUES (?, 1, 'normal', 0, ?)`).run(id, new Date(now).toISOString());
+    }
+    const wechatEntryContent = `<p>${'Verified feed-provided WeChat content remains available for reading. '.repeat(12)}</p>`;
+    db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash,
+       platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+      VALUES ('legacy-wechat-periodical-entry', ?, 'Eligible legacy WeChat article',
+        'https://mp.weixin.qq.com/s?__biz=MzA1&mid=12121&idx=1&sn=eligible', ?, 'English teaser', ?,
+        'legacy-wechat-periodical-hash', 'wechat:MzA1:12121:1', 'feed-body', NULL, ?, ?)`).run(
+      wechatSourceId, now - 30_000, wechatEntryContent, now - 30_000, now - 30_000,
+    );
+    db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash,
+       platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+      VALUES ('ordinary-periodical-control-entry', ?, 'Ordinary source remains eligible',
+        'https://ordinary.example/articles/control', ?, 'Ordinary summary', '<p>Ordinary readable article.</p>',
+        'ordinary-periodical-control-hash', NULL, 'unknown', NULL, ?, ?)`).run(
+      ordinarySourceId, now - 20_000, now - 20_000, now - 20_000,
+    );
+    assert.equal(db.prepare('SELECT source_id FROM source_ingestion_sources WHERE source_id = ?').get(wechatSourceId), undefined);
+
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter: null, logger() {} });
+    const scheduled = periodicals.syncOpenDaily({ now, trigger: 'unregistered-wechat-candidate-test' });
+    assert.equal(scheduled.job.candidateCount, 1,
+      'the ordinary control remains a periodical candidate while the canonical unregistered WeChat item is excluded');
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('shadow verifier accepts the last successful Daily revision while it is finalizing', async () => {
   const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
   const dataDir = createTempDataDir('namoo-reader-periodicals-finalizing-verification-');

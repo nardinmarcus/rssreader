@@ -2210,8 +2210,16 @@ function onepageResponse(onepage, viewer = null) {
   };
 }
 
+function isUnregisteredWechatCatalogSourceId(sourceId) {
+  const source = fetcher.getSourceById(sourceId);
+  return Boolean(source
+    && sourceDiscovery.wechatCatalogKeyForSource(source)
+    && !store.getSourceIngestionBySourceId(source.id));
+}
+
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
+  const sourceEligibility = new Map();
   const entries = fetcher.getEntries({
     limit: 1000,
     includeContent: false,
@@ -2219,6 +2227,14 @@ async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
     includeStats: false,
     excludeAutoAi: true,
   })
+    .filter(entry => {
+      const sourceId = String(entry && entry.sourceId || '').trim();
+      if (!sourceId) return true;
+      if (!sourceEligibility.has(sourceId)) {
+        sourceEligibility.set(sourceId, !isUnregisteredWechatCatalogSourceId(sourceId));
+      }
+      return sourceEligibility.get(sourceId);
+    })
     .filter(entry => !entry.autoAiExcludedAt)
     .filter(entry => deepseek.isLikelyEnglish(entry.title) && !entry.titleZh)
     .slice(0, limit);

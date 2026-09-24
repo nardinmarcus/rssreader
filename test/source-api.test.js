@@ -68,6 +68,31 @@ async function stopServer(server) {
   if (server.child.exitCode === null) server.child.kill('SIGKILL');
 }
 
+function runRefreshWorker(dataDir, sourceId, env = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      'scripts/refresh-worker.js',
+      '--kind=refresh',
+      `--source=${sourceId}`,
+    ], {
+      cwd: projectDir,
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        NAMOO_READER_DATA_DIR: dataDir,
+        ...env,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += String(chunk); });
+    child.stderr.on('data', chunk => { stderr += String(chunk); });
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
 async function jsonRequest(baseUrl, pathname, options = {}) {
   const response = await fetch(`${baseUrl}${pathname}`, options);
   let body = null;
@@ -393,6 +418,15 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
   const modePath = path.join(dataDir, 'feed-mode.txt');
   const sourceId = 'custom-legacy-unregistered-wechat';
   const legacyEntryId = 'legacy-unregistered-readable-entry';
+  const legacyTitle = 'An English legacy WeChat title must await explicit activation';
+  const legacyBodyMarker = 'LEGACY_CANONICAL_WECHAT_FEED_BODY_MUST_NOT_REACH_AUTOMATIC_AI';
+  const legacyContent = `<p>Legacy readable content remains available. ${`${legacyBodyMarker} English feed-body details remain readable. `.repeat(12)}</p>`;
+  const archivedSourceId = 'custom-archived-unregistered-wechat';
+  const archivedTitle = 'An archived English WeChat title must not be bulk-scanned';
+  const archivedBodyMarker = 'ARCHIVED_LEGACY_WECHAT_BODY_MUST_NOT_REACH_AUTOMATIC_AI';
+  const archivedContent = `<p>${`${archivedBodyMarker} Eligible feed-body content remains readable. `.repeat(12)}</p>`;
+  assert.ok(legacyContent.replace(/<[^>]+>/g, ' ').length > 600);
+  assert.ok(archivedContent.replace(/<[^>]+>/g, ' ').length > 600);
   let server = null;
   try {
     fs.writeFileSync(modePath, 'mixed-same-account');
@@ -413,8 +447,18 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
         VALUES (?, 0, 'normal', 4, ?)`).run(sourceId, new Date(now).toISOString());
       database.prepare(`INSERT INTO entries
         (id, source_id, title, link, published, published_ts, summary, content, content_hash, platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
-        VALUES (?, ?, '旧公众号条目', 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=9001&idx=1&sn=legacy', '', ?, '旧摘要', '<p>Legacy readable content remains available.</p>', 'legacy-unregistered-hash', 'wechat:MzA1:9001:1', 'unknown', NULL, ?, ?)`).run(
-        legacyEntryId, sourceId, now - 60 * 60 * 1000, now, now,
+        VALUES (?, ?, ?, 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=9001&idx=1&sn=legacy', '', ?, 'English legacy teaser', ?, 'legacy-unregistered-hash', 'wechat:MzA1:9001:1', 'feed-body', NULL, ?, ?)`).run(
+        legacyEntryId, sourceId, legacyTitle, now - 60 * 60 * 1000, legacyContent, now, now,
+      );
+      database.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, site_url, category, description, labels_json, archived_at, created_at, updated_at)
+        VALUES (?, 'Archived legacy WeChat', 'https://wechat2rss.bestblogs.dev/feed/archived12345678.xml', '', 'article', 'archived unregistered catalog source', '[]', ?, ?, ?)`).run(
+        archivedSourceId, now, now, now,
+      );
+      database.prepare(`INSERT INTO entries
+        (id, source_id, title, link, published, published_ts, summary, content, content_hash, platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+        VALUES ('archived-unregistered-readable-entry', ?, ?, 'https://mp.weixin.qq.com/s?__biz=MzB2&mid=9002&idx=1&sn=archived', '', ?, 'Archived English teaser', ?, 'archived-unregistered-hash', 'wechat:MzB2:9002:1', 'feed-body', NULL, ?, ?)`).run(
+        archivedSourceId, archivedTitle, now - 2 * 60 * 60 * 1000, archivedContent, now, now,
       );
       assert.equal(database.prepare('SELECT source_id FROM source_ingestion_sources WHERE source_id = ?').get(sourceId), undefined,
         'the legacy source intentionally has no verified ingestion enrollment');
@@ -446,6 +490,7 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
     assert.equal(enabled.response.status, 200, JSON.stringify(enabled.body));
     assert.equal(enabled.body.source.enabled, true);
     const enabledBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+    const automaticAiCallCounts = [readAiCalls(aiCapturePath).length];
     const directRefresh = await jsonRequest(server.baseUrl, '/api/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -453,6 +498,7 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
     });
     assert.equal(directRefresh.response.status, 200, JSON.stringify(directRefresh.body));
     const directBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+    automaticAiCallCounts.push(readAiCalls(aiCapturePath).length);
 
     const disabledToggle = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}/toggle`, {
       method: 'POST',
@@ -467,6 +513,7 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
     assert.equal(enabledToggle.response.status, 200, JSON.stringify(enabledToggle.body));
     assert.equal(enabledToggle.body.enabled, true);
     const toggleBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+    automaticAiCallCounts.push(readAiCalls(aiCapturePath).length);
 
     const discovered = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat', { headers: { Cookie: cookie } });
     assert.equal(discovered.response.status, 200, JSON.stringify(discovered.body));
@@ -498,6 +545,7 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
         Boolean(directBackground.ai.last),
         Boolean(toggleBackground.ai.last),
       ],
+      automaticAiCallCounts,
       sourceMetaStatus: sourceMeta.status,
       sourceError: String(sourceMeta.error || ''),
       activationRequired: /catalog.*activat|activat.*catalog/i.test(String(sourceMeta.error || '')),
@@ -511,6 +559,7 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
     assert.deepEqual(state, {
       refreshStatuses: ['stale', 'stale', 'stale'],
       automaticAiJobsStarted: [false, false, false],
+      automaticAiCallCounts: [0, 0, 0],
       sourceMetaStatus: 'stale',
       sourceError: `WeChat catalog feed requires explicit catalog-key activation before refresh (catalog key: ${catalogKey})`,
       activationRequired: true,
@@ -519,10 +568,89 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
       oldEntryReadable: true,
       automaticAiCalls: 0,
     });
+    const nonFetchOnlyWorker = await runRefreshWorker(dataDir, sourceId, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: sourceCapturePath,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: aiCapturePath,
+      MOCK_SOURCE_INGESTION_MODE_PATH: modePath,
+      AI_PROVIDER: 'openai-compatible',
+      AI_PROVIDER_TYPE: 'openai_compatible',
+      AI_API_KEY: 'fixture-ai-key',
+      AI_BASE_URL: 'https://mock-source-ai.example/v1',
+      AI_MODEL: 'mock-model',
+    });
+    assert.equal(nonFetchOnlyWorker.code, 0, nonFetchOnlyWorker.stderr);
+    const nonFetchOnlyResult = JSON.parse(nonFetchOnlyWorker.stdout);
+    assert.equal(nonFetchOnlyResult.refresh.status, 'stale');
+    assert.equal(nonFetchOnlyResult.translated, 0);
+    assert.equal(nonFetchOnlyResult.autoRewrite.changed, 0);
+    assert.deepEqual(readAiCalls(aiCapturePath), [],
+      'the actual non-fetch-only refresh worker also skips title translation and rewrite for the legacy source');
+    assert.equal((JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests || [])
+      .filter(request => request.url === feedUrl).length, 0);
     const oldEntry = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(legacyEntryId)}`);
     assert.equal(oldEntry.response.status, 200);
     assert.match(oldEntry.body.entry.content, /Legacy readable content remains available/);
 
+    const bulkRewrite = await jsonRequest(server.baseUrl, '/api/auto-rewrite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ sourceIds: [sourceId, archivedSourceId] }),
+    });
+    assert.equal(bulkRewrite.response.status, 200, JSON.stringify(bulkRewrite.body));
+    assert.equal(bulkRewrite.body.autoRewrite.started, true);
+    const bulkRewriteBackground = await waitForBackgroundIdle(server.baseUrl, cookie);
+    assert.equal(bulkRewriteBackground.ai.last.kind, 'auto-rewrite');
+    const bulkRewriteCalls = readAiCalls(aiCapturePath);
+    const bulkRewriteSummary = bulkRewriteCalls.map(call => {
+      const messages = Array.isArray(call.messages) ? call.messages : [];
+      const promptText = messages.map(message => String(message.content || '')).join('\\n');
+      const containsLegacyBody = promptText.includes(legacyBodyMarker);
+      const containsArchivedBody = promptText.includes(archivedBodyMarker);
+      return {
+        kind: containsLegacyBody || containsArchivedBody ? 'rewrite' : 'title-translation',
+        containsLegacyTitle: promptText.includes(legacyTitle),
+        containsLegacyBody,
+        containsArchivedTitle: promptText.includes(archivedTitle),
+        containsArchivedBody,
+      };
+    });
+
+    const bulkTitleScan = await jsonRequest(server.baseUrl, '/api/translate-titles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ limit: 10 }),
+    });
+    assert.equal(bulkTitleScan.response.status, 200, JSON.stringify(bulkTitleScan.body));
+    assert.equal(bulkTitleScan.body.translated, 0);
+    const bulkTitleCalls = readAiCalls(aiCapturePath).slice(bulkRewriteCalls.length);
+    const bulkTitleSummary = bulkTitleCalls.map(call => {
+      const messages = Array.isArray(call.messages) ? call.messages : [];
+      const promptText = messages.map(message => String(message.content || '')).join('\\n');
+      return {
+        containsLegacyTitle: promptText.includes(legacyTitle),
+        containsLegacyBody: promptText.includes(legacyBodyMarker),
+        containsArchivedTitle: promptText.includes(archivedTitle),
+        containsArchivedBody: promptText.includes(archivedBodyMarker),
+      };
+    });
+    assert.deepEqual({ bulkRewrite: bulkRewriteSummary, bulkTitleScan: bulkTitleSummary }, {
+      bulkRewrite: [],
+      bulkTitleScan: [],
+    }, `unregistered catalog sources must be excluded from both bulk paths: ${JSON.stringify({ bulkRewrite: bulkRewriteSummary, bulkTitleScan: bulkTitleSummary })}`);
+
+    const manualTranslation = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(legacyEntryId)}/translation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ force: true }),
+    });
+    assert.equal(manualTranslation.response.status, 200, JSON.stringify(manualTranslation.body));
+    const explicitCalls = readAiCalls(aiCapturePath);
+    assert.equal(explicitCalls.length, bulkRewriteCalls.length + bulkTitleCalls.length + 1,
+      'explicit per-entry translation is still available on an unregistered legacy source');
+    assert.ok(explicitCalls.at(-1).messages.some(message => String(message.content || '').includes(legacyTitle)));
+
+    const aiCallCountBeforeActivation = explicitCalls.length;
     const activated = await jsonRequest(server.baseUrl, `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -556,7 +684,8 @@ test('legacy catalog WeChat Custom Sources fail closed when enabled before expli
     assert.equal((JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests || [])
       .filter(request => request.url === feedUrl).length, 1,
     'supplier fetch occurs only inside explicit catalog activation');
-    assert.deepEqual(readAiCalls(aiCapturePath), [], 'activation does not launch automatic AI work');
+    assert.equal(readAiCalls(aiCapturePath).length, aiCallCountBeforeActivation,
+      'activation itself does not launch automatic AI work');
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
