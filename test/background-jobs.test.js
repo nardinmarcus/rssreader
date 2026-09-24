@@ -207,6 +207,7 @@ test('title translation candidates skip article bodies, asset summaries, and sta
       includeAssetSummaries: false,
       includeStats: false,
       excludeAutoAi: true,
+      excludeUnregisteredWechatCatalogSources: true,
     });
   } finally {
     restoreDeepseek();

@@ -2226,6 +2226,7 @@ async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
     includeAssetSummaries: false,
     includeStats: false,
     excludeAutoAi: true,
+    excludeUnregisteredWechatCatalogSources: true,
   })
     .filter(entry => {
       const sourceId = String(entry && entry.sourceId || '').trim();

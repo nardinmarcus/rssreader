@@ -1677,6 +1677,162 @@ test('admin title translation skips excluded historical WeChat entries but still
   }
 });
 
+test('repeated bulk title scans do not let blocked WeChat rows starve older ordinary entries', { timeout: 90000 }, async () => {
+  const dataDir = createTempDataDir();
+  const aiCapturePath = path.join(dataDir, 'ai-requests.json');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const blockedSourceId = 'unregistered-wechat-title-scan-starver';
+  const ordinarySourceId = 'ordinary-title-scan-control';
+  const eligibleTitle = 'ELIGIBLE_OLDER_ORDINARY_TITLE_MUST_REACH_EVERY_SCAN';
+  const blockedTitlePrefix = 'BLOCKED_WECHAT_TITLE_MUST_NOT_REACH_AI';
+  const blockedEntryCount = 1005;
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: aiCapturePath,
+      SOURCE_CATALOG_FEED_URL: 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml',
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+      VERSIONED_TRANSLATION_MODE: 'off',
+      PERIODICALS_MODE: 'off',
+      AI_PROVIDER: 'openai-compatible',
+      AI_PROVIDER_TYPE: 'openai_compatible',
+      AI_API_KEY: 'fixture-ai-key',
+      AI_BASE_URL: 'https://mock-source-ai.example/v1',
+      AI_MODEL: 'mock-model',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const now = Date.now();
+      database.exec('BEGIN IMMEDIATE');
+      try {
+        const insertSource = database.prepare(`INSERT INTO custom_sources
+          (id, name, feed_url, site_url, category, description, labels_json, archived_at, created_at, updated_at)
+          VALUES (?, ?, ?, '', 'article', '', '[]', NULL, ?, ?)`);
+        insertSource.run(
+          blockedSourceId,
+          'Unregistered legacy WeChat title source',
+          'https://wechat2rss.bestblogs.dev/feed/abcdef12345678.xml',
+          now,
+          now,
+        );
+        insertSource.run(
+          ordinarySourceId,
+          'Ordinary title scan control',
+          'https://ordinary-title-scan.example/rss.xml',
+          now,
+          now,
+        );
+        const insertPreference = database.prepare(`INSERT INTO source_preferences
+          (source_id, enabled, editorial_priority, display_order, updated_at)
+          VALUES (?, 1, 'normal', ?, ?)`);
+        insertPreference.run(blockedSourceId, 20, new Date(now).toISOString());
+        insertPreference.run(ordinarySourceId, 21, new Date(now).toISOString());
+        const insertEntry = database.prepare(`INSERT INTO entries
+          (id, source_id, title, link, published, published_ts, summary, content, content_hash,
+           platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+          VALUES (?, ?, ?, '', '', ?, ?, '', ?, ?, ?, NULL, ?, ?)`);
+        for (let index = 0; index < blockedEntryCount; index += 1) {
+          const sequence = String(index).padStart(4, '0');
+          const timestamp = now - index;
+          insertEntry.run(
+            `blocked-wechat-title-${sequence}`,
+            blockedSourceId,
+            `${blockedTitlePrefix}_${sequence}`,
+            timestamp,
+            '',
+            `blocked-title-hash-${sequence}`,
+            `wechat:MzA1:${20000 + index}:1`,
+            'feed-body',
+            timestamp,
+            timestamp,
+          );
+        }
+        const ordinaryTimestamp = now - 30 * 24 * 60 * 60 * 1000;
+        insertEntry.run(
+          'older-ordinary-title-entry',
+          ordinarySourceId,
+          eligibleTitle,
+          ordinaryTimestamp,
+          '<p>Too short for rewrite; title scan only.</p>',
+          'older-ordinary-title-hash',
+          null,
+          'unknown',
+          ordinaryTimestamp,
+          ordinaryTimestamp,
+        );
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM entries WHERE source_id = ?').get(blockedSourceId).count,
+        blockedEntryCount);
+      assert.equal(database.prepare('SELECT source_id FROM source_ingestion_sources WHERE source_id = ?').get(blockedSourceId), undefined,
+        'the recent catalog WeChat rows have no verified ingestion enrollment');
+    } finally {
+      database.close();
+    }
+
+    const scanEvidence = [];
+    async function recordScan(beforeCount) {
+      const calls = readAiCalls(aiCapturePath).slice(beforeCount);
+      const prompts = calls.map(call => (call.messages || [])
+        .map(message => String(message.content || '')).join('\\n'));
+      scanEvidence.push({
+        calls: calls.length,
+        eligibleTitleHits: prompts.filter(prompt => prompt.includes(eligibleTitle)).length,
+        blockedTitleMentions: prompts.reduce((sum, prompt) => (
+          sum + (prompt.match(new RegExp(blockedTitlePrefix, 'g')) || []).length
+        ), 0),
+      });
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const beforeCount = readAiCalls(aiCapturePath).length;
+      const scan = await jsonRequest(server.baseUrl, '/api/translate-titles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ limit: 10 }),
+      });
+      assert.equal(scan.response.status, 200, JSON.stringify(scan.body));
+      assert.equal(scan.body.translated, 0);
+      await recordScan(beforeCount);
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const beforeCount = readAiCalls(aiCapturePath).length;
+      const bulk = await jsonRequest(server.baseUrl, '/api/auto-rewrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ sourceIds: [ordinarySourceId] }),
+      });
+      assert.equal(bulk.response.status, 200, JSON.stringify(bulk.body));
+      assert.equal(bulk.body.autoRewrite.started, true);
+      const background = await waitForBackgroundIdle(server.baseUrl, cookie);
+      assert.equal(background.ai.last.kind, 'auto-rewrite');
+      await recordScan(beforeCount);
+    }
+
+    assert.deepEqual(scanEvidence, Array.from({ length: 4 }, () => ({
+      calls: 1,
+      eligibleTitleHits: 1,
+      blockedTitleMentions: 0,
+    })), 'both title scans must exclude blocked source IDs before SQL LIMIT, on every repeated run');
+    const finalDatabase = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      assert.equal(finalDatabase.prepare('SELECT title_zh FROM entry_translations WHERE entry_id = ?').get('older-ordinary-title-entry'), undefined,
+        'the mock deliberately returns no translation so each repeat proves the eligible title is reselected');
+    } finally {
+      finalDatabase.close();
+    }
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('the real refresh and AI worker skip future WeChat summary/unknown bodies but keep feed bodies eligible', { timeout: 60000 }, async () => {
   const dataDir = createTempDataDir();
   const sourceCapturePath = path.join(dataDir, 'source-requests.json');
