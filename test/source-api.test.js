@@ -385,6 +385,27 @@ test('administrator activates a WeChat catalog key into one readable Custom Sour
     const opened = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(listed.body.entries[0].id)}`);
     assert.equal(opened.response.status, 200, JSON.stringify(opened.body));
     assert.match(opened.body.entry.content, /Feed-provided article body excerpt/);
+    assert.equal(Object.hasOwn(opened.body.entry, 'autoAiExcludedAt'), false,
+      'guest article APIs must not reveal the internal automatic-AI exclusion marker');
+    assert.ok(listed.body.entries.every(entry => !Object.hasOwn(entry, 'autoAiExcludedAt')),
+      'guest list APIs must not reveal the internal automatic-AI exclusion marker');
+
+    const persistedExclusions = readIngestionDatabase(dataDir, sourceId);
+    assert.ok(persistedExclusions.entries.every(entry => (
+      entry.auto_ai_excluded_at === persistedExclusions.ingestion.activation_cutoff
+    )), 'the internal worker-enforcement marker remains durably stored');
+    for (const [role, viewerCookie] of [['reader', readerCookie], ['admin', cookie]]) {
+      const roleEntries = await jsonRequest(server.baseUrl, `/api/entries?source=${encodeURIComponent(sourceId)}&limit=20`, {
+        headers: { Cookie: viewerCookie },
+      });
+      assert.ok(roleEntries.body.entries.every(entry => !Object.hasOwn(entry, 'autoAiExcludedAt')),
+        `${role} list APIs must not reveal the internal automatic-AI exclusion marker`);
+      const roleEntry = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(listed.body.entries[0].id)}`, {
+        headers: { Cookie: viewerCookie },
+      });
+      assert.equal(Object.hasOwn(roleEntry.body.entry, 'autoAiExcludedAt'), false,
+        `${role} article APIs must not reveal the internal automatic-AI exclusion marker`);
+    }
 
     const requests = JSON.parse(fs.readFileSync(capturePath, 'utf8')).requests;
     assert.equal(requests.filter(request => request.url === catalogUrl).length, 1);
@@ -680,6 +701,117 @@ test('catalog projection exposes archived legacy URL variants only to admins and
   }
 });
 
+test('canonical legacy WeChat key collisions consistently select the active source and never duplicate it', { timeout: 45000 }, async () => {
+  const dataDir = createTempDataDir();
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  const archivedId = 'custom-legacy-wechat-older-archived';
+  const activeId = 'custom-legacy-wechat-newer-active';
+  const archivedUrl = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml?utm_source=archived';
+  const activeUrl = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22?from=active';
+  let server = null;
+  try {
+    const env = {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+    };
+    server = await startServer(dataDir, env);
+    await adminCookie(server.baseUrl);
+    const firstCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat');
+    assert.equal(firstCatalog.response.status, 200, JSON.stringify(firstCatalog.body));
+    await stopServer(server);
+    server = null;
+
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const now = Date.now();
+      database.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, site_url, category, description, labels_json, archived_at, created_at, updated_at)
+        VALUES (?, '人人都是产品经理', ?, 'https://www.woshipm.com/', 'article', 'legacy URL variant', '[]', ?, ?, ?)`).run(
+        archivedId, archivedUrl, now - 1000, now - 2000, now - 2000,
+      );
+      database.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, site_url, category, description, labels_json, archived_at, created_at, updated_at)
+        VALUES (?, '人人都是产品经理', ?, 'https://www.woshipm.com/', 'article', 'active legacy URL variant', '[]', NULL, ?, ?)`).run(
+        activeId, activeUrl, now - 1000, now - 1000,
+      );
+      database.prepare(`INSERT INTO source_preferences
+        (source_id, enabled, editorial_priority, display_order, updated_at)
+        VALUES (?, 0, 'normal', 5, ?), (?, 1, 'normal', 6, ?)`).run(
+        archivedId, new Date(now).toISOString(), activeId, new Date(now).toISOString(),
+      );
+    } finally {
+      database.close();
+    }
+
+    server = await startServer(dataDir, env);
+    const readerRegistration = await jsonRequest(server.baseUrl, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'collision-reader@example.com', password: 'reader-password-123', displayName: 'Reader' }),
+    });
+    const readerCookie = String(readerRegistration.response.headers.get('set-cookie') || '').split(';')[0];
+    const admin = await adminCookie(server.baseUrl);
+    const guestCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat');
+    const readerCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat', { headers: { Cookie: readerCookie } });
+    const adminCatalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat', { headers: { Cookie: admin } });
+    const itemFor = result => result.body.items.find(item => item.key === catalogKey);
+    const guestItem = itemFor(guestCatalog);
+    const readerItem = itemFor(readerCatalog);
+    const adminItem = itemFor(adminCatalog);
+
+    const activatePath = `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`;
+    const normalActivation = await jsonRequest(server.baseUrl, activatePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: admin },
+      body: JSON.stringify({}),
+    });
+    const explicitActivation = await jsonRequest(server.baseUrl, activatePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: admin },
+      body: JSON.stringify({ restore: true }),
+    });
+    const after = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    let sourceState;
+    try {
+      sourceState = after.prepare(`SELECT id, archived_at FROM custom_sources WHERE id IN (?, ?) ORDER BY id`).all(
+        archivedId, activeId,
+      ).map(row => [row.id, Boolean(row.archived_at)]);
+    } finally {
+      after.close();
+    }
+
+    assert.deepEqual({
+      guest: { online: guestItem.online, hasManagementFields: Object.hasOwn(guestItem, 'archived') || Object.hasOwn(guestItem, 'activated') },
+      reader: { online: readerItem.online, hasManagementFields: Object.hasOwn(readerItem, 'archived') || Object.hasOwn(readerItem, 'activated') },
+      admin: { online: adminItem.online, archived: adminItem.archived, activated: adminItem.activated },
+      normalActivation: {
+        status: normalActivation.response.status,
+        sourceId: normalActivation.body.source && normalActivation.body.source.id || null,
+        restored: normalActivation.body.restored ?? null,
+      },
+      explicitActivation: {
+        status: explicitActivation.response.status,
+        sourceId: explicitActivation.body.source && explicitActivation.body.source.id || null,
+        restored: explicitActivation.body.restored ?? null,
+      },
+      sourceState,
+    }, {
+      guest: { online: true, hasManagementFields: false },
+      reader: { online: true, hasManagementFields: false },
+      admin: { online: true, archived: false, activated: false },
+      normalActivation: { status: 200, sourceId: activeId, restored: false },
+      explicitActivation: { status: 200, sourceId: activeId, restored: false },
+      sourceState: [[activeId, false], [archivedId, true]],
+    });
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('invalid and redirected WeChat feeds fail without creating a Custom Source or article', { timeout: 60000 }, async () => {
   const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
   const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
@@ -902,6 +1034,111 @@ test('admin title translation skips excluded historical WeChat entries but still
     assert.match(prompt, /Future English title that remains eligible/);
     assert.equal(result.response.status, 200, JSON.stringify(result.body));
     assert.deepEqual(result.body, { translated: 0 });
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('the real refresh and AI worker skip future WeChat summary/unknown bodies but keep feed bodies eligible', { timeout: 60000 }, async () => {
+  const dataDir = createTempDataDir();
+  const sourceCapturePath = path.join(dataDir, 'source-requests.json');
+  const aiCapturePath = path.join(dataDir, 'ai-requests.json');
+  const modePath = path.join(dataDir, 'feed-mode.txt');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  fs.writeFileSync(modePath, 'ok');
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: sourceCapturePath,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: aiCapturePath,
+      MOCK_SOURCE_INGESTION_MODE_PATH: modePath,
+      SOURCE_CATALOG_FEED_URL: 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml',
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+      VERSIONED_TRANSLATION_MODE: 'off',
+      PERIODICALS_MODE: 'off',
+      AI_PROVIDER: 'openai-compatible',
+      AI_PROVIDER_TYPE: 'openai_compatible',
+      AI_API_KEY: 'fixture-ai-key',
+      AI_BASE_URL: 'https://mock-source-ai.example/v1',
+      AI_MODEL: 'mock-model',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const activated = await jsonRequest(server.baseUrl, `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(activated.response.status, 201, JSON.stringify(activated.body));
+    const sourceId = activated.body.source.id;
+
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const untrusted = [
+      ['future-summary-1', 'summary', 5],
+      ['future-summary-2', 'summary', 4],
+      ['future-unknown-1', 'unknown', 3],
+      ['future-unknown-2', 'unknown', 2],
+    ];
+    try {
+      const insertEntry = database.prepare(`INSERT INTO entries
+        (id, source_id, title, link, published, published_ts, summary, content, content_hash,
+         platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, ?, ?)`);
+      const insertTranslation = database.prepare(`INSERT INTO entry_translations
+        (entry_id, title_zh, summary_zh, created_at, updated_at)
+        VALUES (?, ?, '', ?, ?)`);
+      const now = Date.now();
+      for (const [id, scope, offsetMinutes] of untrusted) {
+        const marker = `${id.toUpperCase()}_BODY_MUST_NOT_REACH_AUTOMATIC_AI`;
+        const content = `<p>${marker}</p>${` ${marker} content is not a verified full article.`.repeat(8)}`;
+        const publishedAt = now + offsetMinutes * 60 * 1000;
+        insertEntry.run(
+          id, sourceId, `未翻译标题 ${id}`,
+          `https://mp.weixin.qq.com/s?__biz=MzA1&mid=${id}&idx=1&sn=${id}`,
+          publishedAt, scope === 'summary' ? `${marker} feed summary.` : '', content,
+          `${id}-hash`, `wechat:MzA1:${id}:1`, scope, now - 1000, now - 1000,
+        );
+        insertTranslation.run(id, `已翻译标题 ${id}`, now - 1000, now - 1000);
+      }
+    } finally {
+      database.close();
+    }
+
+    fs.writeFileSync(modePath, 'new-future');
+    const refresh = await jsonRequest(server.baseUrl, '/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ sourceId }),
+    });
+    assert.equal(refresh.response.status, 200, JSON.stringify(refresh.body));
+    const background = await waitForBackgroundIdle(server.baseUrl, cookie);
+    assert.ok(background.fetch.last.refresh.changedEntryCount > 0,
+      'the actual fetch worker imports the post-cutoff feed item');
+    assert.equal(background.ai.last.kind, 'auto-rewrite',
+      'the parent dispatches the actual automatic-AI worker after refresh');
+
+    const entries = readIngestionDatabase(dataDir, sourceId).entries;
+    const feedBodyEntry = entries.find(entry => entry.title === 'A new WeChat article after activation');
+    assert.ok(feedBodyEntry);
+    assert.equal(feedBodyEntry.content_scope, 'feed-body');
+    assert.equal(feedBodyEntry.auto_ai_excluded_at, null,
+      'future feed-body entries remain eligible after the activation cutoff');
+    assert.ok(untrusted.every(([id]) => {
+      const entry = entries.find(item => item.id === id);
+      return entry && entry.auto_ai_excluded_at === null;
+    }), 'the post-cutoff summary/unknown fixture rows remain available but are not selected as full-content input');
+
+    const calls = readAiCalls(aiCapturePath);
+    const capturedPrompt = calls.flatMap(call => call.messages || [])
+      .map(message => String(message.content || ''))
+      .join('\n');
+    assert.match(capturedPrompt, /This feed-provided article body remains an excerpt/,
+      'the future feed-body control reaches automatic rewriting');
+    for (const [id] of untrusted) {
+      assert.doesNotMatch(capturedPrompt, new RegExp(`${id.toUpperCase()}_BODY_MUST_NOT_REACH_AUTOMATIC_AI`));
+    }
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });

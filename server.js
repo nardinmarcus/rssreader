@@ -755,6 +755,12 @@ function clearPublicProjectionCaches() {
   publicEntryListCache.clear();
 }
 
+function publicEntryWithoutAutoAiMarker(entry) {
+  const projected = { ...entry };
+  delete projected.autoAiExcludedAt;
+  return projected;
+}
+
 function publicEntryListResponse(options) {
   const key = JSON.stringify([
     options.sourceId || '',
@@ -768,7 +774,9 @@ function publicEntryListResponse(options) {
   }
   if (cached) publicEntryListCache.delete(key);
 
-  const entries = fetcher.getEntries(options).map(({ content, ...entry }) => entry);
+  const entries = fetcher.getEntries(options).map(({ content, ...entry }) => (
+    publicEntryWithoutAutoAiMarker(entry)
+  ));
   const body = JSON.stringify({ entries });
   if (!publicEntryListCache.has(key) && publicEntryListCache.size >= PUBLIC_ENTRY_LIST_CACHE_MAX) {
     publicEntryListCache.delete(publicEntryListCache.keys().next().value);
@@ -3310,12 +3318,13 @@ app.get('/api/entries', (req, res) => {
 app.get('/api/entry/:id', (req, res) => {
   const entry = entryByIdOrPrefix(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  const content = String(entry.content || '');
+  const publicEntry = publicEntryWithoutAutoAiMarker(entry);
+  const content = String(publicEntry.content || '');
   res.json({
     entry: content.length <= ENTRY_CONTENT_RESPONSE_MAX_CHARS
-      ? entry
+      ? publicEntry
       : {
-          ...entry,
+          ...publicEntry,
           content: content.slice(0, ENTRY_CONTENT_RESPONSE_MAX_CHARS),
           contentTruncated: true,
           contentOriginalLength: content.length,
@@ -3386,7 +3395,7 @@ app.post('/api/entry/:id/content', originalContentRateLimit, async (req, res) =>
   try {
     const updated = await fetcher.fetchEntryOriginal(entry);
     wakeTranslationWorkerIfNeeded();
-    res.json({ entry: updated });
+    res.json({ entry: publicEntryWithoutAutoAiMarker(updated) });
   } catch (e) {
     sendError(res, e, 'fetch original content failed');
   }
