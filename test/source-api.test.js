@@ -303,6 +303,85 @@ test('source management API enforces visibility, validation, ordering, and persi
   }
 });
 
+test('PATCH cannot route an ordinary Custom Source through an unverified WeChat refresh', { timeout: 60000 }, async () => {
+  const dataDir = createTempDataDir();
+  const sourceCapturePath = path.join(dataDir, 'source-requests.json');
+  const aiCapturePath = path.join(dataDir, 'ai-requests.json');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const feedUrl = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: sourceCapturePath,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: aiCapturePath,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+      VERSIONED_TRANSLATION_MODE: 'off',
+      PERIODICALS_MODE: 'off',
+      AI_PROVIDER: 'openai-compatible',
+      AI_PROVIDER_TYPE: 'openai_compatible',
+      AI_API_KEY: 'fixture-ai-key',
+      AI_BASE_URL: 'https://mock-source-ai.example/v1',
+      AI_MODEL: 'mock-model',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const catalog = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=wechat');
+    assert.equal(catalog.response.status, 200, JSON.stringify(catalog.body));
+    assert.ok(catalog.body.items.some(item => item.key === catalogKey));
+
+    const created = await jsonRequest(server.baseUrl, '/api/sources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        name: 'Ordinary custom source',
+        feedUrl: 'http://127.0.0.1:1/ordinary.xml',
+        siteUrl: 'http://127.0.0.1:1',
+        category: 'news',
+      }),
+    });
+    assert.equal(created.response.status, 201, JSON.stringify(created.body));
+    const sourceId = created.body.source.id;
+    await waitForBackgroundIdle(server.baseUrl, cookie);
+    assert.deepEqual(readAiCalls(aiCapturePath), [], 'ordinary source setup has no article or AI input');
+
+    const patched = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ feedUrl }),
+    });
+    if (patched.response.status === 200) await waitForBackgroundIdle(server.baseUrl, cookie);
+
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    let sourceRow;
+    let ingestion;
+    let entries;
+    try {
+      sourceRow = database.prepare('SELECT id, feed_url FROM custom_sources WHERE id = ?').get(sourceId);
+      ingestion = database.prepare('SELECT * FROM source_ingestion_sources WHERE source_id = ?').get(sourceId) || null;
+      entries = database.prepare('SELECT id, platform_identity, auto_ai_excluded_at FROM entries WHERE source_id = ?').all(sourceId);
+    } finally {
+      database.close();
+    }
+    const requests = JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests || [];
+    assert.equal(patched.response.status, 409, JSON.stringify({ status: patched.response.status, error: patched.body && patched.body.error }));
+    assert.match(patched.body.error, /catalog key|catalog.*activation|目录.*激活/i,
+      'the rejection directs administrators to the validated catalog-key activation flow');
+    assert.equal(sourceRow.feed_url, 'http://127.0.0.1:1/ordinary.xml', 'the custom source feed URL remains unchanged');
+    assert.equal(ingestion, null, 'the blocked patch neither enrolls the source nor creates a cutoff identity');
+    assert.deepEqual(entries, [], 'the blocked patch does not import unverified feed entries');
+    assert.equal(requests.some(request => request.url === feedUrl), false,
+      'the blocked patch does not schedule a generic refresh against the WeChat supplier');
+    assert.deepEqual(readAiCalls(aiCapturePath), [],
+      'the blocked patch cannot reach automatic title/rewriting AI through refresh-parent scheduling');
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('administrator activates a WeChat catalog key into one readable Custom Source', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir();
   const capturePath = path.join(dataDir, 'source-ingestion-requests.json');
@@ -507,8 +586,183 @@ test('administrator activates a WeChat catalog key into one readable Custom Sour
   }
 });
 
+test('successful WeChat translation, rewrite, and onepage responses omit the internal AI exclusion marker', { timeout: 60000 }, async () => {
+  const dataDir = createTempDataDir();
+  const sourceCapturePath = path.join(dataDir, 'source-requests.json');
+  const translationCapturePath = path.join(dataDir, 'translation-ai-request.json');
+  const rewriteCapturePath = path.join(dataDir, 'rewrite-ai-request.json');
+  const onepageCapturePath = path.join(dataDir, 'onepage-ai-request.json');
+  const sourcePreloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const rewritePreloadPath = path.join(__dirname, 'helpers', 'mock-ai-preload.js');
+  const onepagePreloadPath = path.join(__dirname, 'helpers', 'mock-onepage-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  const feedUrl = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml';
+  let sourceId = '';
+  const testEntries = [
+    { id: 'privacy-translation-entry', mid: '7001', action: 'translation' },
+    { id: 'privacy-rewrite-entry', mid: '7002', action: 'rewrite' },
+    { id: 'privacy-onepage-entry', mid: '7003', action: 'onepage' },
+  ];
+  const versionedEntry = { id: 'privacy-versioned-translation-entry', mid: '7004' };
+  let server = null;
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${sourcePreloadPath} --require=${rewritePreloadPath} --require=${onepagePreloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: sourceCapturePath,
+      MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH: translationCapturePath,
+      MOCK_SOURCE_WECHAT_ORIGINAL_MODE: 'success',
+      MOCK_AI_CAPTURE_PATH: rewriteCapturePath,
+      MOCK_ONEPAGE_CAPTURE_PATH: onepageCapturePath,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+      VERSIONED_TRANSLATION_MODE: 'all',
+      DEEPSEEK_API_KEY: 'site-mock-key',
+      DEEPSEEK_BASE_URL: 'https://api.deepseek.com/v1',
+      DEEPSEEK_MODEL: 'deepseek-v4-flash',
+      TRANSLATION_WORKER_STARTUP: '0',
+      TRANSLATION_WORKER_DISABLED: '1',
+      ONEPAGE_MODE: 'all',
+    });
+    const login = await jsonRequest(server.baseUrl, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'admin@example.com', password: 'test-password-123' }),
+    });
+    assert.equal(login.response.status, 200, `${JSON.stringify(login.body)}\n${server.logs.join('')}`);
+    const cookie = String(login.response.headers.get('set-cookie') || '').split(';')[0];
+    const activated = await jsonRequest(server.baseUrl, `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.ok([200, 201].includes(activated.response.status), JSON.stringify(activated.body));
+    sourceId = activated.body.source.id;
+    const beforeExplicitActions = JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests;
+    assert.equal(beforeExplicitActions.some(request => request.url.includes('mp.weixin.qq.com')), false,
+      'catalog activation must not fetch historical article pages automatically');
+
+    const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    let activationCutoff;
+    try {
+      const ingestion = database.prepare('SELECT activation_cutoff, feed_url FROM source_ingestion_sources WHERE source_id = ?').get(sourceId);
+      activationCutoff = ingestion.activation_cutoff;
+      assert.equal(ingestion.feed_url, feedUrl);
+      const now = Date.now();
+      const insert = database.prepare(`INSERT INTO entries
+        (id, source_id, title, link, published, published_ts, summary, content, content_hash, platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, '', ?, 'Short feed-provided teaser.', '<p>Short feed-provided teaser without the full original article.</p>', ?, ?, 'summary', ?, ?, ?)`);
+      for (const item of [...testEntries, versionedEntry]) {
+        insert.run(
+          item.id,
+          sourceId,
+          `Controlled privacy test ${item.mid}`,
+          `https://mp.weixin.qq.com/s?__biz=MzA1&mid=${item.mid}&idx=1&sn=privacy-${item.mid}`,
+          activationCutoff - 1000,
+          `privacy-test-hash-${item.mid}`,
+          `wechat:MzA1:${item.mid}:1`,
+          activationCutoff,
+          now,
+          now,
+        );
+      }
+    } finally {
+      database.close();
+    }
+
+    const aiHeaders = (baseUrl, model) => ({
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+      'X-AI-Key': 'mock-key',
+      'X-AI-Provider': 'openai-compatible',
+      'X-AI-Provider-Name': 'Mock AI',
+      'X-AI-Provider-Type': 'openai_compatible',
+      'X-AI-Base-URL': baseUrl,
+      'X-AI-Model': model,
+    });
+    const outcomes = [];
+    for (const item of testEntries) {
+      const result = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(item.id)}/${item.action}`, {
+        method: 'POST',
+        headers: aiHeaders(
+          item.action === 'translation' ? 'https://mock-source-ai.example/v1'
+            : item.action === 'rewrite' ? 'https://mock-ai.example/v1'
+              : 'https://mock-onepage.example/v1',
+          `mock-${item.action}-model`,
+        ),
+        body: JSON.stringify({ force: true }),
+      });
+      assert.equal(result.response.status, 200, `${item.action}: ${JSON.stringify(result.body)}`);
+      const entry = result.body.entry;
+      outcomes.push({
+        action: item.action,
+        hasEntry: Boolean(entry),
+        markerPresent: Boolean(entry && Object.hasOwn(entry, 'autoAiExcludedAt')),
+        originalFetched: Boolean(entry && String(entry.content || '').includes('deliberately distinct from the short feed summary')),
+      });
+      if (item.action === 'translation') assert.ok(Array.isArray(result.body.translation.content));
+      if (item.action === 'rewrite') assert.match(result.body.rewrite.body, /## Namoo 风格草稿/);
+      if (item.action === 'onepage') assert.match(result.body.onepage.html, /onepage-shell/);
+    }
+
+    assert.deepEqual(outcomes, testEntries.map(item => ({
+      action: item.action,
+      hasEntry: true,
+      markerPresent: false,
+      originalFetched: true,
+    })));
+    assert.ok(fs.existsSync(translationCapturePath), 'translation request reached the mocked AI supplier');
+    assert.ok(fs.existsSync(rewriteCapturePath), 'rewrite request reached the mocked AI supplier');
+    assert.ok(fs.existsSync(onepageCapturePath), 'onepage request reached the mocked AI supplier');
+    const originalRequests = JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests
+      .filter(request => request.url.includes('mp.weixin.qq.com'));
+    assert.deepEqual(originalRequests.map(request => new URL(request.url).searchParams.get('mid')).sort(), ['7001', '7002', '7003']);
+
+    const finalDatabase = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const persisted = testEntries.map(item => finalDatabase.prepare(`SELECT content_scope, auto_ai_excluded_at, original_fetched_at
+        FROM entries WHERE id = ?`).get(item.id));
+      assert.ok(persisted.every(entry => entry.content_scope === 'summary'));
+      assert.ok(persisted.every(entry => entry.auto_ai_excluded_at === activationCutoff),
+        'explicit AI actions may fetch original content but cannot clear the automatic exclusion');
+      assert.ok(persisted.every(entry => entry.original_fetched_at > 0));
+    } finally {
+      finalDatabase.close();
+    }
+
+    const versioned = await jsonRequest(server.baseUrl, `/api/entry/${encodeURIComponent(versionedEntry.id)}/translation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ force: true }),
+    });
+    assert.equal(versioned.response.status, 202, `${JSON.stringify(versioned.body)}\n${server.logs.slice(-30).join('')}`);
+    assert.equal(versioned.body.originalFetched, true);
+    assert.ok(versioned.body.jobId);
+    assert.equal(Object.hasOwn(versioned.body.entry, 'autoAiExcludedAt'), false,
+      'the versioned translation enqueue response must use the same public entry projection');
+    assert.match(versioned.body.entry.content, /deliberately distinct from the short feed summary/);
+    const versionedDatabase = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    try {
+      const persistedVersioned = versionedDatabase.prepare('SELECT auto_ai_excluded_at, original_fetched_at FROM entries WHERE id = ?').get(versionedEntry.id);
+      assert.equal(persistedVersioned.auto_ai_excluded_at, activationCutoff);
+      assert.ok(persistedVersioned.original_fetched_at > 0);
+      const allOriginalMidValues = JSON.parse(fs.readFileSync(sourceCapturePath, 'utf8')).requests
+        .filter(request => request.url.includes('mp.weixin.qq.com'))
+        .map(request => new URL(request.url).searchParams.get('mid'))
+        .sort();
+      assert.deepEqual(allOriginalMidValues, ['7001', '7002', '7003', '7004']);
+    } finally {
+      versionedDatabase.close();
+    }
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('activation reconciles a legacy manual feed source without changing its identity or reader associations', { timeout: 45000 }, async () => {
   const dataDir = createTempDataDir();
+  const capturePath = path.join(dataDir, 'source-requests.json');
   const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
   const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
   const feedUrl = 'https://wechat2rss.bestblogs.dev/feed/2d790e38f8af54c5af77fa5fed687a7c66d34c22.xml';
@@ -571,6 +825,7 @@ test('activation reconciles a legacy manual feed source without changing its ide
 
     server = await startServer(dataDir, {
       NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: capturePath,
       SOURCE_CATALOG_FEED_URL: catalogUrl,
       SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
     });
@@ -584,8 +839,80 @@ test('activation reconciles a legacy manual feed source without changing its ide
     assert.equal(activated.body.source.id, sourceId);
     assert.equal(activated.body.created, false);
     assert.equal(activated.body.entryCount, 2);
+
+    const escapedFeedUrl = 'https://example.test/legacy-source-escape.xml';
+    const blockedEdit = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        name: 'Must not replace the catalog source',
+        feedUrl: escapedFeedUrl,
+        labels: ['untrusted-edit'],
+      }),
+    });
+    if (blockedEdit.response.status === 200) await waitForBackgroundIdle(server.baseUrl, cookie);
+    const blockedDatabase = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    let blockedSourceRow;
+    let blockedIngestionRow;
+    try {
+      blockedSourceRow = blockedDatabase.prepare('SELECT name, feed_url FROM custom_sources WHERE id = ?').get(sourceId);
+      blockedIngestionRow = blockedDatabase.prepare('SELECT platform, catalog_key, feed_url FROM source_ingestion_sources WHERE source_id = ?').get(sourceId);
+    } finally {
+      blockedDatabase.close();
+    }
+    assert.deepEqual({
+      status: blockedEdit.response.status,
+      sourceName: blockedSourceRow.name,
+      customSourceFeedUrl: blockedSourceRow.feed_url,
+      ingestionFeedUrl: blockedIngestionRow && blockedIngestionRow.feed_url,
+    }, {
+      status: 409,
+      sourceName: '人人都是产品经理',
+      customSourceFeedUrl: feedUrl,
+      ingestionFeedUrl: feedUrl,
+    }, JSON.stringify({ status: blockedEdit.response.status, error: blockedEdit.body && blockedEdit.body.error }));
+    assert.match(blockedEdit.body.error, /pinned.*(catalog|ingestion)|catalog.*pinned/i);
+
+    const allowedEdit = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ name: 'Legacy WeChat metadata updated', labels: ['approved'], editorialPriority: 'low' }),
+    });
+    assert.equal(allowedEdit.response.status, 200, JSON.stringify(allowedEdit.body));
+    assert.equal(allowedEdit.body.source.id, sourceId);
+    assert.equal(allowedEdit.body.source.name, 'Legacy WeChat metadata updated');
+    assert.equal(allowedEdit.body.sources.find(source => source.id === sourceId).feedUrl, feedUrl);
+    assert.equal(allowedEdit.body.source.editorialPriority, 'low');
+    assert.deepEqual(allowedEdit.body.source.labels, ['approved']);
+    await waitForBackgroundIdle(server.baseUrl, cookie);
+
     const current = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
     try {
+      const source = current.prepare('SELECT id, name, feed_url, labels_json FROM custom_sources WHERE id = ?').get(sourceId);
+      const preference = current.prepare('SELECT editorial_priority FROM source_preferences WHERE source_id = ?').get(sourceId);
+      const ingestion = current.prepare('SELECT platform, catalog_key, feed_url FROM source_ingestion_sources WHERE source_id = ?').get(sourceId);
+      assert.deepEqual({
+        id: source.id,
+        name: source.name,
+        feedUrl: source.feed_url,
+        labels: JSON.parse(source.labels_json),
+        priority: preference.editorial_priority,
+        ingestionPlatform: ingestion.platform,
+        ingestionCatalogKey: ingestion.catalog_key,
+        ingestionFeedUrl: ingestion.feed_url,
+      }, {
+        id: sourceId,
+        name: 'Legacy WeChat metadata updated',
+        feedUrl,
+        labels: ['approved'],
+        priority: 'low',
+        ingestionPlatform: 'wechat',
+        ingestionCatalogKey: catalogKey,
+        ingestionFeedUrl: feedUrl,
+      });
+      const requests = JSON.parse(fs.readFileSync(capturePath, 'utf8')).requests;
+      assert.equal(requests.some(request => request.url === escapedFeedUrl), false,
+        'metadata edits and refresh continue to use the pinned catalog feed URL');
       const entry = current.prepare('SELECT id, platform_identity, auto_ai_excluded_at FROM entries WHERE id = ?').get(entryId);
       assert.ok(entry);
       assert.equal(entry.platform_identity, 'wechat:MzA1:1001:1');

@@ -3482,7 +3482,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
           ...state,
           originalFetched: prepared.fetched,
           originalFetchError: prepared.error || null,
-          entry: prepared.fetched ? prepared.entry : undefined,
+          entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
         });
       }
       const missingDocument = new Error('versioned translation document is unavailable');
@@ -3507,7 +3507,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
       translation: translationResponse(prepared.entry, req.user) || result.translation,
       originalFetched: prepared.fetched,
       originalFetchError: prepared.error || null,
-      entry: prepared.fetched ? prepared.entry : undefined,
+      entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
     });
   } catch (e) {
     console.warn(`translation failed for ${entry.id}:`, e.message || e);
@@ -3538,7 +3538,7 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
       originalFetched: prepared.fetched,
       officialSiteFetched: Boolean(prepared.officialSiteFetched),
       originalFetchError: prepared.error || null,
-      entry: prepared.fetched ? prepared.entry : undefined,
+      entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
     });
   } catch (e) {
     sendError(res, e, 'rewrite failed');
@@ -3576,7 +3576,7 @@ app.post('/api/entry/:id/onepage', requireLogin, requireOnepageAccess, onepageDa
       onepage: onepageResponse(result.onepage, req.user),
       originalFetched: prepared.fetched,
       originalFetchError: prepared.error || null,
-      entry: prepared.fetched ? prepared.entry : undefined,
+      entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
     });
   } catch (error) {
     return sendError(res, error, 'onepage generation failed');
@@ -3997,6 +3997,25 @@ app.patch('/api/sources/:id', requireAdmin, (req, res) => {
     const hasPriority = Object.prototype.hasOwnProperty.call(body, 'editorialPriority');
     const customFields = ['name', 'feedUrl', 'siteUrl', 'category', 'description', 'labels'];
     const hasCustomConfig = customFields.some(field => Object.prototype.hasOwnProperty.call(body, field));
+    const hasFeedUrlUpdate = Object.prototype.hasOwnProperty.call(body, 'feedUrl');
+    const requestedFeedUrl = hasFeedUrlUpdate ? String(body.feedUrl || '').trim() : '';
+    const ingestion = hasFeedUrlUpdate ? store.getSourceIngestionBySourceId(current.id) : null;
+    if (ingestion && ingestion.platform === 'wechat' && requestedFeedUrl !== ingestion.feedUrl) {
+      return res.status(409).json({
+        error: 'WeChat source feed URL is pinned to its catalog ingestion URL; use catalog-key activation for catalog changes',
+      });
+    }
+    if (hasFeedUrlUpdate) {
+      const requestedCatalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(requestedFeedUrl);
+      if (requestedCatalogKey && (!ingestion
+          || ingestion.platform !== 'wechat'
+          || ingestion.catalogKey !== requestedCatalogKey
+          || ingestion.feedUrl !== requestedFeedUrl)) {
+        return res.status(409).json({
+          error: 'WeChat feeds must be activated by catalog key through /api/admin/source-catalog/:key/activate',
+        });
+      }
+    }
     if (!hasEnabled && !hasPriority && !hasCustomConfig) {
       return res.status(400).json({ error: 'source update requires preferences or custom source configuration' });
     }

@@ -8,6 +8,7 @@ const capturePath = String(process.env.MOCK_SOURCE_INGESTION_CAPTURE_PATH || '')
 const aiCapturePath = String(process.env.MOCK_SOURCE_INGESTION_AI_CAPTURE_PATH || '').trim();
 const modePath = String(process.env.MOCK_SOURCE_INGESTION_MODE_PATH || '').trim();
 const fixtureFeedUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+const originalMode = String(process.env.MOCK_SOURCE_WECHAT_ORIGINAL_MODE || '').trim();
 
 function record(url) {
   if (!capturePath) return;
@@ -19,7 +20,8 @@ function record(url) {
 
 dns.lookup = async (hostname, options) => {
   const host = String(hostname || '').toLowerCase();
-  if (host === 'catalog-fixtures.example' || host === 'wechat2rss.bestblogs.dev') {
+  if (host === 'catalog-fixtures.example' || host === 'wechat2rss.bestblogs.dev'
+      || (host === 'mp.weixin.qq.com' && originalMode === 'success')) {
     const address = { address: '93.184.216.34', family: 4 };
     return options && options.all ? [address] : address;
   }
@@ -84,6 +86,17 @@ function textResponse(body, status = 200, headers = {}) {
   });
 }
 
+function wechatOriginalResponse(url) {
+  const mid = new URL(url).searchParams.get('mid') || 'fixture';
+  const title = `Verified original article ${mid}`;
+  const paragraph = 'A product team compared complete evidence, interviewed users, and recorded how each decision changed the next experiment. This independently served article text is deliberately distinct from the short feed summary and exists only as a controlled HTTP fixture.';
+  const article = Array.from({ length: 4 }, () => `<p>${paragraph}</p>`).join('');
+  return new Response(`<!doctype html><html><head><title>${title}</title><meta property="og:title" content="${title}"></head><body><article><h1>${title}</h1>${article}</article></body></html>`, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
 const fixtureOpml = fs.readFileSync(require.resolve('../fixtures/source-catalog.opml'), 'utf8');
 const fixtureRss = fs.readFileSync(require.resolve('../fixtures/wechat-feed.xml'), 'utf8');
 const realFetch = globalThis.fetch;
@@ -93,6 +106,9 @@ globalThis.fetch = async (input, init) => {
   const parsed = new URL(url);
   if (parsed.hostname === 'catalog-fixtures.example' && parsed.href === fixtureFeedUrl) {
     return textResponse(fixtureOpml, 200, { 'Content-Type': 'text/xml; charset=utf-8' });
+  }
+  if (parsed.hostname === 'mp.weixin.qq.com' && originalMode === 'success') {
+    return wechatOriginalResponse(url);
   }
   if (parsed.hostname === 'wechat2rss.bestblogs.dev' && parsed.pathname.startsWith('/feed/')) {
     const mode = currentMode();
