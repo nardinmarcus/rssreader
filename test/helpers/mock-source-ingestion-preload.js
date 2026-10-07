@@ -116,6 +116,13 @@ globalThis.fetch = async (input, init) => {
     if (mode === 'supplier-403') return textResponse('forbidden', 403);
     if (mode === 'supplier-404') return textResponse('not found', 404);
     if (mode === 'supplier-429') return textResponse('rate limited', 429, { 'Retry-After': '0' });
+    if (mode === 'supplier-429-long') return textResponse('rate limited', 429, { 'Retry-After': '3600' });
+    if (mode === 'supplier-timeout') {
+      const error = new Error('request timed out');
+      error.name = 'TimeoutError';
+      error.statusCode = 504;
+      throw error;
+    }
     if (mode === 'html') return textResponse('<!doctype html><html><title>not a feed</title></html>', 200, { 'Content-Type': 'text/html' });
     if (mode === 'empty') return textResponse('', 200);
     if (mode === 'wrong-account') {

@@ -1562,6 +1562,12 @@ test('invalid WeChat feeds return safe actionable 4xx errors and preserve activa
         message: '供给方暂时限制请求，请稍后重试。',
         attempts: 2,
       },
+      {
+        mode: 'supplier-timeout',
+        status: 504,
+        message: 'WeChat source activation failed',
+        attempts: 2,
+      },
     ];
     const feedRequestCount = () => JSON.parse(fs.readFileSync(capturePath, 'utf8')).requests
       .filter(request => {
@@ -1585,6 +1591,15 @@ test('invalid WeChat feeds return safe actionable 4xx errors and preserve activa
       assert.deepEqual(readEmptyDatabaseState(), { customSources: 0, ingestions: 0, entries: 0 },
         `${failure.mode} first-activation failure must not leave partial state`);
     }
+
+    const rateLimitMessage = supplierFailureCases.find(failure => failure.mode === 'supplier-429').message;
+    fs.writeFileSync(modePath, 'supplier-429-long');
+    const initialLongRetryRequestsBefore = feedRequestCount();
+    const initialLongRetry = await activate(false);
+    assert.equal(feedRequestCount() - initialLongRetryRequestsBefore, 1,
+      'an over-deadline Retry-After must not trigger a second supplier request');
+    assert.deepEqual(readEmptyDatabaseState(), { customSources: 0, ingestions: 0, entries: 0 },
+      'an over-deadline Retry-After failure must not create partial state');
 
     fs.writeFileSync(modePath, 'unavailable');
     assertPublicError(await activate(false), 503, 'WeChat source activation failed');
@@ -1625,6 +1640,14 @@ test('invalid WeChat feeds return safe actionable 4xx errors and preserve activa
         `${failure.mode} restore failure must preserve source, enrollment, archive state, and every existing entry`);
     }
 
+    fs.writeFileSync(modePath, 'supplier-429-long');
+    const restoreLongRetryRequestsBefore = feedRequestCount();
+    const restoreLongRetry = await activate(true);
+    assert.equal(feedRequestCount() - restoreLongRetryRequestsBefore, 1,
+      'an over-deadline restore Retry-After must not trigger a second supplier request');
+    assert.deepEqual(readSourceSnapshot(sourceId), archivedSnapshot,
+      'an over-deadline Retry-After restore failure must preserve every source and entry row');
+
     fs.writeFileSync(modePath, 'unavailable');
     assertPublicError(await activate(true), 503, 'WeChat source activation failed');
     assert.deepEqual(readSourceSnapshot(sourceId), archivedSnapshot,
@@ -1641,6 +1664,8 @@ test('invalid WeChat feeds return safe actionable 4xx errors and preserve activa
     assert.equal(restoredSnapshot.ingestion.source_id, sourceId);
     assert.deepEqual(restoredSnapshot.entries.map(entry => entry.id), archivedSnapshot.entries.map(entry => entry.id),
       'valid retry reuses existing articles instead of duplicating or replacing them');
+    assertPublicError(initialLongRetry, 429, rateLimitMessage);
+    assertPublicError(restoreLongRetry, 429, rateLimitMessage);
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });
