@@ -1541,14 +1541,49 @@ test('invalid WeChat feeds return safe actionable 4xx errors and preserve activa
       assert.equal(result.response.status, status, JSON.stringify(result.body));
       assert.deepEqual(result.body, { error: message });
       const serialized = JSON.stringify(result.body);
-      assert.doesNotMatch(serialized, /wechat2rss\.bestblogs\.dev|catalog-fixtures\.example|Feed not recognized|parser\.parseString|stack|Error:/i);
+      assert.doesNotMatch(serialized, /wechat2rss\.bestblogs\.dev|catalog-fixtures\.example|Feed not recognized|parser\.parseString|stack|Error:|Status code \d+|\b(?:403|404|429)\b/i);
     };
+    const supplierFailureCases = [
+      {
+        mode: 'supplier-403',
+        status: 403,
+        message: '供给方拒绝读取该公众号订阅源，请核对目录条目后重试。',
+        attempts: 1,
+      },
+      {
+        mode: 'supplier-404',
+        status: 404,
+        message: '供给方未找到该公众号订阅源，请核对目录条目后重试。',
+        attempts: 1,
+      },
+      {
+        mode: 'supplier-429',
+        status: 429,
+        message: '供给方暂时限制请求，请稍后重试。',
+        attempts: 2,
+      },
+    ];
+    const feedRequestCount = () => JSON.parse(fs.readFileSync(capturePath, 'utf8')).requests
+      .filter(request => {
+        const url = new URL(request.url);
+        return url.hostname === 'wechat2rss.bestblogs.dev' && url.pathname.startsWith('/feed/');
+      }).length;
 
     for (const mode of ['html', 'empty']) {
       fs.writeFileSync(modePath, mode);
       assertPublicError(await activate(false), 422, invalidFeedError);
       assert.deepEqual(readEmptyDatabaseState(), { customSources: 0, ingestions: 0, entries: 0 },
         `${mode} first-activation failure must not leave a source, enrollment, or article`);
+    }
+
+    for (const failure of supplierFailureCases) {
+      fs.writeFileSync(modePath, failure.mode);
+      const requestsBefore = feedRequestCount();
+      assertPublicError(await activate(false), failure.status, failure.message);
+      assert.equal(feedRequestCount() - requestsBefore, failure.attempts,
+        `${failure.mode} must preserve the supplier retry policy`);
+      assert.deepEqual(readEmptyDatabaseState(), { customSources: 0, ingestions: 0, entries: 0 },
+        `${failure.mode} first-activation failure must not leave partial state`);
     }
 
     fs.writeFileSync(modePath, 'unavailable');
@@ -1578,6 +1613,16 @@ test('invalid WeChat feeds return safe actionable 4xx errors and preserve activa
       assertPublicError(await activate(true), 422, invalidFeedError);
       assert.deepEqual(readSourceSnapshot(sourceId), archivedSnapshot,
         `${mode} restore failure must preserve source, enrollment, archive state, and every existing entry`);
+    }
+
+    for (const failure of supplierFailureCases) {
+      fs.writeFileSync(modePath, failure.mode);
+      const requestsBefore = feedRequestCount();
+      assertPublicError(await activate(true), failure.status, failure.message);
+      assert.equal(feedRequestCount() - requestsBefore, failure.attempts,
+        `${failure.mode} restore must preserve the supplier retry policy`);
+      assert.deepEqual(readSourceSnapshot(sourceId), archivedSnapshot,
+        `${failure.mode} restore failure must preserve source, enrollment, archive state, and every existing entry`);
     }
 
     fs.writeFileSync(modePath, 'unavailable');

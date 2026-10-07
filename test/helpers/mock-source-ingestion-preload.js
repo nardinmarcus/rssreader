@@ -113,6 +113,9 @@ globalThis.fetch = async (input, init) => {
   if (parsed.hostname === 'wechat2rss.bestblogs.dev' && parsed.pathname.startsWith('/feed/')) {
     const mode = currentMode();
     if (mode === 'unavailable') return textResponse('unavailable', 503);
+    if (mode === 'supplier-403') return textResponse('forbidden', 403);
+    if (mode === 'supplier-404') return textResponse('not found', 404);
+    if (mode === 'supplier-429') return textResponse('rate limited', 429, { 'Retry-After': '0' });
     if (mode === 'html') return textResponse('<!doctype html><html><title>not a feed</title></html>', 200, { 'Content-Type': 'text/html' });
     if (mode === 'empty') return textResponse('', 200);
     if (mode === 'wrong-account') {
