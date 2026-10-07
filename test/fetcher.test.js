@@ -308,6 +308,62 @@ test('public fetch enforces the byte limit for streamed bodies without Content-L
   assert.equal(cancelled, 1);
 });
 
+test('fetchText preserves opt-in 429 when Retry-After stops fitting between deadline checks', async () => {
+  const { fetchText } = fetcher.__test;
+  const run = async preserve429 => {
+    const clock = [1000, 1000, 1000, 1002];
+    let clockIndex = 0;
+    let attempts = 0;
+    let sleeps = 0;
+    let failure = null;
+    await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+      now: () => clock[Math.min(clockIndex++, clock.length - 1)],
+      request: async () => {
+        attempts += 1;
+        return {
+          status: 429,
+          headers: new Headers({ 'retry-after': '0.999' }),
+          buffer: Buffer.alloc(0),
+        };
+      },
+      sleep: async () => { sleeps += 1; },
+      ...(preserve429 ? { preserve429WhenRetryAfterExceedsDeadline: true } : {}),
+    }), error => {
+      failure = error;
+      return error.statusCode === (preserve429 ? 429 : 504);
+    });
+    return { attempts, sleeps, failure };
+  };
+
+  const optIn = await run(true);
+  assert.equal(optIn.attempts, 1);
+  assert.equal(optIn.sleeps, 0);
+  assert.equal(optIn.failure.response.status, 429);
+
+  const unchangedDefault = await run(false);
+  assert.equal(unchangedDefault.attempts, 1);
+  assert.equal(unchangedDefault.sleeps, 0);
+  assert.equal(unchangedDefault.failure.name, 'TimeoutError');
+});
+
+test('fetchText does not classify a genuine request timeout as a supplier 429', async () => {
+  const { fetchText } = fetcher.__test;
+  const timeout = new Error('request timed out');
+  timeout.name = 'TimeoutError';
+  timeout.statusCode = 504;
+  let attempts = 0;
+  await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+    now: () => 1000,
+    request: async () => {
+      attempts += 1;
+      throw timeout;
+    },
+    sleep: async () => {},
+    preserve429WhenRetryAfterExceedsDeadline: true,
+  }), error => error === timeout && error.statusCode === 504);
+  assert.equal(attempts, 2, 'the pre-existing transport retry policy remains in force');
+});
+
 test('fetchText honors ISO-8859-1 and windows-1252 declarations from HTTP, XML, and HTML', async () => {
   const { fetchText } = fetcher.__test;
   const responses = [
