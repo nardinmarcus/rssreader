@@ -133,6 +133,54 @@ test('catalog activation is admin-only, exposes explicit restore, and reports We
   assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.discovery-entry-action button\s*\{\s*width:\s*100%/);
 });
 
+test('failed archive restore shows the safe reason and leaves the restore action retryable', async () => {
+  const key = 'wechat:ABC12345';
+  const sourceId = 'custom-restore-fixture';
+  const safeError = '订阅地址未返回有效的 RSS/Atom 订阅源，请检查链接后重试。';
+  const apiCalls = [];
+  const toasts = [];
+  const context = {
+    discoveryState: { activatingKey: '', activationMessage: '', open: false },
+    isAdmin: () => true,
+    escapeHtml: value => String(value || ''),
+    api: async (url, options) => {
+      apiCalls.push({ url, body: JSON.parse(options.body) });
+      if (apiCalls.length === 1) throw new Error(safeError);
+      return { entryCount: 2, source: { id: sourceId } };
+    },
+    renderSourceDiscovery: () => {},
+    loadSources: async () => {},
+    loadSourceCatalog: async () => {},
+    toast: message => toasts.push(message),
+  };
+  vm.createContext(context);
+  const activateFunction = extractFunction('activateDiscoverySource').replace(/^function /, 'async function ');
+  vm.runInContext(`${activateFunction}\n${extractFunction('discoveryEntryHtml')}`, context);
+
+  await context.activateDiscoverySource(key, true);
+  assert.equal(context.discoveryState.activationMessage, `恢复失败：${safeError}`);
+  assert.equal(context.discoveryState.activatingKey, '');
+  assert.equal(toasts[0], `恢复失败：${safeError}`);
+  const retryHtml = context.discoveryEntryHtml({
+    key,
+    name: '测试公众号',
+    platform: 'wechat',
+    online: false,
+    archived: true,
+    activated: true,
+  });
+  assert.match(retryHtml, /data-discovery-restore="true"/);
+  assert.doesNotMatch(retryHtml, /disabled/);
+
+  await context.activateDiscoverySource(key, true);
+  assert.deepEqual(apiCalls, [
+    { url: `/api/admin/source-catalog/${encodeURIComponent(key)}/activate`, body: { restore: true } },
+    { url: `/api/admin/source-catalog/${encodeURIComponent(key)}/activate`, body: { restore: true } },
+  ]);
+  assert.equal(context.discoveryState.activatingKey, '');
+  assert.match(context.discoveryState.activationMessage, /^来源已恢复/);
+});
+
 test('article readers see WeChat history coverage as unknown rather than complete', () => {
   const context = {};
   vm.createContext(context);

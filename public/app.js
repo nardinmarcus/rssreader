@@ -4220,7 +4220,7 @@ async function activateDiscoverySource(catalogKey, restore = false) {
     await loadSourceCatalog({ reset: true });
     toast(restore ? '公众号来源已恢复' : '公众号来源已加入自定义来源');
   } catch (error) {
-    discoveryState.activationMessage = `接入失败：${error.message || error}`;
+    discoveryState.activationMessage = `${restore ? '恢复失败' : '接入失败'}：${error.message || error}`;
     toast(discoveryState.activationMessage);
   } finally {
     discoveryState.activatingKey = '';

@@ -1487,6 +1487,121 @@ test('invalid and redirected WeChat feeds fail without creating a Custom Source 
   }
 });
 
+test('invalid WeChat feeds return safe actionable 4xx errors and preserve activation state for retry', { timeout: 90000 }, async () => {
+  const dataDir = createTempDataDir();
+  const capturePath = path.join(dataDir, 'supplier-requests.json');
+  const modePath = path.join(dataDir, 'feed-mode.txt');
+  const preloadPath = path.join(__dirname, 'helpers', 'mock-source-ingestion-preload.js');
+  const catalogUrl = 'https://catalog-fixtures.example/opml/bestblogs_wechat2rss.xml';
+  const catalogKey = 'wechat:2d790e38f8af54c5af77fa5fed687a7c66d34c22';
+  const activatePath = `/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`;
+  const invalidFeedError = '订阅地址未返回有效的 RSS/Atom 订阅源，请检查链接后重试。';
+  let server = null;
+  fs.writeFileSync(modePath, 'html');
+  try {
+    server = await startServer(dataDir, {
+      NODE_OPTIONS: `--require=${preloadPath}`,
+      MOCK_SOURCE_INGESTION_CAPTURE_PATH: capturePath,
+      MOCK_SOURCE_INGESTION_MODE_PATH: modePath,
+      SOURCE_CATALOG_FEED_URL: catalogUrl,
+      SOURCE_CATALOG_REFRESH_INTERVAL_MS: '-1',
+    });
+    const cookie = await adminCookie(server.baseUrl);
+    const activate = restore => jsonRequest(server.baseUrl, activatePath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify(restore ? { restore: true } : {}),
+    });
+    const readEmptyDatabaseState = () => {
+      const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+      try {
+        return {
+          customSources: database.prepare('SELECT COUNT(*) AS count FROM custom_sources').get().count,
+          ingestions: database.prepare('SELECT COUNT(*) AS count FROM source_ingestion_sources').get().count,
+          entries: database.prepare('SELECT COUNT(*) AS count FROM entries').get().count,
+        };
+      } finally {
+        database.close();
+      }
+    };
+    const readSourceSnapshot = sourceId => {
+      const database = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+      try {
+        return {
+          source: database.prepare('SELECT * FROM custom_sources WHERE id = ?').get(sourceId),
+          preference: database.prepare('SELECT * FROM source_preferences WHERE source_id = ?').get(sourceId),
+          ingestion: database.prepare('SELECT * FROM source_ingestion_sources WHERE source_id = ?').get(sourceId),
+          entries: database.prepare('SELECT * FROM entries WHERE source_id = ? ORDER BY id').all(sourceId),
+        };
+      } finally {
+        database.close();
+      }
+    };
+    const assertPublicError = (result, status, message) => {
+      assert.equal(result.response.status, status, JSON.stringify(result.body));
+      assert.deepEqual(result.body, { error: message });
+      const serialized = JSON.stringify(result.body);
+      assert.doesNotMatch(serialized, /wechat2rss\.bestblogs\.dev|catalog-fixtures\.example|Feed not recognized|parser\.parseString|stack|Error:/i);
+    };
+
+    for (const mode of ['html', 'empty']) {
+      fs.writeFileSync(modePath, mode);
+      assertPublicError(await activate(false), 422, invalidFeedError);
+      assert.deepEqual(readEmptyDatabaseState(), { customSources: 0, ingestions: 0, entries: 0 },
+        `${mode} first-activation failure must not leave a source, enrollment, or article`);
+    }
+
+    fs.writeFileSync(modePath, 'unavailable');
+    assertPublicError(await activate(false), 503, 'WeChat source activation failed');
+    assert.deepEqual(readEmptyDatabaseState(), { customSources: 0, ingestions: 0, entries: 0 },
+      'an upstream 5xx remains generic and must not create partial local state');
+
+    fs.writeFileSync(modePath, 'ok');
+    const activated = await activate(false);
+    assert.equal(activated.response.status, 201, JSON.stringify(activated.body));
+    const sourceId = activated.body.source.id;
+    assert.match(sourceId, /^custom-/);
+    const activeSnapshot = readSourceSnapshot(sourceId);
+    assert.equal(activeSnapshot.entries.length, 2);
+
+    const archived = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(sourceId)}`, {
+      method: 'DELETE',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(archived.response.status, 200, JSON.stringify(archived.body));
+    const archivedSnapshot = readSourceSnapshot(sourceId);
+    assert.ok(archivedSnapshot.source.archived_at, 'the source should be archived before restore failures are tested');
+    assert.deepEqual(archivedSnapshot.entries.map(entry => entry.id), activeSnapshot.entries.map(entry => entry.id));
+
+    for (const mode of ['html', 'empty']) {
+      fs.writeFileSync(modePath, mode);
+      assertPublicError(await activate(true), 422, invalidFeedError);
+      assert.deepEqual(readSourceSnapshot(sourceId), archivedSnapshot,
+        `${mode} restore failure must preserve source, enrollment, archive state, and every existing entry`);
+    }
+
+    fs.writeFileSync(modePath, 'unavailable');
+    assertPublicError(await activate(true), 503, 'WeChat source activation failed');
+    assert.deepEqual(readSourceSnapshot(sourceId), archivedSnapshot,
+      'an upstream 5xx during restore must leave the archived source and articles unchanged');
+
+    fs.writeFileSync(modePath, 'ok');
+    const restored = await activate(true);
+    assert.equal(restored.response.status, 200, JSON.stringify(restored.body));
+    assert.equal(restored.body.restored, true);
+    assert.equal(restored.body.source.id, sourceId, 'valid retry must restore the same canonical source ID');
+    const restoredSnapshot = readSourceSnapshot(sourceId);
+    assert.equal(restoredSnapshot.source.archived_at, null);
+    assert.equal(restoredSnapshot.preference.enabled, 1);
+    assert.equal(restoredSnapshot.ingestion.source_id, sourceId);
+    assert.deepEqual(restoredSnapshot.entries.map(entry => entry.id), archivedSnapshot.entries.map(entry => entry.id),
+      'valid retry reuses existing articles instead of duplicating or replacing them');
+  } finally {
+    await stopServer(server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('a changed WeChat account identity cannot replace the last good source snapshot', { timeout: 45000 }, async () => {
   const dataDir = createTempDataDir();
   const capturePath = path.join(dataDir, 'requests.json');
