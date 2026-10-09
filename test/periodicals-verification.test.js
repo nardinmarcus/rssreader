@@ -501,6 +501,102 @@ test('shadow verifier repeats additive migration on a work copy without changing
   }
 });
 
+test('periodical scheduling excludes WeChat history marked as automatic-AI ineligible', async () => {
+  const dataDir = createTempDataDir('namoo-reader-periodicals-wechat-history-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const now = Date.now();
+    const capturedAt = now - 30_000;
+    db.prepare(`INSERT INTO custom_sources
+      (id, name, feed_url, category, labels_json, created_at, updated_at)
+      VALUES ('wechat-source', 'WeChat Source', 'https://wechat2rss.example/feed.xml', 'article', '[]', ?, ?)`).run(now, now);
+    db.prepare(`INSERT INTO source_preferences
+      (source_id, enabled, editorial_priority, display_order, updated_at)
+      VALUES ('wechat-source', 1, 'normal', 0, ?)`).run(new Date(now).toISOString());
+    const content = '<p>' + 'Feed-provided material with a preserved source and evidence trail. '.repeat(12) + '</p>';
+    const insertEntry = db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash, content_scope, auto_ai_excluded_at, created_at, updated_at)
+      VALUES (?, 'wechat-source', ?, ?, ?, ?, ?, ?, 'feed-body', ?, ?, ?)`);
+    insertEntry.run(
+      'wechat-historical-entry', 'Historical WeChat article', 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=11&idx=1',
+      capturedAt, 'Historical teaser', content, 'historical-content-hash', now, capturedAt, capturedAt,
+    );
+    insertEntry.run(
+      'wechat-post-cutoff-entry', 'New WeChat article', 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=12&idx=1',
+      capturedAt + 1, 'New article teaser', content, 'future-content-hash', null, capturedAt + 1, capturedAt + 1,
+    );
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter: null, logger() {} });
+    const scheduled = periodicals.syncOpenDaily({ now, trigger: 'wechat-history-exclusion-test' });
+    assert.equal(scheduled.job.candidateCount, 1, 'only the post-cutoff entry enters the daily candidate set');
+    const built = await periodicals.runNextBuild({ now: now + 1 });
+    assert.equal(built.status, 'succeeded');
+    const candidates = db.prepare(`
+      SELECT evidence.entry_id
+      FROM periodical_event_evidence AS evidence
+      INNER JOIN periodical_events AS event ON event.id = evidence.event_id
+      WHERE event.issue_id = ?
+      ORDER BY evidence.entry_id
+    `).all(scheduled.issueId).map(row => row.entry_id);
+    assert.ok(candidates.length > 0);
+    assert.ok(candidates.every(id => id === 'wechat-post-cutoff-entry'));
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('daily candidate selection excludes unregistered canonical WeChat sources but keeps ordinary sources', async () => {
+  const dataDir = createTempDataDir('namoo-reader-periodicals-unregistered-wechat-');
+  let db;
+  try {
+    initializeStore(dataDir);
+    db = new DatabaseSync(path.join(dataDir, 'qmreader.sqlite'));
+    const now = Date.now();
+    const wechatSourceId = 'legacy-unregistered-wechat-periodical';
+    const ordinarySourceId = 'ordinary-periodical-control';
+    const wechatFeedUrl = 'https://wechat2rss.bestblogs.dev/feed/abcdef123456.xml';
+    for (const [id, name, feedUrl] of [
+      [wechatSourceId, 'Legacy unregistered WeChat', wechatFeedUrl],
+      [ordinarySourceId, 'Ordinary control', 'https://ordinary.example/feed.xml'],
+    ]) {
+      db.prepare(`INSERT INTO custom_sources
+        (id, name, feed_url, category, labels_json, created_at, updated_at)
+        VALUES (?, ?, ?, 'article', '[]', ?, ?)`).run(id, name, feedUrl, now, now);
+      db.prepare(`INSERT INTO source_preferences
+        (source_id, enabled, editorial_priority, display_order, updated_at)
+        VALUES (?, 1, 'normal', 0, ?)`).run(id, new Date(now).toISOString());
+    }
+    const wechatEntryContent = `<p>${'Verified feed-provided WeChat content remains available for reading. '.repeat(12)}</p>`;
+    db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash,
+       platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+      VALUES ('legacy-wechat-periodical-entry', ?, 'Eligible legacy WeChat article',
+        'https://mp.weixin.qq.com/s?__biz=MzA1&mid=12121&idx=1&sn=eligible', ?, 'English teaser', ?,
+        'legacy-wechat-periodical-hash', 'wechat:MzA1:12121:1', 'feed-body', NULL, ?, ?)`).run(
+      wechatSourceId, now - 30_000, wechatEntryContent, now - 30_000, now - 30_000,
+    );
+    db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash,
+       platform_identity, content_scope, auto_ai_excluded_at, created_at, updated_at)
+      VALUES ('ordinary-periodical-control-entry', ?, 'Ordinary source remains eligible',
+        'https://ordinary.example/articles/control', ?, 'Ordinary summary', '<p>Ordinary readable article.</p>',
+        'ordinary-periodical-control-hash', NULL, 'unknown', NULL, ?, ?)`).run(
+      ordinarySourceId, now - 20_000, now - 20_000, now - 20_000,
+    );
+    assert.equal(db.prepare('SELECT source_id FROM source_ingestion_sources WHERE source_id = ?').get(wechatSourceId), undefined);
+
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', aiAdapter: null, logger() {} });
+    const scheduled = periodicals.syncOpenDaily({ now, trigger: 'unregistered-wechat-candidate-test' });
+    assert.equal(scheduled.job.candidateCount, 1,
+      'the ordinary control remains a periodical candidate while the canonical unregistered WeChat item is excluded');
+  } finally {
+    if (db) db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('shadow verifier accepts the last successful Daily revision while it is finalizing', async () => {
   const { verifyDatabaseCopy } = require('../lib/periodicals-verification');
   const dataDir = createTempDataDir('namoo-reader-periodicals-finalizing-verification-');

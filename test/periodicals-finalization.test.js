@@ -27,7 +27,8 @@ function fixtureDatabase(databasePath = ':memory:') {
       content_hash TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      deleted_at INTEGER
+      deleted_at INTEGER,
+      auto_ai_excluded_at INTEGER
     );
     CREATE TABLE entry_translations (
       entry_id TEXT PRIMARY KEY,

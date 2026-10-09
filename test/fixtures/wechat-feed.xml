@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>人人都是产品经理</title>
+    <link>https://www.woshipm.com/</link>
+    <description>公众号文章 RSS 供给</description>
+    <item>
+      <title>How product teams validate real user needs</title>
+      <link>https://mp.weixin.qq.com/s?__biz=MzA1&amp;mid=1001&amp;idx=1&amp;sn=abc123</link>
+      <guid isPermaLink="false">wechat:MzA1:1001:1</guid>
+      <pubDate>Mon, 22 Sep 2025 09:00:00 +0800</pubDate>
+      <description><![CDATA[一段来自 feed 的摘要，不代表完整原文。]]></description>
+      <content:encoded><![CDATA[<p>Feed-provided article body excerpt. It is useful reading content, but does not certify that the provider supplied the complete original article.</p><p>This content remains explicitly scoped to the feed and keeps the original article link available for readers. Additional source text extends the body enough to exercise existing automated AI eligibility without making a completeness claim. This is a controlled test of persisted content scope and historical exclusion across real refresh workers.</p><p>Feed-provided article body excerpt. It is useful reading content, but does not certify that the provider supplied the complete original article. This content remains explicitly scoped to the feed and keeps the original article link available for readers. Additional source text extends the body enough to exercise existing automated AI eligibility without making a completeness claim.</p><p>Feed-provided article body excerpt. It is useful reading content, but does not certify that the provider supplied the complete original article. This content remains explicitly scoped to the feed and keeps the original article link available for readers.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>How product teams validate real user needs (parameter variant)</title>
+      <link>https://mp.weixin.qq.com/s?from=timeline&amp;idx=1&amp;mid=1001&amp;__biz=MzA1&amp;sn=abc123</link>
+      <guid isPermaLink="false">wechat:retry-variant-with-new-guid</guid>
+      <description><![CDATA[The parameter variant must not create a second representative article.]]></description>
+    </item>
+    <item>
+      <title>没有明确发布时间的文章</title>
+      <link>https://mp.weixin.qq.com/s?__biz=MzA1&amp;mid=1002&amp;idx=1&amp;sn=def456</link>
+      <guid isPermaLink="false">wechat:MzA1:1002:1</guid>
+      <description><![CDATA[只提供摘要；发布时间未知。]]></description>
+    </item>
+  </channel>
+</rss>

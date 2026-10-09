@@ -10,6 +10,7 @@ const deepseek = require('./lib/deepseek');
 const documentPipeline = require('./lib/document-pipeline');
 const { createOnepageModule } = require('./lib/onepage');
 const { createSourceDiscovery } = require('./lib/source-discovery');
+const { createSourceIngestion } = require('./lib/source-ingestion');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const translationJobs = require('./lib/translation-jobs');
@@ -37,6 +38,7 @@ const sourceDiscovery = createSourceDiscovery({
   },
   fetchCatalogText: url => fetcher.fetchText(url, 20000, 5 * 1024 * 1024),
 });
+const sourceIngestion = createSourceIngestion({ store, sourceDiscovery, fetcher });
 app.disable('x-powered-by');
 const PORT = process.env.PORT || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -753,6 +755,12 @@ function clearPublicProjectionCaches() {
   publicEntryListCache.clear();
 }
 
+function publicEntryWithoutAutoAiMarker(entry) {
+  const projected = { ...entry };
+  delete projected.autoAiExcludedAt;
+  return projected;
+}
+
 function publicEntryListResponse(options) {
   const key = JSON.stringify([
     options.sourceId || '',
@@ -766,7 +774,9 @@ function publicEntryListResponse(options) {
   }
   if (cached) publicEntryListCache.delete(key);
 
-  const entries = fetcher.getEntries(options).map(({ content, ...entry }) => entry);
+  const entries = fetcher.getEntries(options).map(({ content, ...entry }) => (
+    publicEntryWithoutAutoAiMarker(entry)
+  ));
   const body = JSON.stringify({ entries });
   if (!publicEntryListCache.has(key) && publicEntryListCache.size >= PUBLIC_ENTRY_LIST_CACHE_MAX) {
     publicEntryListCache.delete(publicEntryListCache.keys().next().value);
@@ -2200,14 +2210,33 @@ function onepageResponse(onepage, viewer = null) {
   };
 }
 
+function isUnregisteredWechatCatalogSourceId(sourceId) {
+  const source = fetcher.getSourceById(sourceId);
+  return Boolean(source
+    && sourceDiscovery.wechatCatalogKeyForSource(source)
+    && !store.getSourceIngestionBySourceId(source.id));
+}
+
 async function translateMissingTitles(limit = TITLE_TRANSLATION_LIMIT) {
   if (!deepseek.getConfig().configured) return 0;
+  const sourceEligibility = new Map();
   const entries = fetcher.getEntries({
     limit: 1000,
     includeContent: false,
     includeAssetSummaries: false,
     includeStats: false,
+    excludeAutoAi: true,
+    excludeUnregisteredWechatCatalogSources: true,
   })
+    .filter(entry => {
+      const sourceId = String(entry && entry.sourceId || '').trim();
+      if (!sourceId) return true;
+      if (!sourceEligibility.has(sourceId)) {
+        sourceEligibility.set(sourceId, !isUnregisteredWechatCatalogSourceId(sourceId));
+      }
+      return sourceEligibility.get(sourceId);
+    })
+    .filter(entry => !entry.autoAiExcludedAt)
     .filter(entry => deepseek.isLikelyEnglish(entry.title) && !entry.titleZh)
     .slice(0, limit);
   let translated = 0;
@@ -3306,12 +3335,13 @@ app.get('/api/entries', (req, res) => {
 app.get('/api/entry/:id', (req, res) => {
   const entry = entryByIdOrPrefix(req.params.id, req.user);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  const content = String(entry.content || '');
+  const publicEntry = publicEntryWithoutAutoAiMarker(entry);
+  const content = String(publicEntry.content || '');
   res.json({
     entry: content.length <= ENTRY_CONTENT_RESPONSE_MAX_CHARS
-      ? entry
+      ? publicEntry
       : {
-          ...entry,
+          ...publicEntry,
           content: content.slice(0, ENTRY_CONTENT_RESPONSE_MAX_CHARS),
           contentTruncated: true,
           contentOriginalLength: content.length,
@@ -3382,7 +3412,7 @@ app.post('/api/entry/:id/content', originalContentRateLimit, async (req, res) =>
   try {
     const updated = await fetcher.fetchEntryOriginal(entry);
     wakeTranslationWorkerIfNeeded();
-    res.json({ entry: updated });
+    res.json({ entry: publicEntryWithoutAutoAiMarker(updated) });
   } catch (e) {
     sendError(res, e, 'fetch original content failed');
   }
@@ -3469,7 +3499,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
           ...state,
           originalFetched: prepared.fetched,
           originalFetchError: prepared.error || null,
-          entry: prepared.fetched ? prepared.entry : undefined,
+          entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
         });
       }
       const missingDocument = new Error('versioned translation document is unavailable');
@@ -3494,7 +3524,7 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
       translation: translationResponse(prepared.entry, req.user) || result.translation,
       originalFetched: prepared.fetched,
       originalFetchError: prepared.error || null,
-      entry: prepared.fetched ? prepared.entry : undefined,
+      entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
     });
   } catch (e) {
     console.warn(`translation failed for ${entry.id}:`, e.message || e);
@@ -3525,7 +3555,7 @@ app.post('/api/entry/:id/rewrite', requireLogin, async (req, res) => {
       originalFetched: prepared.fetched,
       officialSiteFetched: Boolean(prepared.officialSiteFetched),
       originalFetchError: prepared.error || null,
-      entry: prepared.fetched ? prepared.entry : undefined,
+      entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
     });
   } catch (e) {
     sendError(res, e, 'rewrite failed');
@@ -3563,7 +3593,7 @@ app.post('/api/entry/:id/onepage', requireLogin, requireOnepageAccess, onepageDa
       onepage: onepageResponse(result.onepage, req.user),
       originalFetched: prepared.fetched,
       originalFetchError: prepared.error || null,
-      entry: prepared.fetched ? prepared.entry : undefined,
+      entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
     });
   } catch (error) {
     return sendError(res, error, 'onepage generation failed');
@@ -3919,8 +3949,24 @@ app.post('/api/refresh', requireLogin, async (req, res) => {
   res.json({ started: result.started, running: result.running, job: result.job, progress: result.progress, autoRewrite: result.autoRewrite });
 });
 
-app.post('/api/sources', requireAdmin, (req, res) => {
+app.post('/api/admin/source-catalog/:key/activate', requireAdmin, async (req, res) => {
   try {
+    const result = await sourceIngestion.activateWechatCatalogKey(req.params.key, {
+      restore: Boolean(req.body && req.body.restore === true),
+    });
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (e) {
+    sendError(res, e, 'WeChat source activation failed');
+  }
+});
+
+app.post('/api/sources', requireAdmin, async (req, res) => {
+  try {
+    const catalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(req.body && req.body.feedUrl);
+    if (catalogKey) {
+      const result = await sourceIngestion.activateWechatCatalogKey(catalogKey);
+      return res.status(result.created ? 201 : 200).json(result);
+    }
     const source = fetcher.createCustomSource(req.body);
     const refresh = startBackgroundJob({
       kind: 'refresh',
@@ -3968,6 +4014,25 @@ app.patch('/api/sources/:id', requireAdmin, (req, res) => {
     const hasPriority = Object.prototype.hasOwnProperty.call(body, 'editorialPriority');
     const customFields = ['name', 'feedUrl', 'siteUrl', 'category', 'description', 'labels'];
     const hasCustomConfig = customFields.some(field => Object.prototype.hasOwnProperty.call(body, field));
+    const hasFeedUrlUpdate = Object.prototype.hasOwnProperty.call(body, 'feedUrl');
+    const requestedFeedUrl = hasFeedUrlUpdate ? String(body.feedUrl || '').trim() : '';
+    const ingestion = hasFeedUrlUpdate ? store.getSourceIngestionBySourceId(current.id) : null;
+    if (ingestion && ingestion.platform === 'wechat' && requestedFeedUrl !== ingestion.feedUrl) {
+      return res.status(409).json({
+        error: 'WeChat source feed URL is pinned to its catalog ingestion URL; use catalog-key activation for catalog changes',
+      });
+    }
+    if (hasFeedUrlUpdate) {
+      const requestedCatalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(requestedFeedUrl);
+      if (requestedCatalogKey && (!ingestion
+          || ingestion.platform !== 'wechat'
+          || ingestion.catalogKey !== requestedCatalogKey
+          || ingestion.feedUrl !== requestedFeedUrl)) {
+        return res.status(409).json({
+          error: 'WeChat feeds must be activated by catalog key through /api/admin/source-catalog/:key/activate',
+        });
+      }
+    }
     if (!hasEnabled && !hasPriority && !hasCustomConfig) {
       return res.status(400).json({ error: 'source update requires preferences or custom source configuration' });
     }
@@ -4028,9 +4093,8 @@ app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
   }
 });
 
-// Read-only discovery catalog: browse/search the persisted snapshot and the
-// verified show registry. No login required; apply/activate actions belong to
-// later slices. A cold start coalesces into one merged catalog refresh.
+// The persisted catalog remains publicly browsable. Only admins receive
+// activation/restore affordances; the mutation itself is guarded below.
 app.get('/api/source-catalog', async (req, res) => {
   try {
     await sourceDiscovery.ensureSourceCatalogFresh();
@@ -4039,6 +4103,7 @@ app.get('/api/source-catalog', async (req, res) => {
       q: req.query.q,
       cursor: req.query.cursor,
       limit: req.query.limit,
+      admin: Boolean(req.user && req.user.role === 'admin'),
     });
     res.json(projection);
   } catch (e) {

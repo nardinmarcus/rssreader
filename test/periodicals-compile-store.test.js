@@ -19,9 +19,12 @@ function fixtureDatabase() {
       summary TEXT,
       content TEXT,
       content_hash TEXT,
+      platform_identity TEXT,
+      content_scope TEXT NOT NULL DEFAULT 'unknown',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
-      deleted_at INTEGER
+      deleted_at INTEGER,
+      auto_ai_excluded_at INTEGER
     );
     CREATE TABLE entry_translations (
       entry_id TEXT PRIMARY KEY,
@@ -139,6 +142,90 @@ test('shadow worker persists a Custom Source event and timestamp fallback throug
     });
     assert.equal(selectionContext.candidateSnapshot[0].input.entry.title, 'Future timestamp entry');
     assert.equal(selectionContext.candidateSnapshot[0].input.entry.timestampFallback, true);
+  } finally {
+    db.close();
+  }
+});
+
+test('daily candidate selection excludes unverified WeChat scopes without changing other sources', async () => {
+  const db = fixtureDatabase();
+  try {
+    const insertSource = db.prepare(`
+      INSERT INTO custom_sources (
+        id, name, feed_url, category, labels_json, created_at, updated_at
+      ) VALUES (?, ?, ?, 'article', '[]', ?, ?)
+    `);
+    const insertPreference = db.prepare(`
+      INSERT INTO source_preferences (
+        source_id, enabled, editorial_priority, display_order, updated_at
+      ) VALUES (?, 1, 'normal', 0, '2026-07-30T04:00:00.000Z')
+    `);
+    db.exec('CREATE TABLE source_ingestion_sources (source_id TEXT PRIMARY KEY)');
+    insertSource.run('wechat-snapshot', 'WeChat Snapshot', 'https://wechat2rss.bestblogs.dev/feed/abcdef12.xml', NOW, NOW);
+    insertSource.run('ordinary-snapshot', 'Ordinary Snapshot', 'https://ordinary.example/feed.xml', NOW, NOW);
+    db.prepare('INSERT INTO source_ingestion_sources (source_id) VALUES (?)').run('wechat-snapshot');
+    insertPreference.run('wechat-snapshot');
+    insertPreference.run('ordinary-snapshot');
+
+    const insertEntry = db.prepare(`
+      INSERT INTO entries (
+        id, source_id, title, link, published_ts, summary, content,
+        content_hash, platform_identity, content_scope, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const entries = [
+      ['wechat-summary', 'wechat-snapshot', 'WeChat summary', 'wechat:MzA1:1:1', 'summary'],
+      ['wechat-unknown', 'wechat-snapshot', 'WeChat unknown', 'wechat:MzA1:2:1', 'unknown'],
+      ['wechat-feed-body', 'wechat-snapshot', 'WeChat feed body', 'wechat:MzA1:3:1', 'feed-body'],
+      ['ordinary-unknown', 'ordinary-snapshot', 'Ordinary unknown', null, 'unknown'],
+    ];
+    for (const [id, sourceId, title, platformIdentity, contentScope] of entries) {
+      insertEntry.run(
+        id, sourceId, title, `https://example.com/${id}`, NOW - 1000,
+        `${id} summary`, `<p>${id} body remains available.</p>`, `${id}-hash`,
+        platformIdentity, contentScope, NOW - 1000, NOW - 1000,
+      );
+    }
+
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    const queued = periodicals.syncOpenDaily({ now: NOW, trigger: 'test' });
+    const built = await periodicals.runNextBuild({ now: NOW });
+    const stored = db.prepare(`
+      SELECT selection_context_json FROM periodical_issues
+      WHERE cadence = 'daily' AND period_key = '2026-07-30'
+    `).get();
+    const candidateIds = JSON.parse(stored.selection_context_json)
+      .candidateSnapshot.map(candidate => candidate.entryId).sort();
+
+    assert.equal(queued.action, 'queued');
+    assert.equal(built.status, 'succeeded');
+    assert.deepEqual(candidateIds, ['ordinary-unknown', 'wechat-feed-body']);
+  } finally {
+    db.close();
+  }
+});
+
+test('daily selection treats canonical WeChat as unenrolled when the optional registry table is absent', async () => {
+  const db = fixtureDatabase();
+  try {
+    db.prepare(`INSERT INTO custom_sources
+      (id, name, feed_url, category, labels_json, created_at, updated_at)
+      VALUES ('unregistered-wechat', 'Unregistered WeChat',
+        'https://wechat2rss.bestblogs.dev/feed/abcdef12.xml', 'article', '[]', ?, ?)`).run(NOW, NOW);
+    db.prepare(`INSERT INTO source_preferences
+      (source_id, enabled, editorial_priority, display_order, updated_at)
+      VALUES ('unregistered-wechat', 1, 'normal', 0, '2026-07-30T04:00:00.000Z')`).run();
+    db.prepare(`INSERT INTO entries
+      (id, source_id, title, link, published_ts, summary, content, content_hash,
+       platform_identity, content_scope, created_at, updated_at)
+      VALUES ('unregistered-wechat-entry', 'unregistered-wechat', 'Eligible feed body',
+        'https://mp.weixin.qq.com/s?__biz=MzA1&mid=4&idx=1', ?, 'Teaser',
+        '<p>Long feed body stays readable but remains unenrolled.</p>', 'unenrolled-hash',
+        'wechat:MzA1:4:1', 'feed-body', ?, ?)`).run(NOW - 1000, NOW - 1000, NOW - 1000);
+
+    const periodicals = createPeriodicalsModule({ db, mode: 'shadow', logger: () => {} });
+    const scheduled = periodicals.syncOpenDaily({ now: NOW, trigger: 'missing-ingestion-registry-test' });
+    assert.equal(scheduled.job.candidateCount, 0);
   } finally {
     db.close();
   }

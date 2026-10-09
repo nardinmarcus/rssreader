@@ -464,7 +464,11 @@ test('discovery entry renderer separates online reading from truthful not-integr
   const escapeHtml = value => String(value || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  const context = runWithAppContext(extractAppFunction('discoveryEntryHtml'), { escapeHtml });
+  const context = runWithAppContext(extractAppFunction('discoveryEntryHtml'), {
+    escapeHtml,
+    isAdmin: () => false,
+    discoveryState: { activatingKey: '' },
+  });
 
   const online = context.discoveryEntryHtml({
     key: 'podcast:xiaojun-shangye-fangtanlu',

@@ -206,6 +206,8 @@ test('title translation candidates skip article bodies, asset summaries, and sta
       includeContent: false,
       includeAssetSummaries: false,
       includeStats: false,
+      excludeAutoAi: true,
+      excludeUnregisteredWechatCatalogSources: true,
     });
   } finally {
     restoreDeepseek();
@@ -238,6 +240,75 @@ test('auto rewrite candidates keep article bodies but skip list-only metadata', 
     assert.equal(result.changed, 1);
     assert.equal(result.skipped, 'AI not configured');
   } finally {
+    restoreDeepseek();
+    restoreFetcher();
+  }
+});
+
+test('non-fetch-only stale refresh never auto-processes eligible legacy catalog WeChat entries', async () => {
+  const sourceId = 'legacy-unregistered-wechat-refresh';
+  const legacyTitle = 'An eligible legacy WeChat title without a cutoff';
+  const calls = [];
+  const source = {
+    id: sourceId,
+    enabled: true,
+    manual: false,
+    feeds: ['https://wechat2rss.bestblogs.dev/feed/abcdef123456.xml'],
+    fallbackFeeds: [],
+  };
+  const candidate = {
+    id: 'legacy-eligible-feed-body',
+    sourceId,
+    title: legacyTitle,
+    titleZh: null,
+    link: 'https://mp.weixin.qq.com/s?__biz=MzA1&mid=12345&idx=1&sn=eligible',
+    summary: 'English teaser',
+    content: `<p>${'Eligible feed-body content is long enough for automatic rewriting. '.repeat(12)}</p>`,
+    platformIdentity: 'wechat:MzA1:12345:1',
+    contentScope: 'feed-body',
+    autoAiExcludedAt: null,
+  };
+  const restoreFetcher = stub(fetcher, {
+    loadDisk: () => {},
+    flushDisk: () => {},
+    getSourceById: id => id === sourceId ? source : null,
+    fetchSource: async () => ({ status: 'stale', error: 'catalog activation required', entries: [candidate], changedEntries: [] }),
+    getEntries: () => [candidate],
+  });
+  const restoreDeepseek = stub(deepseek, {
+    getConfig: () => ({
+      configured: true,
+      apiKey: 'fixture-only',
+      provider: 'openai-compatible',
+      providerTitle: 'Fixture AI',
+      providerType: 'openai_compatible',
+      baseUrl: 'https://mock.example/v1',
+      model: 'fixture-model',
+      temperature: 0,
+      maxTokens: 1000,
+    }),
+    isLikelyEnglish: () => true,
+    translateTitleBatch: async entries => {
+      calls.push({ kind: 'title', entryIds: entries.map(entry => entry.id) });
+      return { translations: [] };
+    },
+    rewriteEntry: async entry => {
+      calls.push({ kind: 'rewrite', entryId: entry.id });
+      return { cached: false };
+    },
+  });
+  const restoreStore = stub(store, { getRewrite: () => null });
+  try {
+    assert.equal(store.getSourceIngestionBySourceId(sourceId), null,
+      'the source has a recognized canonical catalog URL but no verified enrollment');
+    const result = await jobs.runRefreshJob({ kind: 'refresh', sourceId });
+    assert.equal(result.refresh.status, 'stale');
+    assert.deepEqual(calls, [],
+      `a stale unregistered catalog source must not trigger title/rewrite AI; attempted=${JSON.stringify(calls)}`);
+    assert.equal(result.translated, 0);
+    assert.equal(result.autoRewrite.changed, 0);
+  } finally {
+    restoreStore();
     restoreDeepseek();
     restoreFetcher();
   }

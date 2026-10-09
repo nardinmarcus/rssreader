@@ -308,6 +308,140 @@ test('public fetch enforces the byte limit for streamed bodies without Content-L
   assert.equal(cancelled, 1);
 });
 
+test('fetchText preserves opt-in 429 when Retry-After stops fitting between deadline checks', async () => {
+  const { fetchText } = fetcher.__test;
+  const run = async preserve429 => {
+    const clock = [1000, 1000, 1000, 1002];
+    let clockIndex = 0;
+    let attempts = 0;
+    let sleeps = 0;
+    let failure = null;
+    await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+      now: () => clock[Math.min(clockIndex++, clock.length - 1)],
+      request: async () => {
+        attempts += 1;
+        return {
+          status: 429,
+          headers: new Headers({ 'retry-after': '0.999' }),
+          buffer: Buffer.alloc(0),
+        };
+      },
+      sleep: async () => { sleeps += 1; },
+      ...(preserve429 ? { preserve429WhenRetryAfterExceedsDeadline: true } : {}),
+    }), error => {
+      failure = error;
+      return error.statusCode === (preserve429 ? 429 : 504);
+    });
+    return { attempts, sleeps, failure };
+  };
+
+  const optIn = await run(true);
+  assert.equal(optIn.attempts, 1);
+  assert.equal(optIn.sleeps, 0);
+  assert.equal(optIn.failure.response.status, 429);
+
+  const unchangedDefault = await run(false);
+  assert.equal(unchangedDefault.attempts, 1);
+  assert.equal(unchangedDefault.sleeps, 0);
+  assert.equal(unchangedDefault.failure.name, 'TimeoutError');
+});
+
+test('fetchText preserves opt-in 429 when deadline expires at the sleep precheck', async () => {
+  const { fetchText } = fetcher.__test;
+  const clock = [1000, 1000, 1000, 2000];
+  let clockIndex = 0;
+  let attempts = 0;
+  let sleeps = 0;
+  await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+    now: () => clock[Math.min(clockIndex++, clock.length - 1)],
+    request: async () => {
+      attempts += 1;
+      return { status: 429, headers: new Headers({ 'retry-after': '0.999' }), buffer: Buffer.alloc(0) };
+    },
+    sleep: async () => { sleeps += 1; },
+    preserve429WhenRetryAfterExceedsDeadline: true,
+  }), error => error.statusCode === 429 && error.response.status === 429);
+  assert.equal(attempts, 1);
+  assert.equal(sleeps, 0);
+});
+
+test('fetchText preserves opt-in 429 when deadline expires at withDeadline precheck', async () => {
+  const { fetchText } = fetcher.__test;
+  const clock = [1000, 1000, 1000, 1000, 2000];
+  let clockIndex = 0;
+  let attempts = 0;
+  let sleeps = 0;
+  await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+    now: () => clock[Math.min(clockIndex++, clock.length - 1)],
+    request: async () => {
+      attempts += 1;
+      return { status: 429, headers: new Headers({ 'retry-after': '0.999' }), buffer: Buffer.alloc(0) };
+    },
+    sleep: async () => { sleeps += 1; },
+    preserve429WhenRetryAfterExceedsDeadline: true,
+  }), error => error.statusCode === 429 && error.response.status === 429);
+  assert.equal(attempts, 1);
+  assert.equal(sleeps, 0);
+});
+
+test('fetchText does not start a late lazy sleep or a second request', async () => {
+  const { fetchText } = fetcher.__test;
+  const clock = [1000, 1000, 1000, 1000, 1000, 1002];
+  let clockIndex = 0;
+  let attempts = 0;
+  let sleeps = 0;
+  await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+    now: () => clock[Math.min(clockIndex++, clock.length - 1)],
+    request: async () => {
+      attempts += 1;
+      return { status: 429, headers: new Headers({ 'retry-after': '0.999' }), buffer: Buffer.alloc(0) };
+    },
+    sleep: async () => { sleeps += 1; },
+    preserve429WhenRetryAfterExceedsDeadline: true,
+  }), error => error.statusCode === 429 && error.response.status === 429);
+  assert.equal(attempts, 1);
+  assert.equal(sleeps, 0);
+});
+
+test('fetchText does not classify a genuine request timeout as a supplier 429', async () => {
+  const { fetchText } = fetcher.__test;
+  const timeout = new Error('request timed out');
+  timeout.name = 'TimeoutError';
+  timeout.statusCode = 504;
+  let attempts = 0;
+  await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+    now: () => 1000,
+    request: async () => {
+      attempts += 1;
+      throw timeout;
+    },
+    sleep: async () => {},
+    preserve429WhenRetryAfterExceedsDeadline: true,
+  }), error => error === timeout && error.statusCode === 504);
+  assert.equal(attempts, 2, 'the pre-existing transport retry policy remains in force');
+});
+
+test('fetchText keeps an actual timeout during a valid supplier retry wait as 504', async () => {
+  const { fetchText } = fetcher.__test;
+  let now = 1000;
+  let attempts = 0;
+  let sleeps = 0;
+  await assert.rejects(fetchText('https://example.com/feed', 1000, 1024, {
+    now: () => now,
+    request: async () => {
+      attempts += 1;
+      return { status: 429, headers: new Headers({ 'retry-after': '0.5' }), buffer: Buffer.alloc(0) };
+    },
+    sleep: async () => {
+      sleeps += 1;
+      now = 2000;
+    },
+    preserve429WhenRetryAfterExceedsDeadline: true,
+  }), error => error.statusCode === 504 && error.name === 'TimeoutError');
+  assert.equal(attempts, 1);
+  assert.equal(sleeps, 1);
+});
+
 test('fetchText honors ISO-8859-1 and windows-1252 declarations from HTTP, XML, and HTML', async () => {
   const { fetchText } = fetcher.__test;
   const responses = [

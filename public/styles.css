@@ -2140,12 +2140,30 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-weight: 700;
 }
 .reader-source {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px;
+  max-width: 100%;
   font-size: 12.5px; color: var(--accent); font-weight: 600;
   background: var(--accent-soft); border-radius: 999px;
   padding: 4px 12px; margin-bottom: 12px;
 }
 .reader-source img { width: 14px; height: 14px; border-radius: 3px; }
+.reader-source-scope {
+  padding-left: 8px;
+  border-left: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 550;
+  opacity: .82;
+}
+.reader-source-history {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-top: 5px;
+  border-top: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.35;
+  opacity: .82;
+}
 .reader-title-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -11328,6 +11346,11 @@ body[data-periodicals-mode="off"] .periodicals-open {
   background: var(--bg-3);
 }
 
+.discovery-badge-archived {
+  color: var(--semantic-amber);
+  background: color-mix(in srgb, var(--semantic-amber) 12%, var(--surface));
+}
+
 .discovery-entry-meta {
   display: flex;
   align-items: center;
@@ -11347,6 +11370,9 @@ body[data-periodicals-mode="off"] .periodicals-open {
 }
 
 .discovery-entry-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -11400,9 +11426,11 @@ body[data-periodicals-mode="off"] .periodicals-open {
 
   .discovery-entry-action {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .discovery-entry-action .discovery-open-reading {
+  .discovery-entry-action button {
     width: 100%;
   }
 

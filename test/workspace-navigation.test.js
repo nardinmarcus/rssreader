@@ -87,6 +87,7 @@ function productionFixture() {
     normalizeContributorAssetSort: x => x, normalizeUserAssetTab: x => x,
     renderContributorAssets() {}, contributorPageTitle: () => state.contributor.profile?.name || 'loading',
     contributorUrlFor: id => `/contributors/${id}`, escapeHtml: x => x,
+    wechatContentScopeLabel: () => '', wechatHistoryCoverageLabel: () => '',
     toast: message => f.order.push(message), openAuth: () => f.order.push('login'),
     normalizeDashboardTab: x => x, setDashboardTab: x => { state.dashboardTab = x; },
     dashboardUrlFor: () => '/me', renderProfileEditor() {}, loadNotifications() {}, renderMyAssetTabs() {}, renderMyAssets() {},
