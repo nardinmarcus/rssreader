@@ -49,6 +49,7 @@ const CONTEXT_PANE_MAX_WIDTH = 620;
 const READER_PANE_MIN_WIDTH = 700;
 const ENTRY_PAGE_SIZE = 100;
 const ENTRY_MAX_LIMIT = 400;
+const SOURCE_HISTORY_PAGE_SIZE = 50;
 const categoryEntryCache = new Map();
 let entryListRequestSequence = 0;
 const SOURCE_REFRESH_HINT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -839,6 +840,13 @@ const state = {
   entries: [],
   contributors: [],
   entryLimit: ENTRY_PAGE_SIZE,
+  sourceHistory: {
+    sourceId: '',
+    nextCursor: null,
+    hasMore: false,
+    loading: false,
+    error: '',
+  },
   view: 'all',            // all | starred | history | assets | contributors
   listSort: 'latest',     // latest | hot
   unreadOnly: false,
@@ -2130,6 +2138,32 @@ function pollHintedSourceRefresh(sourceId) {
   sourceRefreshPolls.set(id, task);
 }
 
+function isSourceHistoryMode() {
+  return Boolean(state.filterSource && !state.q);
+}
+
+function resetSourceHistoryState(sourceId = '') {
+  state.sourceHistory = {
+    sourceId: String(sourceId || ''),
+    nextCursor: null,
+    hasMore: false,
+    loading: false,
+    error: '',
+  };
+}
+
+function entryPublishedTimestamp(entry) {
+  const publishedTs = Number(entry && entry.publishedTs) || 0;
+  if (publishedTs > 0) return publishedTs;
+  const parsed = entry && entry.published ? Date.parse(entry.published) : 0;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function entryPublishedListLabel(entry) {
+  const ts = entryPublishedTimestamp(entry);
+  return ts > 0 ? timeAgo(ts) : '未知日期';
+}
+
 function entryListParams() {
   const p = new URLSearchParams();
   p.set('limit', String(state.entryLimit));
@@ -2141,18 +2175,38 @@ function entryListParams() {
 
 async function loadEntries() {
   const owner = getWorkspaceNavigation().current();
+  const sourceId = isSourceHistoryMode() ? state.filterSource : '';
   const params = entryListParams();
-  const requestKey = params.toString();
+  const requestKey = sourceId
+    ? `source-history:${sourceId}:${SOURCE_HISTORY_PAGE_SIZE}`
+    : params.toString();
   const requestSequence = ++entryListRequestSequence;
-  const data = await api('/api/entries?' + requestKey);
+  const data = sourceId
+    ? await api(`/api/sources/${encodeURIComponent(sourceId)}/history?limit=${SOURCE_HISTORY_PAGE_SIZE}`)
+    : await api('/api/entries?' + requestKey);
   if (!owner.isCurrent()) return false;
   const entries = Array.isArray(data.entries) ? data.entries : [];
-  const categoryCacheKey = !params.has('source')
+  const categoryCacheKey = !sourceId
+    && !params.has('source')
     && !params.has('q')
     && Number(params.get('limit')) === ENTRY_PAGE_SIZE
     ? (params.get('category') || 'all')
     : '';
-  if (requestSequence !== entryListRequestSequence || entryListParams().toString() !== requestKey) return false;
+  if (requestSequence !== entryListRequestSequence) return false;
+  if (sourceId) {
+    if (!isSourceHistoryMode() || state.filterSource !== sourceId) return false;
+    state.sourceHistory = {
+      sourceId,
+      nextCursor: data.nextCursor || null,
+      hasMore: Boolean(data.hasMore && data.nextCursor),
+      loading: false,
+      error: '',
+    };
+    state.entries = entries;
+    return true;
+  }
+  if (entryListParams().toString() !== requestKey) return false;
+  resetSourceHistoryState('');
   if (categoryCacheKey) categoryEntryCache.set(categoryCacheKey, entries);
   state.entries = entries;
   return true;
@@ -2160,6 +2214,59 @@ async function loadEntries() {
 
 async function loadMoreEntries(button) {
   const owner = getWorkspaceNavigation().current();
+  if (state.filterSource && !state.q) {
+    const sourceId = state.filterSource;
+    const historyState = state.sourceHistory || {};
+    if (historyState.loading || !historyState.hasMore || !historyState.nextCursor) return false;
+    const cursor = historyState.nextCursor;
+    const requestSequence = ++entryListRequestSequence;
+    state.sourceHistory = { ...historyState, sourceId, loading: true, error: '' };
+    if (button) {
+      button.disabled = true;
+      button.textContent = '加载中…';
+    }
+    try {
+      const query = new URLSearchParams({
+        cursor,
+        limit: String(SOURCE_HISTORY_PAGE_SIZE),
+      });
+      const data = await api(`/api/sources/${encodeURIComponent(sourceId)}/history?${query.toString()}`);
+      if (!owner.isCurrent() || requestSequence !== entryListRequestSequence) return false;
+      if (state.filterSource !== sourceId || state.q) return false;
+      const seen = new Set(state.entries.map(item => item && item.id).filter(Boolean));
+      const incoming = (Array.isArray(data.entries) ? data.entries : []).filter(item => item && item.id && !seen.has(item.id));
+      state.entries = [...state.entries, ...incoming];
+      state.sourceHistory = {
+        sourceId,
+        nextCursor: data.nextCursor || null,
+        hasMore: Boolean(data.hasMore && data.nextCursor),
+        loading: false,
+        error: '',
+      };
+      updateListTitle();
+      renderList({ preserveScroll: true });
+      renderSidebar();
+      return true;
+    } catch (error) {
+      if (!owner.isCurrent() || requestSequence !== entryListRequestSequence) return false;
+      if (state.filterSource !== sourceId || state.q) return false;
+      state.sourceHistory = {
+        ...state.sourceHistory,
+        sourceId,
+        nextCursor: cursor,
+        hasMore: true,
+        loading: false,
+        error: error.message || '加载失败',
+      };
+      renderList({ preserveScroll: true });
+      toast('加载更早内容失败: ' + (error.message || '请求失败'), 4000);
+      return false;
+    } finally {
+      if (requestSequence === entryListRequestSequence && state.sourceHistory?.sourceId === sourceId && state.sourceHistory.loading) {
+        state.sourceHistory = { ...state.sourceHistory, loading: false };
+      }
+    }
+  }
   if (state.entryLimit >= ENTRY_MAX_LIMIT) return;
   const previousLabel = button.textContent;
   button.disabled = true;
@@ -3771,7 +3878,7 @@ function renderArticleInfoPanel(entry = state.activeEntry) {
     <div class="article-info-group">
       <span class="article-info-label">来源</span>
       <div class="article-info-source">${src ? faviconHtml(src.siteUrl, src.name, 16) : ''}<strong>${escapeHtml(src ? src.name : entry.sourceId || '未知来源')}</strong></div>
-      <div class="article-info-meta">${escapeHtml([entry.author, entry.published ? new Date(entry.published).toLocaleString('zh-CN') : ''].filter(Boolean).join(' · ') || '无时间信息')}</div>
+      <div class="article-info-meta">${escapeHtml([entry.author, entry.published ? new Date(entry.published).toLocaleString('zh-CN') : '未知日期'].filter(Boolean).join(' · '))}</div>
     </div>
     <div class="article-info-grid">
       <div><span>访问</span><strong>${escapeHtml(formatCompactCount(stats.viewCount) || '0')}</strong></div>
@@ -4438,7 +4545,59 @@ function renderContributorDirectory() {
   el.appendChild(frag);
 }
 
-function renderList() {
+function renderEntryListFooter(el) {
+  if (!el || state.view === 'assets' || state.view === 'contributors') return;
+  if (isSourceHistoryMode()) {
+    const historyState = state.sourceHistory || {};
+    if (historyState.sourceId !== state.filterSource) return;
+    if (historyState.hasMore) {
+      const wrap = document.createElement('div');
+      wrap.className = 'entry-load-more-wrap';
+      if (historyState.error) {
+        const errEl = document.createElement('div');
+        errEl.className = 'entry-load-more-error';
+        errEl.setAttribute('role', 'alert');
+        errEl.textContent = `加载更早内容失败：${historyState.error}`;
+        wrap.appendChild(errEl);
+      }
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'entry-load-more';
+      more.dataset.sourceHistoryMore = 'true';
+      more.disabled = Boolean(historyState.loading);
+      more.textContent = historyState.loading
+        ? '加载中…'
+        : (historyState.error ? '重试加载更早内容' : '加载更早内容');
+      more.onclick = event => {
+        event.stopPropagation();
+        loadMoreEntries(more);
+      };
+      wrap.appendChild(more);
+      el.appendChild(wrap);
+      return;
+    }
+    if (state.entries.length > 0) {
+      const end = document.createElement('div');
+      end.className = 'entry-history-end';
+      end.textContent = `已显示全部已存历史（共 ${state.entries.length} 篇）`;
+      el.appendChild(end);
+    }
+    return;
+  }
+  if (state.entries.length >= state.entryLimit && state.entryLimit < ENTRY_MAX_LIMIT) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'entry-load-more';
+    more.textContent = `再加载 ${ENTRY_PAGE_SIZE} 篇`;
+    more.onclick = event => {
+      event.stopPropagation();
+      loadMoreEntries(more);
+    };
+    el.appendChild(more);
+  }
+}
+
+function renderList({ preserveScroll = false } = {}) {
   $('#app').classList.toggle('view-assets', state.view === 'assets');
   $('#app').classList.toggle('view-contributors', state.view === 'contributors');
   $('#app').classList.toggle('home-assets', isHomeScope() && state.homeTab === 'assets');
@@ -4450,6 +4609,7 @@ function renderList() {
   }
   const list = visibleEntries();
   const el = $('#entry-list');
+  const previousScrollTop = preserveScroll && el ? el.scrollTop : 0;
   el.innerHTML = '';
   el.classList.remove('home-asset-activity-list');
   renderAssetActivityStrip();
@@ -4471,6 +4631,8 @@ function renderList() {
       ? '还没有足够反馈<br/>提交链接、点赞或收藏后会逐步形成热门列表'
       : '这里空空如也<br/>试试刷新或切换视图';
     el.innerHTML = `<div class="list-empty">${text}</div>`;
+    renderEntryListFooter(el);
+    if (preserveScroll) el.scrollTop = previousScrollTop;
     return;
   }
   const frag = document.createDocumentFragment();
@@ -4482,7 +4644,8 @@ function renderList() {
     const metaRow = [statsLine ? `<span class="entry-stats">${escapeHtml(statsLine)}</span>` : '', assetsHtml ? `<span class="asset-badges entry-asset-badges">${assetsHtml}</span>` : ''].filter(Boolean).join('');
     const assetPreview = assetPreviewForEntry(e);
     const assetItems = assetItemListHtml(e);
-    const publishedLabel = timeAgo(e.publishedTs);
+    const publishedLabel = entryPublishedListLabel(e);
+    const unknownPublished = publishedLabel === '未知日期';
     const sourceName = src ? src.name : e.sourceId;
     const card = document.createElement('div');
     card.className = 'entry-card' + (state.read.has(e.id) ? ' read' : '') + (state.activeEntry?.id === e.id ? ' active' : '');
@@ -4498,7 +4661,7 @@ function renderList() {
           ${src ? faviconHtml(src.siteUrl, src.name, 13) : ''}
             <span class="src">${escapeHtml(sourceName)}</span>
           </div>
-          <time class="entry-time" datetime="${escapeHtml(e.published || '')}">${escapeHtml(publishedLabel)}</time>
+          <time class="entry-time${unknownPublished ? ' entry-time-unknown' : ''}" datetime="${escapeHtml(e.published || '')}">${escapeHtml(publishedLabel)}</time>
           ${state.starred.has(e.id) ? `<span class="entry-star">${lucideIcon('star')}</span>` : ''}
         </div>
         <div class="entry-title">${escapeHtml(e.titleZh || e.title)}</div>
@@ -4556,17 +4719,8 @@ function renderList() {
     frag.appendChild(card);
   }
   el.appendChild(frag);
-  if (state.entries.length >= state.entryLimit && state.entryLimit < ENTRY_MAX_LIMIT) {
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'entry-load-more';
-    more.textContent = `再加载 ${ENTRY_PAGE_SIZE} 篇`;
-    more.onclick = event => {
-      event.stopPropagation();
-      loadMoreEntries(more);
-    };
-    el.appendChild(more);
-  }
+  renderEntryListFooter(el);
+  if (preserveScroll) el.scrollTop = previousScrollTop;
 }
 
 function updateListTitle() {
@@ -9937,7 +10091,8 @@ async function loadEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   renderTitle(e);
   updateRewriteUiLabels(e);
   document.title = readerRouteTitle(e, requestedFocus);
-  const publishedTime = friendlyDateTime(e.publishedTs || Date.parse(e.published || ''));
+  const publishedTs = Number(e.publishedTs) || Date.parse(e.published || '') || 0;
+  const publishedTime = publishedTs > 0 ? friendlyDateTime(publishedTs) : '未知日期';
   $('#reader-meta').textContent = [e.author, publishedTime].filter(Boolean).join(' · ');
   const readerOpen = $('#reader-open');
   if (readerOpen) readerOpen.href = e.link || '#';
@@ -10094,6 +10249,7 @@ function openEntryFromUrl({ entriesLoaded = false } = {}) {
 async function loadReaderRoute({ entriesLoaded = false, navigation: owner, ...route } = {}) {
   route.view = route.listView;
   if (!route.entryId) {
+    let returningToLoadedList = false;
     if (route.view === 'contributors') {
       state.view = 'contributors';
       state.filterSource = null;
@@ -10111,15 +10267,23 @@ async function loadReaderRoute({ entriesLoaded = false, navigation: owner, ...ro
       state.contributorSort = 'latest';
       state.q = route.q;
     } else {
-      state.view = 'all';
-      state.filterSource = null;
-      state.filterCategory = null;
-      state.assetFilter = null;
-      state.assetSort = 'latest';
-      state.contributorSort = 'latest';
-      state.q = '';
+      returningToLoadedList = !entriesLoaded
+        && Boolean(state.filterSource || state.filterCategory)
+        && state.entries.length > 0;
+      if (returningToLoadedList && state.sourceHistory?.loading) {
+        state.sourceHistory = { ...state.sourceHistory, loading: false };
+      }
+      if (!returningToLoadedList) {
+        state.view = 'all';
+        state.filterSource = null;
+        state.filterCategory = null;
+        state.assetFilter = null;
+        state.assetSort = 'latest';
+        state.contributorSort = 'latest';
+        state.q = '';
+      }
     }
-    if (!entriesLoaded) {
+    if (!entriesLoaded && !returningToLoadedList) {
       const results = await Promise.all([loadEntries(), loadContributors()]);
       if (results[0] === false) return false;
     }

@@ -11,6 +11,11 @@ const documentPipeline = require('./lib/document-pipeline');
 const { createOnepageModule } = require('./lib/onepage');
 const { createSourceDiscovery } = require('./lib/source-discovery');
 const { createSourceIngestion } = require('./lib/source-ingestion');
+const {
+  parseSourceHistoryLimit,
+  parseSourceHistorySort,
+  decodeSourceHistoryCursor,
+} = require('./lib/source-history');
 const { requestAiConfig } = require('./lib/request-ai-config');
 const store = require('./lib/store');
 const translationJobs = require('./lib/translation-jobs');
@@ -101,6 +106,8 @@ const PUBLIC_PROJECTION_TTL_MS = 5 * MINUTE_MS;
 const publicProjectionCache = new Map();
 const publicEntryListCache = new Map();
 const PUBLIC_ENTRY_LIST_CACHE_MAX = 128;
+const publicSourceHistoryCache = new Map();
+const PUBLIC_SOURCE_HISTORY_CACHE_MAX = 256;
 const ASSET_DIRECTORY_META = {
   translation: {
     label: '中文翻译',
@@ -753,6 +760,7 @@ function publicAssetEntries({ assetItemLimit = 3 } = {}) {
 function clearPublicProjectionCaches() {
   publicProjectionCache.clear();
   publicEntryListCache.clear();
+  publicSourceHistoryCache.clear();
 }
 
 function publicEntryWithoutAutoAiMarker(entry) {
@@ -783,6 +791,54 @@ function publicEntryListResponse(options) {
   }
   publicEntryListCache.set(key, { createdAt: Date.now(), entries, body });
   return { entries, body, cacheStatus: 'miss' };
+}
+
+function publicSourceHistoryResponse(options) {
+  const key = JSON.stringify([
+    options.sourceId || '',
+    options.cursor || '',
+    options.limit || '',
+    options.sort || '',
+  ]);
+  const cached = publicSourceHistoryCache.get(key);
+  if (cached && Date.now() - cached.createdAt < PUBLIC_PROJECTION_TTL_MS) {
+    return {
+      entries: cached.entries,
+      hasMore: cached.hasMore,
+      nextCursor: cached.nextCursor,
+      body: cached.body,
+      cacheStatus: 'hit',
+    };
+  }
+  if (cached) publicSourceHistoryCache.delete(key);
+
+  const page = fetcher.getSourceHistory({ ...options, viewer: null, includeContent: false });
+  const entries = page.entries.map(({ content, ...entry }) => (
+    publicEntryWithoutAutoAiMarker(entry)
+  ));
+  const payload = {
+    entries,
+    hasMore: Boolean(page.hasMore),
+    nextCursor: page.nextCursor || null,
+  };
+  const body = JSON.stringify(payload);
+  if (!publicSourceHistoryCache.has(key) && publicSourceHistoryCache.size >= PUBLIC_SOURCE_HISTORY_CACHE_MAX) {
+    publicSourceHistoryCache.delete(publicSourceHistoryCache.keys().next().value);
+  }
+  publicSourceHistoryCache.set(key, {
+    createdAt: Date.now(),
+    entries,
+    hasMore: payload.hasMore,
+    nextCursor: payload.nextCursor,
+    body,
+  });
+  return {
+    entries,
+    hasMore: payload.hasMore,
+    nextCursor: payload.nextCursor,
+    body,
+    cacheStatus: 'miss',
+  };
 }
 
 function assetDirectoryStats(type = '', q = '', providedEntries = null) {
@@ -2897,6 +2953,47 @@ app.get('/api/sources', (req, res) => {
     autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
     backgroundJob: backgroundJobState(),
   });
+});
+
+app.get('/api/sources/:id/history', (req, res) => {
+  const startedAt = process.hrtime.bigint();
+  try {
+    const sourceId = String(req.params.id || '').trim();
+    const source = fetcher.getSourceById(sourceId);
+    if (!source || !fetcher.isEnabled(source)) {
+      return res.status(404).json({ error: 'source not found' });
+    }
+    const sort = parseSourceHistorySort(req.query.sort);
+    const limit = parseSourceHistoryLimit(req.query.limit);
+    const cursor = req.query.cursor === undefined ? '' : req.query.cursor;
+    decodeSourceHistoryCursor(cursor, { expectedSourceId: source.id, expectedSort: sort });
+    const result = publicSourceHistoryResponse({
+      sourceId: source.id,
+      cursor,
+      limit,
+      sort,
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    if (!req.user) {
+      res.setHeader('Server-Timing', `source-history;dur=${durationMs.toFixed(1)};desc="${result.cacheStatus}"`);
+      return res.type('application/json').send(result.body);
+    }
+
+    const stats = store.getEntryStats(result.entries.map(entry => entry.id), req.user);
+    const entries = result.entries.map(entry => ({
+      ...entry,
+      stats: stats[entry.id] || entry.stats || null,
+    }));
+    res.setHeader('Server-Timing', `source-history;dur=${durationMs.toFixed(1)};desc="${result.cacheStatus}-overlay"`);
+    return res.json({
+      entries,
+      hasMore: result.hasMore,
+      nextCursor: result.nextCursor,
+    });
+  } catch (error) {
+    return sendError(res, error, 'source history unavailable');
+  }
 });
 
 app.post('/api/sources/:id/refresh-hint', (req, res) => {
