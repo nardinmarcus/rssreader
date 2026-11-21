@@ -2,7 +2,7 @@
  * Precaches the minimal reading shell only. APIs and non-shell assets stay network-only.
  * Bump SHELL_CACHE (and versioned asset URLs below) whenever shell files change.
  */
-const SHELL_CACHE = 'namoo-shell-v1-304cab453dfc-fc9fb02c7629-155a40f466a1-18e515f963c1-a9a83d7ad66b';
+const SHELL_CACHE = 'namoo-shell-v1-6abdb6b93a0d-fc9fb02c7629-155a40f466a1-623759083cbb-a9a83d7ad66b';
 const SHELL_ASSETS = [
   '/',
   '/manifest.webmanifest',
@@ -10,10 +10,10 @@ const SHELL_ASSETS = [
   '/apple-touch-icon.png',
   '/icon-192.png',
   '/icon-512.png',
-  '/styles.css?v=18e515f963c1',
+  '/styles.css?v=623759083cbb',
   '/lucide-icons.js?v=a9a83d7ad66b',
   '/workspace-navigation.js?v=155a40f466a1',
-  '/app.js?v=304cab453dfc',
+  '/app.js?v=6abdb6b93a0d',
   '/periodicals.js?v=fc9fb02c7629',
 ];
 

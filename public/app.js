@@ -4249,6 +4249,63 @@ function wechatHistoryCoverageLabel(entry) {
     : '';
 }
 
+const BACKFILL_STATUS_LABELS = {
+  idle: '未开启回填',
+  queued: '排队回填',
+  running: '回填中',
+  retry_wait: '等待重试',
+  paused: '已暂停',
+  succeeded: '已完成当前快照',
+  failed: '回填失败',
+};
+
+const BACKFILL_COVERAGE_LABELS = {
+  unknown: '覆盖未知',
+  available_window: '当前窗口',
+  provider_archive_exhausted: '归档已穷尽',
+  mismatch: '身份不匹配',
+};
+
+const BACKFILL_ACTION_LABELS = {
+  pause: '暂停回填',
+  resume: '恢复回填',
+  retry: '重试回填',
+};
+
+function formatBackfillDate(ts) {
+  const num = Number(ts) || 0;
+  if (num <= 0) return '';
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(num)).replace(/\//g, '-');
+  } catch {
+    return new Date(num).toISOString().slice(0, 10);
+  }
+}
+
+function formatSourceCoverageRange(coverage) {
+  if (!coverage) return '';
+  const start = formatBackfillDate(coverage.earliestPublishedAt);
+  const end = formatBackfillDate(coverage.latestPublishedAt);
+  if (start && end) return start === end ? start : `${start} ~ ${end}`;
+  return start || end || '';
+}
+
+function sourceCoverageNoticeLabel(source) {
+  const coverage = source && source.coverage;
+  if (!coverage || (!coverage.entryCount && coverage.status === 'unknown')) return '';
+  const parts = [];
+  if (coverage.entryCount > 0) parts.push(`已存 ${coverage.entryCount} 篇`);
+  const range = formatSourceCoverageRange(coverage);
+  if (range) parts.push(range);
+  if (coverage.summaryText) parts.push(coverage.summaryText);
+  return parts.join(' · ');
+}
+
 function renderSourceDiscoveryStatus() {
   const target = $('#source-discovery-status');
   if (target) {
@@ -4772,6 +4829,16 @@ function renderList({ preserveScroll = false } = {}) {
     renderHomeAssetActivityList(el);
     return;
   }
+  const sourceNoticeText = isSourceHistoryMode()
+    ? sourceCoverageNoticeLabel(sourceById(state.filterSource))
+    : '';
+  const appendSourceNotice = () => {
+    if (!sourceNoticeText) return;
+    const notice = document.createElement('div');
+    notice.className = 'source-coverage-banner';
+    notice.textContent = sourceNoticeText;
+    el.appendChild(notice);
+  };
   if (!list.length) {
     const assetScope = state.assetFilter ? `${assetDirectoryLabel(state.assetFilter)}资产` : '公开资产';
     const text = state.view === 'assets' && state.q
@@ -4785,11 +4852,16 @@ function renderList({ preserveScroll = false } = {}) {
       : state.view === 'all' && state.listSort === 'hot'
       ? '还没有足够反馈<br/>提交链接、点赞或收藏后会逐步形成热门列表'
       : '这里空空如也<br/>试试刷新或切换视图';
-    el.innerHTML = `<div class="list-empty">${text}</div>`;
+    appendSourceNotice();
+    const emptyEl = document.createElement('div');
+    emptyEl.className = 'list-empty';
+    emptyEl.innerHTML = text;
+    el.appendChild(emptyEl);
     renderEntryListFooter(el);
     if (preserveScroll) el.scrollTop = previousScrollTop;
     return;
   }
+  appendSourceNotice();
   const frag = document.createDocumentFragment();
   for (const e of list) {
     const src = sourceById(e.sourceId);
@@ -8965,7 +9037,16 @@ function renderDashboardTabs() {
   }
   if (tab === 'users' && isAdmin()) loadUserManagement();
   if (tab === 'moderation' && isAdmin()) loadModeration();
-  if (tab === 'sources' && isAdmin()) renderManage('#workspace-manage-list', '#workspace-source-status');
+  if (tab === 'sources' && isAdmin()) {
+    renderManage('#workspace-manage-list', '#workspace-source-status');
+    loadSources()
+      .then(() => {
+        if (state.workspacePage === 'dashboard' && state.dashboardTab === 'sources') {
+          renderManage('#workspace-manage-list', '#workspace-source-status');
+        }
+      })
+      .catch(() => null);
+  }
   renderMyPublicProfileActions();
 }
 
@@ -10301,7 +10382,7 @@ async function loadEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   $('#reader').classList.remove('hidden');
   renderAdminEntryControls();
   const contentScopeLabel = wechatContentScopeLabel(e);
-  const historyCoverageLabel = wechatHistoryCoverageLabel(e);
+  const historyCoverageLabel = (src && src.coverage ? sourceCoverageNoticeLabel(src) : '') || wechatHistoryCoverageLabel(e);
   $('#reader-source').innerHTML = `${src ? faviconHtml(src.siteUrl, src.name, 14) : ''}<span>${escapeHtml(src ? src.name : '')}</span>${contentScopeLabel ? `<span class="reader-source-scope">${escapeHtml(contentScopeLabel)}</span>` : ''}${historyCoverageLabel ? `<span class="reader-source-history">${escapeHtml(historyCoverageLabel)}</span>` : ''}`;
   renderTitle(e);
   updateRewriteUiLabels(e);
@@ -11043,6 +11124,13 @@ async function saveCustomSource() {
     renderSidebar();
     renderManage('#workspace-manage-list', '#workspace-source-status');
     toast(id ? '自定义订阅源已保存，正在刷新' : '自定义订阅源已添加，正在刷新');
+    setTimeout(() => {
+      loadSources().then(() => {
+        if (state.workspacePage === 'dashboard' && state.dashboardTab === 'sources') {
+          renderManagedSourceList('#workspace-manage-list', '#workspace-source-status');
+        }
+      }).catch(() => null);
+    }, 800);
   } catch (error) {
     toast('保存自定义订阅源失败: ' + error.message, 5000);
   } finally {
@@ -11081,6 +11169,126 @@ function compareManagedSources(a, b) {
   return (aOrder - bOrder) || String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN');
 }
 
+let backfillManagePollTimer = null;
+
+function stopBackfillManagePoll() {
+  if (backfillManagePollTimer) {
+    clearTimeout(backfillManagePollTimer);
+    backfillManagePollTimer = null;
+  }
+}
+
+function hasActiveBackfillInSources() {
+  return (state.sources || []).some(source => (
+    source && source.backfill && ['queued', 'running', 'retry_wait'].includes(source.backfill.status)
+  ));
+}
+
+function scheduleBackfillManagePoll(target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
+  stopBackfillManagePoll();
+  if (!isAdmin() || state.workspacePage !== 'dashboard' || state.dashboardTab !== 'sources') return;
+  if (!hasActiveBackfillInSources()) return;
+  backfillManagePollTimer = setTimeout(async () => {
+    backfillManagePollTimer = null;
+    if (!isAdmin() || state.workspacePage !== 'dashboard' || state.dashboardTab !== 'sources') return;
+    await loadSources().catch(() => null);
+    renderManagedSourceList(target, statusTarget);
+  }, 1200);
+}
+
+function sourceBackfillHtml(source) {
+  const bf = source && source.backfill;
+  if (!bf) return '';
+  const status = bf.status || 'idle';
+  const coverage = bf.coverage || source.coverage || {};
+  const counts = bf.counts || {};
+  const hasRun = Boolean(bf.run || status !== 'idle');
+  if (!hasRun && !coverage.entryCount && !source.isCustom) return '';
+
+  const statusLabel = BACKFILL_STATUS_LABELS[status] || status;
+  const coverageLabel = BACKFILL_COVERAGE_LABELS[coverage.status || 'unknown'] || (coverage.status || 'unknown');
+  const rangeText = formatSourceCoverageRange(coverage);
+  const metaParts = [
+    rangeText,
+    `已存 ${Number(coverage.entryCount) || 0} 篇`,
+    coverage.summaryText || '',
+  ].filter(Boolean);
+
+  let progressHtml = '';
+  if (hasRun && (Number(counts.totalCount) > 0 || Number(counts.processedCount) > 0)) {
+    const total = Number(counts.totalCount) || 0;
+    const processed = Number(counts.processedCount) || 0;
+    const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+    const inserted = Number(counts.insertedCount) || 0;
+    const reused = Number(counts.reusedCount) || 0;
+    progressHtml = `
+      <div class="m-backfill-progress-row">
+        <div class="m-backfill-progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+          <div class="m-backfill-progress-fill" style="width:${pct}%"></div>
+        </div>
+        <span class="m-backfill-counts">进度 ${processed}/${total} · 新增 ${inserted} · 复用 ${reused}</span>
+      </div>`;
+  }
+
+  const actions = Array.isArray(bf.availableActions) ? bf.availableActions : [];
+  const actionButtons = actions.map(action => (
+    `<button type="button" class="ghost-btn m-backfill-btn" data-backfill-source="${escapeHtml(source.id)}" data-backfill-action="${escapeHtml(action)}">${escapeHtml(BACKFILL_ACTION_LABELS[action] || action)}</button>`
+  )).join('');
+  const refreshBtn = `<button type="button" class="ghost-btn m-backfill-btn m-backfill-refresh" data-backfill-refresh="${escapeHtml(source.id)}">查看回填</button>`;
+  const errorHtml = bf.error && bf.error.message
+    ? `<div class="m-backfill-error" role="alert">${escapeHtml(bf.error.message)}</div>`
+    : '';
+
+  return `
+    <div class="m-backfill" data-backfill-panel="${escapeHtml(source.id)}">
+      <div class="m-backfill-head">
+        <span class="m-backfill-badge m-backfill-status-${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
+        <span class="m-backfill-badge m-backfill-coverage-${escapeHtml(coverage.status || 'unknown')}">${escapeHtml(coverageLabel)}</span>
+        <span class="m-backfill-meta">${escapeHtml(metaParts.join(' · '))}</span>
+      </div>
+      ${progressHtml}
+      ${errorHtml}
+      <div class="m-backfill-actions">${actionButtons}${refreshBtn}</div>
+    </div>`;
+}
+
+async function refreshAdminSourceBackfill(sourceId, target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
+  if (!isAdmin() || !sourceId) return;
+  try {
+    const detail = await api(`/api/admin/sources/${encodeURIComponent(sourceId)}/backfill`);
+    const item = (state.sources || []).find(s => s.id === sourceId);
+    if (item) {
+      item.backfill = detail;
+      item.coverage = detail.coverage;
+      item.entryCount = detail.coverage ? detail.coverage.entryCount : item.entryCount;
+    }
+    renderManagedSourceList(target, statusTarget);
+  } catch (error) {
+    toast(`查询回填状态失败: ${error.message || error}`, 5000);
+  }
+}
+
+async function runAdminBackfillAction(sourceId, action, target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
+  if (!isAdmin() || !sourceId || !action) return;
+  try {
+    const detail = await api(`/api/admin/sources/${encodeURIComponent(sourceId)}/backfill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const item = (state.sources || []).find(s => s.id === sourceId);
+    if (item) {
+      item.backfill = detail;
+      item.coverage = detail.coverage;
+    }
+    toast(`${detail.sourceName || sourceId}：${BACKFILL_STATUS_LABELS[detail.status] || detail.status}`);
+    await loadSources().catch(() => null);
+    renderManagedSourceList(target, statusTarget);
+  } catch (error) {
+    toast(`回填操作失败: ${error.message || error}`, 5000);
+  }
+}
+
 function renderManagedSourceList(target, statusTarget = '#workspace-source-status') {
   const el = $(target);
   if (!el) return;
@@ -11090,6 +11298,7 @@ function renderManagedSourceList(target, statusTarget = '#workspace-source-statu
     .filter(sourceMatchesManageFilters);
   if (!sorted.length) {
     el.innerHTML = '<div class="manage-empty">没有符合当前筛选条件的信息源</div>';
+    stopBackfillManagePoll();
     return;
   }
   for (const s of sorted) {
@@ -11099,12 +11308,14 @@ function renderManagedSourceList(target, statusTarget = '#workspace-source-statu
       ? (s.status === 'ok' ? `${s.entryCount} 篇` : s.status === 'error' ? '抓取失败' : s.status === 'stale' ? '缓存' : '待抓取')
       : '已关闭';
     const labels = (s.labels || []).map(label => `<span class="m-tag">${escapeHtml(label)}</span>`).join('');
+    const backfillHtml = isAdmin() ? sourceBackfillHtml(s) : '';
     row.innerHTML = `
       ${faviconHtml(s.siteUrl, s.name)}
       <div class="m-info">
         <div class="m-name">${escapeHtml(s.name)} <span>${escapeHtml(CATEGORY_LABELS[s.category] || s.category)}</span>${s.isCustom ? ' <b class="m-custom">自定义</b>' : ''}</div>
         ${labels ? `<div class="m-tags">${labels}</div>` : ''}
         ${s.note || s.description ? `<div class="m-note">${escapeHtml(s.note || s.description)}</div>` : ''}
+        ${backfillHtml}
       </div>
       <select class="m-priority" aria-label="${escapeHtml(s.name)} 编辑优先级">
         ${Object.entries(EDITORIAL_PRIORITY_LABELS).map(([value, label]) => `<option value="${value}" ${s.editorialPriority === value ? 'selected' : ''}>${label}</option>`).join('')}
@@ -11127,10 +11338,23 @@ function renderManagedSourceList(target, statusTarget = '#workspace-source-statu
     row.querySelectorAll('[data-managed-order]').forEach(button => {
       button.onclick = () => moveManagedSource(s, button.dataset.managedOrder, target, statusTarget);
     });
+    row.querySelectorAll('[data-backfill-action]').forEach(button => {
+      button.onclick = event => {
+        event.stopPropagation();
+        runAdminBackfillAction(button.dataset.backfillSource, button.dataset.backfillAction, target, statusTarget);
+      };
+    });
+    row.querySelectorAll('[data-backfill-refresh]').forEach(button => {
+      button.onclick = event => {
+        event.stopPropagation();
+        refreshAdminSourceBackfill(button.dataset.backfillRefresh, target, statusTarget);
+      };
+    });
     row.querySelector('[data-source-edit]')?.addEventListener('click', () => openCustomSourceEditor(s));
     row.querySelector('[data-source-archive]')?.addEventListener('click', () => archiveCustomSource(s));
     el.appendChild(row);
   }
+  scheduleBackfillManagePoll(target, statusTarget);
 }
 
 function renderManage(target = '#workspace-manage-list', statusTarget = '#workspace-source-status') {
