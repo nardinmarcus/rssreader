@@ -11,6 +11,7 @@ const documentPipeline = require('./lib/document-pipeline');
 const { createOnepageModule } = require('./lib/onepage');
 const { createSourceDiscovery, VERIFIED_SHOWS } = require('./lib/source-discovery');
 const { createSourceIngestion } = require('./lib/source-ingestion');
+const sourceBackfill = require('./lib/source-backfill');
 const {
   parseSourceHistoryLimit,
   parseSourceHistorySort,
@@ -93,6 +94,7 @@ const TEST_PERIODICAL_WORKER_PATH = process.env.NODE_ENV === 'test'
   : '';
 const PERIODICAL_WORKER_PATH = TEST_PERIODICAL_WORKER_PATH
   || path.join(__dirname, 'scripts', 'periodical-worker.js');
+const BACKFILL_WORKER_PATH = path.join(__dirname, 'scripts', 'source-backfill-worker.js');
 const PERIODICAL_WORKER_SAFE_LOG = /^\[periodical-build\] issue=(?:periodical:(?:daily|weekly|monthly):[0-9-]+|-) job=(?:periodical-job:[a-f0-9]{64}|-) source=(?:[a-f0-9]{1,12}|-) input=(?:[a-f0-9]{1,12}|-) revision=\d+ candidates=\d+ events=\d+ state=(?:queued|running|retry_wait|succeeded|failed|superseded|noop|worker_failed|check_failed) durationMs=\d+$/;
 const DEFAULT_TITLE = 'Namoo Reader · RSS 阅读器';
 const DEFAULT_DESCRIPTION = '围绕 RSS 文章沉淀中文翻译、Namoo 创作草稿、人工点评和文章对话的公开阅读站。';
@@ -279,6 +281,53 @@ function wakePeriodicalWorker() {
 
 function wakePeriodicalWorkerIfNeeded() {
   return periodicalRecovery.wakeIfNeeded();
+}
+
+let activeBackfillChild = null;
+const backfillRecovery = createWorkerRecovery({
+  enabled: () => !(process.env.NODE_ENV === 'test' && process.env.BACKFILL_WORKER_DISABLED === '1'),
+  hasWork: () => store.sourceBackfill.hasActiveRuns(),
+  start: () => {
+    const child = fork(BACKFILL_WORKER_PATH, [], {
+      cwd: __dirname, env: process.env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    });
+    activeBackfillChild = child;
+    child.on('message', message => {
+      if (activeBackfillChild !== child) return;
+      if (message && message.type === 'backfillProgress') {
+        clearPublicProjectionCaches();
+      }
+    });
+    child.once('exit', () => {
+      if (activeBackfillChild === child) activeBackfillChild = null;
+      clearPublicProjectionCaches();
+    });
+    return child;
+  },
+  stdout: chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      if (line.startsWith('[source-backfill]')) console.log(line);
+    }
+  },
+  stderr: chunk => {
+    for (const line of String(chunk).split(/\r?\n/).filter(Boolean)) {
+      console.warn(`[source-backfill-worker] ${line}`);
+    }
+  },
+  failed: (code, error) => {
+    clearPublicProjectionCaches();
+    if (error) console.warn('Backfill worker failed:', error.message || error);
+    if (code) console.warn(`Backfill worker exited with code ${code}`);
+  },
+  checkFailed: error => console.warn('Backfill worker active-run check failed:', error.message || error),
+});
+
+function wakeBackfillWorker() {
+  return backfillRecovery.wake();
+}
+
+function wakeBackfillWorkerIfNeeded() {
+  return backfillRecovery.wakeIfNeeded();
 }
 
 const registerRateLimit = createRateLimiter({
@@ -2474,6 +2523,7 @@ function finishFetchJob({ result = null, error = null, code = 0, signal = '' } =
   reloadFetcherAfterWorker();
   wakeTranslationWorkerIfNeeded();
   wakePeriodicalWorkerIfNeeded();
+  wakeBackfillWorkerIfNeeded();
 }
 
 function finishAiJob({ result = null, error = null, code = 0, signal = '' } = {}) {
@@ -2947,12 +2997,32 @@ app.get('/api/periodicals/:cadence/:periodKey', (req, res) => {
 app.get('/api/sources', (req, res) => {
   const isAdmin = Boolean(req.user && req.user.role === 'admin');
   res.json({
-    sources: fetcher.getSourcesMeta({ includeDisabled: isAdmin, includeConfig: isAdmin }),
+    sources: fetcher.getSourcesMeta({ includeDisabled: isAdmin, includeConfig: isAdmin, includeBackfill: isAdmin }),
     refreshing,
     progress: refreshProgress,
     autoRewrite: { running: autoRewriteRunning, last: autoRewriteLast },
     backgroundJob: backgroundJobState(),
   });
+});
+
+app.get('/api/admin/sources/:id/backfill', requireAdmin, (req, res) => {
+  try {
+    res.json(sourceBackfill.getAdminBackfillStatus(req.params.id));
+  } catch (e) {
+    sendError(res, e, 'source backfill status unavailable');
+  }
+});
+
+app.post('/api/admin/sources/:id/backfill', requireAdmin, (req, res) => {
+  try {
+    const result = sourceBackfill.applyAdminBackfillAction(req.params.id, req.body);
+    if (result && result.status === 'queued') {
+      wakeBackfillWorkerIfNeeded();
+    }
+    res.json(result);
+  } catch (e) {
+    sendError(res, e, 'source backfill action failed');
+  }
 });
 
 app.get('/api/sources/:id/history', (req, res) => {
@@ -3205,6 +3275,7 @@ app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req,
         store.recordSubmissionRequestError(existing.id, safeMessage);
         return sendError(res, err, fallbackMessage);
       }
+      wakeBackfillWorkerIfNeeded();
       const reviewed = store.reviewSubmissionRequest(existing.id, {
         status: 'approved',
         reviewedBy: req.user.id,
@@ -4130,6 +4201,7 @@ app.post('/api/admin/source-catalog/:key/activate', requireAdmin, async (req, re
     const result = await sourceIngestion.activateWechatCatalogKey(req.params.key, {
       restore: Boolean(req.body && req.body.restore === true),
     });
+    wakeBackfillWorkerIfNeeded();
     res.status(result.created ? 201 : 200).json(result);
   } catch (e) {
     sendError(res, e, 'WeChat source activation failed');
@@ -4141,6 +4213,7 @@ app.post('/api/sources', requireAdmin, async (req, res) => {
     const catalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(req.body && req.body.feedUrl);
     if (catalogKey) {
       const result = await sourceIngestion.activateWechatCatalogKey(catalogKey);
+      wakeBackfillWorkerIfNeeded();
       return res.status(result.created ? 201 : 200).json(result);
     }
     const source = fetcher.createCustomSource(req.body);
@@ -4153,7 +4226,7 @@ app.post('/api/sources', requireAdmin, async (req, res) => {
     res.status(201).json({
       source,
       refresh,
-      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
+      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true, includeBackfill: true }),
     });
   } catch (e) {
     sendError(res, e, 'custom source creation failed');
@@ -4177,7 +4250,7 @@ app.post('/api/sources/:id/toggle', requireAdmin, async (req, res) => {
     id: src.id,
     enabled,
     source,
-    sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
+    sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true, includeBackfill: true }),
   });
 });
 
@@ -4232,7 +4305,7 @@ app.patch('/api/sources/:id', requireAdmin, (req, res) => {
         sourceIds: [source.id],
       });
     }
-    res.json({ source, sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }) });
+    res.json({ source, sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true, includeBackfill: true }) });
   } catch (e) {
     sendError(res, e, 'source preference update failed');
   }
@@ -4244,7 +4317,7 @@ app.delete('/api/sources/:id', requireAdmin, (req, res) => {
     res.json({
       ok: true,
       archived,
-      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
+      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true, includeBackfill: true }),
     });
   } catch (e) {
     sendError(res, e, 'custom source archive failed');
@@ -4262,7 +4335,7 @@ app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
       moved: result.moved,
       neighborId: result.neighborId || '',
       source: result.source,
-      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true }),
+      sources: fetcher.getSourcesMeta({ includeDisabled: true, includeConfig: true, includeBackfill: true }),
     });
   } catch (e) {
     sendError(res, e, 'source move failed');
@@ -4370,4 +4443,24 @@ app.listen(PORT, HOST, () => {
   if (process.env.NODE_ENV !== 'test' || process.env.TRANSLATION_WORKER_STARTUP === '1') {
     wakeTranslationWorker();
   }
+  if (process.env.NODE_ENV !== 'test' || process.env.BACKFILL_WORKER_DISABLED !== '1') {
+    wakeBackfillWorkerIfNeeded();
+  }
+});
+
+function shutdownChildWorkers() {
+  for (const child of [refreshWorker, aiWorker, activeBackfillChild]) {
+    if (child && child.exitCode === null) {
+      try { child.kill('SIGTERM'); } catch { /* already exited */ }
+    }
+  }
+}
+
+process.once('SIGTERM', () => {
+  shutdownChildWorkers();
+  process.exit(0);
+});
+process.once('SIGINT', () => {
+  shutdownChildWorkers();
+  process.exit(0);
 });

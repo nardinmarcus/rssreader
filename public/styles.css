@@ -4493,6 +4493,98 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 .manage-row .m-status { font-size: 11px; color: var(--text-2); flex: none; }
 .m-status.ok { color: var(--semantic-green); }
 .m-status.error { color: var(--semantic-red); }
+.source-coverage-banner {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.m-backfill {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.m-backfill-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.m-backfill-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+.m-backfill-status-running,
+.m-backfill-status-queued,
+.m-backfill-status-retry_wait {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.m-backfill-status-succeeded,
+.m-backfill-coverage-provider_archive_exhausted {
+  color: var(--semantic-green);
+}
+.m-backfill-status-failed,
+.m-backfill-coverage-mismatch {
+  color: var(--semantic-red);
+}
+.m-backfill-meta {
+  color: var(--text-2);
+  min-width: 0;
+  word-break: break-word;
+}
+.m-backfill-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.m-backfill-progress {
+  flex: 1 1 120px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.m-backfill-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.m-backfill-counts {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.m-backfill-error {
+  font-size: 11px;
+  color: var(--semantic-red);
+  line-height: 1.4;
+}
+.m-backfill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.m-backfill-btn {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11px;
+}
 .switch {
   position: relative; width: 34px; height: 20px; flex: none;
   background: var(--bg-3); border-radius: 999px; border: none;
