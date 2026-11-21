@@ -3782,6 +3782,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: rgba(0, 0, 0, 0.55);
   display: flex; align-items: center; justify-content: center;
 }
+#auth-modal { z-index: 70; }
 .modal-box {
   background: var(--bg-1); border: 1px solid var(--border);
   border-radius: 16px; width: min(560px, 92vw); max-height: 80vh;
@@ -9894,6 +9895,12 @@ body[data-periodicals-mode="off"] .periodicals-open {
   line-height: 1.45;
 }
 .moderation-item-main .moderation-note { color: var(--text-1); }
+.moderation-item-main .moderation-error { color: var(--semantic-red); font-weight: 500; }
+.moderation-item-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.moderation-badge.is-warning {
+  color: var(--semantic-amber);
+  background: color-mix(in srgb, var(--semantic-amber) 14%, var(--surface));
+}
 .moderation-actions {
   flex: none;
   flex-wrap: wrap;
@@ -11385,6 +11392,20 @@ body[data-periodicals-mode="off"] .periodicals-open {
 .discovery-badge-archived {
   color: var(--semantic-amber);
   background: color-mix(in srgb, var(--semantic-amber) 12%, var(--surface));
+}
+
+.discovery-badge-pending {
+  color: var(--semantic-amber);
+  background: color-mix(in srgb, var(--semantic-amber) 14%, var(--surface));
+}
+
+.discovery-badge-rejected {
+  color: var(--semantic-red);
+  background: color-mix(in srgb, var(--semantic-red) 12%, var(--surface));
+}
+
+.discovery-request-reason {
+  color: var(--semantic-red);
 }
 
 .discovery-entry-meta {
