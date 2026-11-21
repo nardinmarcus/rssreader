@@ -894,6 +894,7 @@ const state = {
   moderationRequests: [],
   moderationLoaded: false,
   moderationLoading: false,
+  moderationActionErrors: {},
   userManagement: {
     users: [],
     summary: { total: 0, active: 0, disabled: 0, admins: 0 },
@@ -991,6 +992,7 @@ const state = {
   pendingAiAction: '',
   pendingAgentText: '',
   pendingSubmitLink: null,
+  pendingSourceRequest: null,
   articleLinkMenuUrl: '',
   articleLinkSubmitting: false,
   loadedAiScope: '',
@@ -4086,8 +4088,13 @@ function openAuth(mode = 'login') {
   setTimeout(() => $('#auth-email').focus(), 30);
 }
 
-function closeAuth() {
+function closeAuth({ clearPending = true } = {}) {
   $('#auth-modal').classList.add('hidden');
+  if (clearPending) state.pendingSourceRequest = null;
+  if (discoveryState.open) {
+    const focusTarget = $('#source-discovery-search') || $('#source-discovery-close');
+    if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
+  }
 }
 
 function resetChangePasswordForm() {
@@ -4136,8 +4143,26 @@ const discoveryState = {
   error: '',
   activationMessage: '',
   activatingKey: '',
+  requestMessage: '',
+  requestingKey: '',
+  myRequests: [],
+  myRequestsLoaded: false,
   opener: null,
 };
+
+function isWechatCatalogKey(value) {
+  return /^wechat:[A-Za-z0-9_-]{6,80}$/.test(String(value || '').trim());
+}
+
+function resetRoleDiscoveryAndModerationState() {
+  discoveryState.myRequests = [];
+  discoveryState.myRequestsLoaded = false;
+  discoveryState.requestMessage = '';
+  discoveryState.activationMessage = '';
+  state.moderationRequests = [];
+  state.moderationLoaded = false;
+  state.moderationActionErrors = {};
+}
 
 function isCurrentDiscoveryResponse(seq) {
   return seq === discoveryState.requestSeq;
@@ -4146,11 +4171,20 @@ function isCurrentDiscoveryResponse(seq) {
 function discoveryEntryHtml(item, kind = 'catalog') {
   const admin = isAdmin();
   const archived = Boolean(admin && item.archived);
+  const requests = typeof discoveryState === 'object' && discoveryState && Array.isArray(discoveryState.myRequests)
+    ? discoveryState.myRequests
+    : [];
+  const myRequest = !admin ? (requests.find(req => req && req.catalogKey === item.key) || null) : null;
+  const requestStatus = myRequest ? myRequest.status : '';
   const badge = archived
     ? '<span class="discovery-badge discovery-badge-archived">已归档</span>'
     : item.online
       ? `<span class="discovery-badge discovery-badge-online">${item.platform === 'wechat' ? '已接入' : '已上线'}</span>`
-      : '<span class="discovery-badge discovery-badge-offline">未接入</span>';
+      : requestStatus === 'pending'
+        ? '<span class="discovery-badge discovery-badge-pending">已申请</span>'
+        : requestStatus === 'rejected'
+          ? '<span class="discovery-badge discovery-badge-rejected">未通过</span>'
+          : '<span class="discovery-badge discovery-badge-offline">未接入</span>';
   const actions = [];
   if (item.online && item.sourceId) {
     actions.push(`<button class="ghost-btn primary discovery-open-reading" type="button" data-discovery-source="${escapeHtml(item.sourceId)}">进入阅读</button>`);
@@ -4161,11 +4195,22 @@ function discoveryEntryHtml(item, kind = 'catalog') {
     const busy = discoveryState.activatingKey === item.key;
     actions.push(`<button class="ghost-btn primary discovery-activate" type="button" data-discovery-activate="${escapeHtml(item.key)}" data-discovery-restore="${restore}" aria-label="${label}：${escapeHtml(item.name)}"${busy ? ' disabled' : ''}>${busy ? '处理中…' : label}</button>`);
   }
+  if (!admin && item.platform === 'wechat' && !item.online) {
+    if (requestStatus === 'pending') {
+      actions.push(`<button class="ghost-btn discovery-requested" type="button" disabled aria-label="已申请接入：${escapeHtml(item.name)}">已申请</button>`);
+    } else if (requestStatus !== 'rejected') {
+      const busy = Boolean(discoveryState && discoveryState.requestingKey === item.key);
+      actions.push(`<button class="ghost-btn discovery-request" type="button" data-discovery-request="${escapeHtml(item.key)}" data-discovery-name="${escapeHtml(item.name)}" aria-label="申请接入：${escapeHtml(item.name)}"${busy ? ' disabled' : ''}>${busy ? '提交中…' : '申请接入'}</button>`);
+    }
+  }
   const action = actions.length ? `<div class="discovery-entry-action">${actions.join('')}</div>` : '';
   const meta = [];
   if (kind === 'recommended' && item.description) meta.push(`<span class="discovery-entry-description">${escapeHtml(item.description)}</span>`);
   if (item.platform === 'wechat' && item.online) {
     meta.push('<span class="discovery-history-coverage">早于当前供给窗口的历史覆盖未知</span>');
+  }
+  if (!admin && !item.online && requestStatus === 'rejected' && myRequest && myRequest.reviewReason) {
+    meta.push(`<span class="discovery-request-reason">原因：${escapeHtml(myRequest.reviewReason)}</span>`);
   }
   if (item.siteUrl) {
     meta.push(`<a class="discovery-entry-site" href="${escapeHtml(item.siteUrl)}" target="_blank" rel="noopener noreferrer">节目主页</a>`);
@@ -4206,7 +4251,13 @@ function wechatHistoryCoverageLabel(entry) {
 
 function renderSourceDiscoveryStatus() {
   const target = $('#source-discovery-status');
-  if (target) target.textContent = [discoveryStatusText(discoveryState.catalog), discoveryState.activationMessage].filter(Boolean).join(' · ');
+  if (target) {
+    target.textContent = [
+      discoveryStatusText(discoveryState.catalog),
+      discoveryState.activationMessage,
+      discoveryState.requestMessage,
+    ].filter(Boolean).join(' · ');
+  }
 }
 
 function renderSourceDiscoveryEmpty(message) {
@@ -4247,6 +4298,9 @@ function renderSourceDiscovery() {
   listTarget.querySelectorAll('[data-discovery-activate]').forEach(btn => {
     btn.onclick = () => activateDiscoverySource(btn.dataset.discoveryActivate, btn.dataset.discoveryRestore === 'true');
   });
+  listTarget.querySelectorAll('[data-discovery-request]').forEach(btn => {
+    btn.onclick = () => requestDiscoverySource(btn.dataset.discoveryRequest, btn.dataset.discoveryName);
+  });
 
   renderSourceDiscoveryStatus();
   const empty = $('#source-discovery-empty');
@@ -4283,8 +4337,18 @@ async function loadSourceCatalog(options = {}) {
     if (discoveryState.platform) params.set('platform', discoveryState.platform);
     if (discoveryState.query) params.set('q', discoveryState.query);
     if (!reset && discoveryState.nextCursor) params.set('cursor', discoveryState.nextCursor);
+    const myRequestsPromise = reset && state.me && !isAdmin()
+      ? api('/api/me/source-requests').catch(() => null)
+      : Promise.resolve(null);
     const data = await api(`/api/source-catalog?${params.toString()}`);
+    const myRequestsData = await myRequestsPromise;
     if (!discoveryState.open || !isCurrentDiscoveryResponse(seq)) return;
+    if (reset) {
+      discoveryState.myRequests = state.me && !isAdmin()
+        ? (Array.isArray(myRequestsData && myRequestsData.requests) ? myRequestsData.requests : [])
+        : [];
+      discoveryState.myRequestsLoaded = Boolean(state.me && !isAdmin() && myRequestsData);
+    }
     discoveryState.recommended = Array.isArray(data.recommended) ? data.recommended : [];
     discoveryState.items = reset
       ? (Array.isArray(data.items) ? data.items : [])
@@ -4305,7 +4369,80 @@ async function loadSourceCatalog(options = {}) {
 async function selectDiscoverySource(sourceId) {
   if (!sourceId) return;
   closeSourceDiscovery({ restoreFocus: false });
+  if (!state.sources.some(source => source && source.id === sourceId)) {
+    await loadSources().catch(() => null);
+  }
   await selectSource(sourceId);
+}
+
+async function requestDiscoverySource(catalogKey, name = '') {
+  const key = String(catalogKey || '').trim();
+  if (!isWechatCatalogKey(key) || discoveryState.requestingKey) return;
+  if (!state.me) {
+    state.pendingSourceRequest = { key, name: String(name || '').trim() };
+    openAuth('login');
+    toast('请先登录或注册，登录后将继续申请接入该来源');
+    return;
+  }
+  if (isAdmin()) {
+    await loadSourceCatalog({ reset: true });
+    return;
+  }
+  discoveryState.requestingKey = key;
+  discoveryState.requestMessage = '正在提交来源接入申请…';
+  renderSourceDiscovery();
+  let alreadyOnlineSourceId = '';
+  try {
+    const data = await api(`/api/source-catalog/${encodeURIComponent(key)}/requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const req = data && data.request ? data.request : null;
+    if (req) {
+      const idx = discoveryState.myRequests.findIndex(item => item && item.catalogKey === key);
+      if (idx >= 0) discoveryState.myRequests[idx] = req;
+      else discoveryState.myRequests.unshift(req);
+      discoveryState.myRequestsLoaded = true;
+    }
+    if (data && data.existing) {
+      if (req && req.status === 'approved') {
+        discoveryState.requestMessage = '你此前申请的该来源已通过审核，当前暂未上线，请联系管理员恢复。';
+      } else if (req && req.status === 'rejected') {
+        discoveryState.requestMessage = req.reviewReason
+          ? `该来源申请此前未通过：${req.reviewReason}`
+          : '你此前提交的该来源申请未通过审核。';
+      } else {
+        discoveryState.requestMessage = '已保留你对该来源的申请，请等待管理员审核。';
+      }
+      toast(req && req.status === 'pending' ? '已申请接入，请等待管理员审核' : discoveryState.requestMessage);
+    } else {
+      discoveryState.requestMessage = '接入申请已提交，管理员审核通过后将加入共享阅读。';
+      toast('接入申请已提交，等待管理员审核');
+    }
+    if (discoveryState.open) await loadSourceCatalog({ reset: true });
+  } catch (error) {
+    if (error && error.status === 409) {
+      alreadyOnlineSourceId = String(error.data && error.data.sourceId || '');
+      discoveryState.requestMessage = error.message || '该来源已上线，可直接阅读';
+      toast(discoveryState.requestMessage);
+      await loadSources();
+      if (discoveryState.open) await loadSourceCatalog({ reset: true });
+    } else {
+      discoveryState.requestMessage = `申请失败：${error.message || error}`;
+      toast(discoveryState.requestMessage, 5000);
+    }
+  } finally {
+    discoveryState.requestingKey = '';
+    renderSourceDiscovery();
+    if (discoveryState.open) {
+      const focusable = Array.from(document.querySelectorAll('[data-discovery-source], [data-discovery-request]'))
+        .find(button => (alreadyOnlineSourceId && button.dataset.discoverySource === alreadyOnlineSourceId)
+          || button.dataset.discoveryRequest === key);
+      if (focusable && !focusable.disabled) focusable.focus();
+      else $('#source-discovery-close')?.focus();
+    }
+  }
 }
 
 async function activateDiscoverySource(catalogKey, restore = false) {
@@ -4411,10 +4548,13 @@ async function submitAuth() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, displayName }),
     });
+    const pendingSourceRequest = state.pendingSourceRequest;
+    state.pendingSourceRequest = null;
     categoryEntryCache.clear();
+    resetRoleDiscoveryAndModerationState();
     setCurrentUser(data.user || null);
     setSiteAi(data.siteAi);
-    closeAuth();
+    closeAuth({ clearPending: false });
     await Promise.all([loadUserEntryStates(), loadSources(), loadEntries()]);
     loadAiProfilesForScope();
     renderAuthState();
@@ -4428,6 +4568,18 @@ async function submitAuth() {
       const pending = state.pendingSubmitLink;
       state.pendingSubmitLink = null;
       openSubmitLinkModal(pending);
+    }
+    if (pendingSourceRequest && pendingSourceRequest.key) {
+      if (!isAdmin()) {
+        await requestDiscoverySource(pendingSourceRequest.key, pendingSourceRequest.name);
+        return;
+      }
+      if (discoveryState.open) await loadSourceCatalog({ reset: true });
+      toast('已登录管理员账号，可直接加入自定义来源');
+      return;
+    }
+    if (discoveryState.open) {
+      await loadSourceCatalog({ reset: true });
     }
     toast(state.authMode === 'register' ? '注册成功' : '已登录');
   } catch (err) {
@@ -4475,6 +4627,8 @@ async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   const wasDashboardOpen = state.workspacePage === 'dashboard';
   categoryEntryCache.clear();
+  resetRoleDiscoveryAndModerationState();
+  state.pendingSourceRequest = null;
   setCurrentUser(null);
   state.myComments = [];
   state.myChatMessages = [];
@@ -4488,6 +4642,7 @@ async function logout() {
   renderComments();
   renderAgent();
   renderAiSettings();
+  if (discoveryState.open) await loadSourceCatalog({ reset: true });
   toast('已退出登录');
 }
 
@@ -8117,6 +8272,33 @@ function moderationTime(value) {
   return timestamp ? formatAssetTime(timestamp) : '暂无时间';
 }
 
+function moderationRequestItemHtml(request, errorMessage = '') {
+  const isSource = request && request.requestKind === 'source';
+  const titleHtml = isSource
+    ? `<div class="moderation-item-title"><strong>${escapeHtml(request.catalogName || request.catalogKey || '来源接入申请')}</strong><span class="moderation-badge">来源接入申请</span><span class="moderation-badge">${request.catalogPlatform === 'podcast' ? '播客' : '公众号'}</span>${request.sourceArchived ? '<span class="moderation-badge is-warning">已归档待恢复</span>' : ''}</div>`
+    : `<a href="${escapeHtml(request.url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(request.url)}</a>`;
+  const userButton = request.userId
+    ? `<button class="moderation-user-link" type="button" data-moderation-open-user="${escapeHtml(request.userId)}">${escapeHtml(request.displayName || request.author || '投稿用户')}</button> · `
+    : '';
+  const metaParts = [request.email, moderationTime(request.createdAt)];
+  if (isSource && request.catalogKey) metaParts.push(request.catalogKey);
+  const approveLabel = errorMessage ? '重试批准' : '批准';
+  const errorPrefix = isSource ? '接入失败（可重试）' : '处理失败（可重试）';
+  return `
+      <article class="moderation-item" data-request-id="${escapeHtml(request.id)}">
+        <div class="moderation-item-main">
+          ${titleHtml}
+          <p>${userButton}${escapeHtml(metaParts.filter(Boolean).join(' · '))}</p>
+          ${request.note ? `<p class="moderation-note">${escapeHtml(request.note)}</p>` : ''}
+          ${errorMessage ? `<p class="moderation-error" role="alert">${errorPrefix}：${escapeHtml(errorMessage)}</p>` : ''}
+        </div>
+        <div class="moderation-actions">
+          <button class="ghost-btn primary" type="button" data-moderation-action="approve" data-request-id="${escapeHtml(request.id)}">${approveLabel}</button>
+          <button class="ghost-btn moderation-danger" type="button" data-moderation-action="reject" data-request-id="${escapeHtml(request.id)}">拒绝</button>
+        </div>
+      </article>`;
+}
+
 function renderModeration() {
   const pendingList = $('#moderation-pending-list');
   if (!pendingList) return;
@@ -8125,19 +8307,11 @@ function renderModeration() {
     pendingList.innerHTML = '<div class="moderation-empty">正在读取待审队列…</div>';
     return;
   }
+  const errors = state.moderationActionErrors || {};
   pendingList.innerHTML = state.moderationRequests.length
-    ? state.moderationRequests.map(request => `
-      <article class="moderation-item">
-        <div class="moderation-item-main">
-          <a href="${escapeHtml(request.url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(request.url)}</a>
-          <p>${request.userId ? `<button class="moderation-user-link" type="button" data-moderation-open-user="${escapeHtml(request.userId)}">${escapeHtml(request.displayName || request.author || '投稿用户')}</button> · ` : ''}${escapeHtml([request.email, moderationTime(request.createdAt)].filter(Boolean).join(' · '))}</p>
-          ${request.note ? `<p class="moderation-note">${escapeHtml(request.note)}</p>` : ''}
-        </div>
-        <div class="moderation-actions">
-          <button class="ghost-btn primary" type="button" data-moderation-action="approve" data-request-id="${escapeHtml(request.id)}">批准</button>
-          <button class="ghost-btn moderation-danger" type="button" data-moderation-action="reject" data-request-id="${escapeHtml(request.id)}">拒绝</button>
-        </div>
-      </article>`).join('')
+    ? state.moderationRequests.map(request => (
+      moderationRequestItemHtml(request, errors[request.id] || request.lastError || '')
+    )).join('')
     : '<div class="moderation-empty">没有待审投稿</div>';
 }
 
@@ -8166,28 +8340,69 @@ async function loadModeration({ force = false } = {}) {
 async function handleModerationAction(button) {
   const action = button.dataset.moderationAction;
   const requestId = button.dataset.requestId;
-  if (!action) return;
-  const confirmations = {
-    approve: '批准后将首次访问目标链接；RSS/Atom 会收录为订阅源，普通网页会公开到读者提交。继续吗？',
-    reject: '拒绝这条投稿？目标链接不会被访问。',
-  };
-  if (!window.confirm(confirmations[action] || '确认执行此操作？')) return;
+  if (!action || !requestId) return;
+  const request = (state.moderationRequests || []).find(item => item && item.id === requestId) || null;
+  const isSource = Boolean(request && request.requestKind === 'source');
+  const confirmations = isSource
+    ? {
+        approve: request && request.sourceArchived
+          ? '该公众号此前已归档，批准后将校验并恢复为自定义来源。继续吗？'
+          : '批准后将校验该公众号订阅源并接入为自定义来源（仅接入当前供给窗口文章，历史不自动触发 AI）。继续吗？',
+        reject: '拒绝这条来源接入申请？目标订阅源不会被访问。',
+      }
+    : {
+        approve: '批准后将首次访问目标链接；RSS/Atom 会收录为订阅源，普通网页会公开到读者提交。继续吗？',
+        reject: '拒绝这条投稿？目标链接不会被访问。',
+      };
+  const confirmed = await showConfirmDialog({
+    title: action === 'reject' ? '确认拒绝' : '确认批准',
+    message: confirmations[action] || '确认执行此操作？',
+    confirmText: action === 'reject' ? '拒绝' : '继续',
+    danger: action === 'reject',
+  });
+  if (!confirmed) return;
   button.disabled = true;
   try {
-    await api(`/api/admin/submission-requests/${encodeURIComponent(requestId)}/${action}`, {
+    const sendAction = (restore = false) => api(`/api/admin/submission-requests/${encodeURIComponent(requestId)}/${action}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: action === 'reject' ? JSON.stringify({ reason: '管理员审核未通过' }) : '{}',
+      body: action === 'reject'
+        ? JSON.stringify({ reason: '管理员审核未通过' })
+        : JSON.stringify(restore ? { restore: true } : {}),
     });
+    try {
+      await sendAction(Boolean(request && request.sourceArchived));
+    } catch (err) {
+      if (action === 'approve' && isSource && err && err.status === 409 && /archived|归档/i.test(err.message)) {
+        const restoreConfirmed = await showConfirmDialog({
+          title: '恢复已归档来源',
+          message: '该公众号此前已归档，确认恢复并重新上线吗？',
+          confirmText: '恢复并上线',
+          danger: true,
+        });
+        if (restoreConfirmed) {
+          await sendAction(true);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
+    if (state.moderationActionErrors) delete state.moderationActionErrors[requestId];
     if (action === 'approve') {
       await Promise.all([loadSources(), loadEntries(), loadContributors()]);
       updateListTitle();
       renderList();
       renderSidebar();
+      if (discoveryState.open) await loadSourceCatalog({ reset: true });
     }
     await loadModeration({ force: true });
-    toast('审核操作已完成');
+    toast(isSource && action === 'approve' ? '已通过并接入公众号来源' : '审核操作已完成');
   } catch (err) {
+    if (!state.moderationActionErrors) state.moderationActionErrors = {};
+    state.moderationActionErrors[requestId] = err.message || '审核失败';
+    renderModeration();
     toast('审核操作失败: ' + err.message, 5000);
   } finally {
     button.disabled = false;
@@ -12650,6 +12865,11 @@ document.addEventListener('keydown', (e) => {
     if ($('#user-management-dialog')?.open) {
       e.preventDefault();
       closeUserManagementAction();
+      return;
+    }
+    if (!$('#auth-modal')?.classList.contains('hidden')) {
+      e.preventDefault();
+      closeAuth();
       return;
     }
     if (discoveryState.open) {

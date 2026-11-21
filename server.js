@@ -9,7 +9,7 @@ const fetcher = require('./lib/fetcher');
 const deepseek = require('./lib/deepseek');
 const documentPipeline = require('./lib/document-pipeline');
 const { createOnepageModule } = require('./lib/onepage');
-const { createSourceDiscovery } = require('./lib/source-discovery');
+const { createSourceDiscovery, VERIFIED_SHOWS } = require('./lib/source-discovery');
 const { createSourceIngestion } = require('./lib/source-ingestion');
 const {
   parseSourceHistoryLimit,
@@ -3116,6 +3116,32 @@ app.get('/api/me/chat-messages', requireLogin, (req, res) => {
   res.json({ messages: store.getUserChatMessages(req.user.id, { limit }) });
 });
 
+function publicUserSourceRequest(request) {
+  if (!request) return null;
+  return {
+    id: request.id,
+    requestKind: 'source',
+    catalogKey: request.catalogKey,
+    platform: request.catalogPlatform,
+    name: request.catalogName,
+    note: request.note || '',
+    status: request.status,
+    reviewReason: request.reviewReason || '',
+    sourceId: request.sourceId || '',
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+    reviewedAt: request.reviewedAt,
+  };
+}
+
+app.get('/api/me/source-requests', requireLogin, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const status = String(req.query.status || 'all').trim();
+  const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
+  const requests = store.getUserSourceRequests(req.user.id, { status, limit }).map(publicUserSourceRequest);
+  res.json({ requests });
+});
+
 app.get('/api/contributors', (req, res) => {
   const limit = Math.max(1, Math.min(200, Number.parseInt(req.query.limit, 10) || 100));
   const sort = normalizeContributorSort(req.query.sort);
@@ -3123,6 +3149,7 @@ app.get('/api/contributors', (req, res) => {
 });
 
 app.get('/api/admin/submission-requests', requireAdmin, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const status = String(req.query.status || 'pending').trim();
     const limit = Math.max(1, Math.min(500, Number.parseInt(req.query.limit, 10) || 200));
@@ -3149,7 +3176,58 @@ app.get('/api/admin/periodicals-status', requireAdmin, (req, res) => {
 });
 
 app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
+    const existing = store.getSubmissionRequest(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'submission request not found' });
+    if (existing.requestKind === 'source') {
+      if (existing.status !== 'pending') {
+        const source = existing.sourceId ? fetcher.getSourceById(existing.sourceId) : null;
+        return res.json({
+          ok: true,
+          request: existing,
+          resultType: 'source',
+          entry: null,
+          source,
+        });
+      }
+      let activation;
+      try {
+        activation = await sourceIngestion.activateWechatCatalogKey(existing.catalogKey, {
+          restore: Boolean(req.body && req.body.restore === true),
+        });
+      } catch (err) {
+        const status = Number(err && err.statusCode) || 500;
+        const fallbackMessage = status === 504
+          ? '供给方响应超时，请稍后重试'
+          : '来源校验暂时失败，请稍后重试';
+        const safeMessage = status >= 500 ? fallbackMessage : (err.message || '来源校验失败');
+        store.recordSubmissionRequestError(existing.id, safeMessage);
+        return sendError(res, err, fallbackMessage);
+      }
+      const reviewed = store.reviewSubmissionRequest(existing.id, {
+        status: 'approved',
+        reviewedBy: req.user.id,
+        reason: '管理员审核通过并接入公众号来源',
+        sourceId: activation.source.id,
+      });
+      return res.json({
+        ok: true,
+        request: reviewed,
+        resultType: 'source',
+        entry: null,
+        source: activation.source,
+        activation: {
+          created: activation.created,
+          restored: activation.restored,
+          alreadyActivated: activation.alreadyActivated,
+          entryCount: activation.entryCount,
+          activationCutoff: activation.activationCutoff,
+          contentScope: activation.contentScope,
+          historyCoverage: activation.historyCoverage,
+        },
+      });
+    }
     const result = await fetcher.approveSubmissionRequest(req.params.id, {
       adminUserId: req.user.id,
     });
@@ -3164,6 +3242,7 @@ app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req,
 });
 
 app.post('/api/admin/submission-requests/:id/reject', requireAdmin, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const request = fetcher.rejectSubmissionRequest(req.params.id, {
       adminUserId: req.user.id,
@@ -4193,6 +4272,8 @@ app.post('/api/sources/:id/move', requireAdmin, (req, res) => {
 // The persisted catalog remains publicly browsable. Only admins receive
 // activation/restore affordances; the mutation itself is guarded below.
 app.get('/api/source-catalog', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Vary', 'Cookie');
   try {
     await sourceDiscovery.ensureSourceCatalogFresh();
     const projection = sourceDiscovery.getPublicSourceCatalog({
@@ -4205,6 +4286,59 @@ app.get('/api/source-catalog', async (req, res) => {
     res.json(projection);
   } catch (e) {
     sendError(res, e, 'source catalog unavailable');
+  }
+});
+
+app.post('/api/source-catalog/:key/requests', requireLogin, submissionHourlyRateLimit, submissionDailyRateLimit, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const key = String(req.params.key || '').trim();
+    const verifiedShow = VERIFIED_SHOWS.find(show => show.key === key);
+    if (verifiedShow) {
+      const onlineSource = verifiedShow.sourceId ? fetcher.getSourceById(verifiedShow.sourceId) : null;
+      if (onlineSource && fetcher.isEnabled(onlineSource)) {
+        return res.status(409).json({ error: '该来源已上线，可直接阅读', sourceId: onlineSource.id });
+      }
+      return res.status(422).json({ error: '该目录来源暂不支持自助申请接入' });
+    }
+    if (!/^wechat:[A-Za-z0-9_-]{6,80}$/.test(key)) {
+      return res.status(400).json({ error: '无效的来源目录标识' });
+    }
+    await sourceDiscovery.ensureSourceCatalogFresh();
+    const catalogEntry = sourceDiscovery.resolveWechatCatalogEntry(key);
+    if (!catalogEntry) {
+      return res.status(404).json({ error: '未找到对应的来源目录条目' });
+    }
+    const existingRequest = store.getUserSourceRequestByCatalogKey(req.user.id, catalogEntry.key);
+    if (existingRequest) {
+      return res.status(200).json({
+        pending: existingRequest.status === 'pending',
+        existing: true,
+        request: publicUserSourceRequest(existingRequest),
+      });
+    }
+    const sourceStatus = sourceIngestion.getCatalogSourceStatus(catalogEntry.key);
+    if (sourceStatus.online) {
+      return res.status(409).json({
+        error: '该来源已上线，可直接阅读',
+        sourceId: sourceStatus.source.id,
+      });
+    }
+    const created = store.createSourceCatalogRequest({
+      userId: req.user.id,
+      author: req.user.displayName || req.user.email || '读者',
+      catalogKey: catalogEntry.key,
+      platform: catalogEntry.platform,
+      name: catalogEntry.name,
+      note: req.body && req.body.note,
+    });
+    res.status(created.existing ? 200 : 202).json({
+      pending: created.request.status === 'pending',
+      existing: created.existing,
+      request: publicUserSourceRequest(created.request),
+    });
+  } catch (e) {
+    sendError(res, e, 'source request failed');
   }
 });
 

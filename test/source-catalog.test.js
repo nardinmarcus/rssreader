@@ -499,7 +499,9 @@ test('discovery entry renderer separates online reading from truthful not-integr
     online: false,
   }, 'catalog');
   assert.match(wechat, /未接入/);
-  assert.equal(/<button/.test(wechat), false);
+  assert.match(wechat, /data-discovery-request="wechat:abc"/);
+  assert.match(wechat, /申请接入/);
+  assert.doesNotMatch(wechat, /data-discovery-activate/);
 });
 
 test('discovery search keeps only the newest response and marks requests before awaiting', () => {
