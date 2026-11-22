@@ -4154,7 +4154,11 @@ function isWechatCatalogKey(value) {
   return /^wechat:[A-Za-z0-9_-]{6,80}$/.test(String(value || '').trim());
 }
 
-const REQUESTABLE_PODCAST_KEYS = new Set(['podcast:wandianliao']);
+const REQUESTABLE_PODCAST_KEYS = new Set([
+  'podcast:wandianliao',
+  'podcast:bannatie',
+  'xiaoyuzhou:62382c1103bea1ebfffa1c00',
+]);
 
 function resetRoleDiscoveryAndModerationState() {
   discoveryState.myRequests = [];
@@ -4173,6 +4177,9 @@ function isCurrentDiscoveryResponse(seq) {
 function discoveryEntryHtml(item, kind = 'catalog') {
   const admin = isAdmin();
   const archived = Boolean(admin && item.archived);
+  const isCatalogManaged = Boolean(
+    item && (item.platform === 'wechat' || /^xiaoyuzhou:[A-Za-z0-9_-]{6,80}$/.test(String(item.key || '').trim())),
+  );
   const requests = typeof discoveryState === 'object' && discoveryState && Array.isArray(discoveryState.myRequests)
     ? discoveryState.myRequests
     : [];
@@ -4181,7 +4188,7 @@ function discoveryEntryHtml(item, kind = 'catalog') {
   const badge = archived
     ? '<span class="discovery-badge discovery-badge-archived">已归档</span>'
     : item.online
-      ? `<span class="discovery-badge discovery-badge-online">${item.platform === 'wechat' ? '已接入' : '已上线'}</span>`
+      ? `<span class="discovery-badge discovery-badge-online">${isCatalogManaged ? '已接入' : '已上线'}</span>`
       : requestStatus === 'pending'
         ? '<span class="discovery-badge discovery-badge-pending">已申请</span>'
         : requestStatus === 'rejected'
@@ -4191,7 +4198,7 @@ function discoveryEntryHtml(item, kind = 'catalog') {
   if (item.online && item.sourceId) {
     actions.push(`<button class="ghost-btn primary discovery-open-reading" type="button" data-discovery-source="${escapeHtml(item.sourceId)}">进入阅读</button>`);
   }
-  if (admin && (item.platform === 'wechat' || item.activatable) && (!item.activated || archived)) {
+  if (admin && (isCatalogManaged || item.activatable) && (!item.activated || archived)) {
     const restore = archived ? 'true' : 'false';
     const label = archived ? '恢复来源' : item.online ? '完成接入' : '加入自定义来源';
     const busy = discoveryState.activatingKey === item.key;
@@ -4199,8 +4206,8 @@ function discoveryEntryHtml(item, kind = 'catalog') {
   }
   const canRequestPodcast = typeof REQUESTABLE_PODCAST_KEYS !== 'undefined'
     ? REQUESTABLE_PODCAST_KEYS.has(item.key)
-    : item.key === 'podcast:wandianliao';
-  if (!admin && (item.platform === 'wechat' || canRequestPodcast) && !item.online) {
+    : ['podcast:wandianliao', 'podcast:bannatie', 'xiaoyuzhou:62382c1103bea1ebfffa1c00'].includes(item.key);
+  if (!admin && (isCatalogManaged || canRequestPodcast) && !item.online) {
     if (requestStatus === 'pending') {
       actions.push(`<button class="ghost-btn discovery-requested" type="button" disabled aria-label="已申请接入：${escapeHtml(item.name)}">已申请</button>`);
     } else if (requestStatus !== 'rejected') {
@@ -4211,7 +4218,7 @@ function discoveryEntryHtml(item, kind = 'catalog') {
   const action = actions.length ? `<div class="discovery-entry-action">${actions.join('')}</div>` : '';
   const meta = [];
   if (kind === 'recommended' && item.description) meta.push(`<span class="discovery-entry-description">${escapeHtml(item.description)}</span>`);
-  if (item.platform === 'wechat' && item.online) {
+  if (isCatalogManaged && item.online) {
     meta.push('<span class="discovery-history-coverage">早于当前供给窗口的历史覆盖未知</span>');
   }
   if (item.platform === 'podcast' && item.online && item.sourceId && typeof sourceById === 'function') {
@@ -4308,10 +4315,12 @@ function formatSourceCoverageRange(coverage) {
 
 function sourceCoverageNoticeLabel(source) {
   const coverage = source && source.coverage;
-  if (!coverage || (!coverage.entryCount && coverage.status === 'unknown' && !coverage.feedOrigin)) return '';
+  if (!coverage || (!coverage.entryCount && !coverage.feedItemCount && coverage.status === 'unknown' && !coverage.feedOrigin)) return '';
   const parts = [];
-  const isPodcast = Boolean((source && source.category === 'podcast') || coverage.platformPid || coverage.feedOrigin);
-  if (coverage.entryCount > 0) parts.push(isPodcast ? `已收录 ${coverage.entryCount} 期` : `已存 ${coverage.entryCount} 篇`);
+  const hasFeedWindowCount = Number(coverage.feedItemCount) > 0 || Boolean(coverage.platformDeclaration);
+  const usePodcastUnit = Boolean(((source && source.category === 'podcast') || coverage.platformPid || coverage.feedOrigin) && !hasFeedWindowCount);
+  if (coverage.entryCount > 0) parts.push(usePodcastUnit ? `已收录 ${coverage.entryCount} 期` : `已存 ${coverage.entryCount} 篇`);
+  if (Number(coverage.feedItemCount) > 0) parts.push(`当前供给 ${Number(coverage.feedItemCount)} 条`);
   const range = formatSourceCoverageRange(coverage);
   if (range) parts.push(range);
   if (coverage.feedOrigin) parts.push(coverage.feedOrigin);
@@ -4333,6 +4342,7 @@ function sourceCoverageNoticeLabel(source) {
     if (verifiedText) parts.push(`核验于 ${verifiedText}`);
   }
   if (coverage.summaryText) parts.push(coverage.summaryText);
+  if (coverage.platformDeclaration) parts.push(coverage.platformDeclaration);
   return parts.join(' · ');
 }
 
@@ -4467,7 +4477,10 @@ async function selectDiscoverySource(sourceId) {
 
 async function requestDiscoverySource(catalogKey, name = '') {
   const key = String(catalogKey || '').trim();
-  if ((!isWechatCatalogKey(key) && !REQUESTABLE_PODCAST_KEYS.has(key)) || discoveryState.requestingKey) return;
+  const isRequestableKey = isWechatCatalogKey(key)
+    || /^(?:xiaoyuzhou:[A-Za-z0-9_-]{6,80}|podcast:[a-z0-9_-]{3,80})$/.test(key)
+    || REQUESTABLE_PODCAST_KEYS.has(key);
+  if (!isRequestableKey || discoveryState.requestingKey) return;
   if (!state.me) {
     state.pendingSourceRequest = { key, name: String(name || '').trim() };
     openAuth('login');
@@ -4536,15 +4549,16 @@ async function requestDiscoverySource(catalogKey, name = '') {
 }
 
 async function activateDiscoverySource(catalogKey, restore = false) {
-  if (!isAdmin() || !/^(?:wechat:[A-Za-z0-9_-]{6,80}|podcast:[a-z0-9_-]{3,80})$/.test(String(catalogKey || '')) || discoveryState.activatingKey) return;
-  const isPodcast = String(catalogKey || '').startsWith('podcast:');
+  const key = String(catalogKey || '').trim();
+  if (!isAdmin() || !/^(?:wechat:[A-Za-z0-9_-]{6,80}|xiaoyuzhou:[A-Za-z0-9_-]{6,80}|podcast:[a-z0-9_-]{3,80})$/.test(key) || discoveryState.activatingKey) return;
+  const isPodcast = key.startsWith('podcast:') || key.startsWith('xiaoyuzhou:');
   const kindLabel = isPodcast ? '播客' : '公众号';
-  discoveryState.activatingKey = catalogKey;
+  discoveryState.activatingKey = key;
   discoveryState.activationMessage = restore ? `正在恢复并校验${kindLabel}来源…` : `正在校验并加入${kindLabel}来源…`;
   renderSourceDiscovery();
   let activatedSourceId = '';
   try {
-    const result = await api(`/api/admin/source-catalog/${encodeURIComponent(catalogKey)}/activate`, {
+    const result = await api(`/api/admin/source-catalog/${encodeURIComponent(key)}/activate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(restore ? { restore: true } : {}),
@@ -4552,7 +4566,7 @@ async function activateDiscoverySource(catalogKey, restore = false) {
     const count = Number(result.entryCount) || 0;
     activatedSourceId = String(result.source && result.source.id || '');
     discoveryState.activationMessage = isPodcast
-      ? `${restore ? '播客已恢复' : '播客已接入'}：本次收录 ${count} 期；正文为 show notes（非逐字稿）；${result.historyCoverage || '覆盖范围尚待核验'}，不宣称全集。`
+      ? `${restore ? '播客已恢复' : '播客已接入'}：本次收录 ${count} 期；正文为 show notes（非逐字稿）；${result.historyCoverage || '覆盖范围尚待核验'}，其余历史将在后台继续回填。`
       : `${restore ? '来源已恢复' : '来源已接入'}：本次供给 ${count} 条；正文范围保留为供给正文/摘要/未知，不声明完整性；供给窗口之外的历史暂未验证。`;
     await loadSources();
     await loadSourceCatalog({ reset: true });
@@ -4566,7 +4580,7 @@ async function activateDiscoverySource(catalogKey, restore = false) {
     if (discoveryState.open) {
       const focusable = Array.from(document.querySelectorAll('[data-discovery-source], [data-discovery-activate]'))
         .find(button => button.dataset.discoverySource === activatedSourceId
-          || button.dataset.discoveryActivate === catalogKey);
+          || button.dataset.discoveryActivate === key);
       if (focusable) focusable.focus();
     }
   }
@@ -4880,6 +4894,9 @@ function renderList({ preserveScroll = false } = {}) {
     notice.className = 'source-coverage-banner';
     if (sourceNoticeMismatch && typeof notice.setAttribute === 'function') {
       notice.setAttribute('data-mismatch', '1');
+    }
+    if (activeFilterSource && activeFilterSource.coverage && activeFilterSource.coverage.status && typeof notice.setAttribute === 'function') {
+      notice.setAttribute('data-coverage-status', activeFilterSource.coverage.status);
     }
     notice.textContent = sourceNoticeText;
     el.appendChild(notice);
@@ -8460,11 +8477,12 @@ async function handleModerationAction(button) {
   if (!action || !requestId) return;
   const request = (state.moderationRequests || []).find(item => item && item.id === requestId) || null;
   const isSource = Boolean(request && request.requestKind === 'source');
+  const sourceKindLabel = request && request.catalogPlatform === 'podcast' ? '播客' : '公众号';
   const confirmations = isSource
     ? {
         approve: request && request.sourceArchived
-          ? '该公众号此前已归档，批准后将校验并恢复为自定义来源。继续吗？'
-          : '批准后将校验该公众号订阅源并接入为自定义来源（仅接入当前供给窗口文章，历史不自动触发 AI）。继续吗？',
+          ? `该${sourceKindLabel}此前已归档，批准后将校验并恢复为自定义来源。继续吗？`
+          : `批准后将校验该${sourceKindLabel}订阅源并接入为自定义来源（仅接入当前供给窗口条目，历史不自动触发 AI）。继续吗？`,
         reject: '拒绝这条来源接入申请？目标订阅源不会被访问。',
       }
     : {
@@ -10387,6 +10405,60 @@ async function sendAgentMessage(text) {
   }
 }
 
+function safeHttpHref(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function renderReaderAudioHtml(entry, source) {
+  if (!entry || !entry.audio || !entry.audio.url) return '';
+  const audioUrl = safeHttpHref(entry.audio.url);
+  if (!audioUrl) return '';
+  const showName = String(source && source.name || '').trim();
+  const showUrl = safeHttpHref(source && source.siteUrl);
+  const creator = String(entry.author || '').trim();
+  const episodeUrl = safeHttpHref(entry.link);
+  let audioHost = '';
+  try { audioHost = new URL(audioUrl).hostname.toLowerCase(); } catch { audioHost = ''; }
+  const isWavpub = Boolean(
+    (source && source.license && /wavpub/i.test(String(source.license.name || '') + String(source.license.url || '')))
+    || /(?:^|\.)wavpub\.com$/i.test(audioHost),
+  );
+  const licenseUrl = safeHttpHref(source && source.license && source.license.url)
+    || (isWavpub ? 'https://wav.pub/copyright/podcast-license-v2' : '');
+  const licenseName = String(source && source.license && source.license.name || '').trim()
+    || (isWavpub ? 'WavPub License v2' : '');
+
+  const metaItems = [];
+  if (showName) {
+    metaItems.push(showUrl
+      ? `<span>节目：<a href="${escapeHtml(showUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(showName)}</a></span>`
+      : `<span>节目：${escapeHtml(showName)}</span>`);
+  }
+  if (creator) {
+    metaItems.push(`<span>创作者：${escapeHtml(creator)}</span>`);
+  }
+  if (episodeUrl) {
+    metaItems.push(`<span>来源：<a href="${escapeHtml(episodeUrl)}" target="_blank" rel="noopener noreferrer nofollow">单集原文页</a></span>`);
+  }
+  if (licenseUrl && licenseName) {
+    metaItems.push(`<span>授权：<a href="${escapeHtml(licenseUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(licenseName)}</a></span>`);
+  }
+  const hasYouTubeNote = /youtube-podcast-transcript-note/.test(String(entry.content || ''));
+  return `
+    <div class="reader-audio-card">
+      <audio controls preload="none" src="${escapeHtml(audioUrl)}"></audio>
+      ${metaItems.length ? `<div class="reader-audio-attribution">${metaItems.join('')}</div>` : ''}
+      ${!hasYouTubeNote ? '<p class="reader-podcast-notes-label reader-audio-shownotes-note"><strong>节目说明（show notes · 非逐字稿）</strong>：以下为 RSS 提供的节目说明（Show Notes），未包含逐字稿；完整节目请通过上方播放器收听。</p>' : ''}
+    </div>`;
+}
+
 function openEntry(entry, options = {}) {
   return getWorkspaceNavigation().go({ ...options, view: 'reading', entry });
 }
@@ -10482,16 +10554,9 @@ async function loadEntry(e, { tab = null, focus = null, aiAssetId = '', commentI
   loadReaderRelatedData(e);
   if (updateUrl) syncReaderUrl({ replace: replaceUrl, commentId, annotationId, chatMessageId });
 
-  const playableAudioUrl = e.audio && e.audio.url && /^https?:\/\//i.test(String(e.audio.url))
-    ? String(e.audio.url)
-    : '';
-  const audioAttribution = [
-    src ? src.name : '',
-    e.author && (!src || e.author !== src.name) ? e.author : '',
-  ].filter(Boolean).join(' · ');
-  $('#reader-audio').innerHTML = playableAudioUrl && isAudioPodcastEntry
-    ? `<div class="reader-audio-card"><div class="reader-audio-head"><span class="reader-audio-source">${escapeHtml(audioAttribution || '播客音频')}</span><span class="reader-audio-badge">音频播客</span></div><audio controls preload="none" src="${escapeHtml(playableAudioUrl)}"></audio><p class="reader-audio-shownotes-note"><strong>节目说明（show notes · 非逐字稿）</strong>：下方文字仅来自订阅源发布的节目说明，并非音频逐字稿。完整收听请播放上方音频。</p></div>`
-    : (playableAudioUrl ? `<audio controls preload="none" src="${escapeHtml(playableAudioUrl)}"></audio>` : '');
+  $('#reader-audio').innerHTML = typeof renderReaderAudioHtml === 'function'
+    ? renderReaderAudioHtml(e, src)
+    : (e.audio ? `<audio controls preload="none" src="${escapeHtml(e.audio.url)}"></audio>` : '');
   $('#reader-pane').scrollTop = 0;
   document.getElementById('app').classList.add('reading');
   normalizeReaderWorkbenchLayout({ force: true, preserveExpanded: requestedFocus === 'chat' });
@@ -10525,6 +10590,14 @@ async function loadOriginalContent(e, owner, content = e.content || contentCache
     if (!owner.isCurrent()) return false; // user moved on
   }
   renderOriginalContent(state.activeEntry || e, content);
+  const currentEntry = state.activeEntry || e;
+  if (currentEntry.audio && currentEntry.audio.url && typeof renderReaderAudioHtml === 'function') {
+    const audioEl = $('#reader-audio');
+    if (audioEl) {
+      const src = (state.sources || []).find(s => s.id === currentEntry.sourceId) || null;
+      audioEl.innerHTML = renderReaderAudioHtml({ ...currentEntry, content: content || currentEntry.content }, src);
+    }
+  }
   updateFetchOriginalButton(state.activeEntry || e);
   if (state.translation && state.activeEntry?.id === e.id) renderTranslation(state.translation);
   return loaded;
@@ -11269,12 +11342,15 @@ function sourceBackfillHtml(source) {
     ? '<span class="m-backfill-badge m-backfill-coverage-mismatch">范围未对齐</span>'
     : '';
   const rangeText = formatSourceCoverageRange(coverage);
-  const countUnit = source && source.category === 'podcast' ? '期' : '篇';
+  const hasFeedWindowCount = Number(coverage.feedItemCount) > 0 || Boolean(coverage.platformDeclaration);
+  const countUnit = source && source.category === 'podcast' && !hasFeedWindowCount ? '期' : '篇';
   const metaParts = [
     rangeText,
     `已存 ${Number(coverage.entryCount) || 0} ${countUnit}`,
+    Number(coverage.feedItemCount) > 0 ? `当前供给 ${Number(coverage.feedItemCount)} 条` : '',
     coverage.feedOrigin || '',
     coverage.summaryText || '',
+    coverage.platformDeclaration || '',
   ].filter(Boolean);
 
   let progressHtml = '';

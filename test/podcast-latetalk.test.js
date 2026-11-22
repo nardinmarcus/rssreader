@@ -163,14 +163,16 @@ test('LateTalk official redirect chain, SSRF/identity rejection, client URL pinn
     assert.equal(JSON.stringify(pubCat.body).includes(FIRESIDE_RSS_URL), false);
     assert.equal(JSON.stringify(pubCat.body).includes(LATETALK_PID), false);
 
-    // Admin catalog exposes activatable only on LateTalk (not T6/T8).
+    // Admin catalog exposes activatable on verified podcast shows (not unconfigured T6).
     const adminCat = await jsonRequest(server.baseUrl, '/api/source-catalog?platform=podcast', {
       headers: { Cookie: admin },
     });
     const adminByKey = new Map(adminCat.body.recommended.map(s => [s.key, s]));
     assert.equal(adminByKey.get(LATETALK_KEY).activatable, true);
     assert.equal(Boolean(adminByKey.get('podcast:42zhangjing').activatable), false);
-    assert.equal(Boolean(adminByKey.get('podcast:bannatie').activatable), false);
+    const bannatieAdmin = adminByKey.get('xiaoyuzhou:62382c1103bea1ebfffa1c00') || adminByKey.get('podcast:bannatie');
+    assert.ok(bannatieAdmin);
+    assert.equal(bannatieAdmin.online, false);
 
     // 1. Private loopback redirect hop is rejected by SSRF check before contacting 127.0.0.1.
     fs.writeFileSync(statePath, JSON.stringify({ redirectMode: 'private-hop', feedMode: 'normal' }));
