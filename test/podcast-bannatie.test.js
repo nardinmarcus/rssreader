@@ -672,9 +672,9 @@ test('UI helpers render xiaoyuzhou discovery actions, separated coverage/mismatc
   assert.match(adminHtml, new RegExp(`data-discovery-activate="${BANNATIE_KEY}"`));
 
   const unverifiedHtml = ctx.discoveryEntryHtml({
-    key: 'podcast:42zhangjing',
+    key: 'podcast:unverified-show',
     platform: 'podcast',
-    name: '42章经',
+    name: '未配置播客',
     online: false,
   }, 'recommended');
   assert.doesNotMatch(unverifiedHtml, /<button/);

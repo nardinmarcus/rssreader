@@ -169,7 +169,10 @@ test('LateTalk official redirect chain, SSRF/identity rejection, client URL pinn
     });
     const adminByKey = new Map(adminCat.body.recommended.map(s => [s.key, s]));
     assert.equal(adminByKey.get(LATETALK_KEY).activatable, true);
-    assert.equal(Boolean(adminByKey.get('podcast:42zhangjing').activatable), false);
+    const fortyTwoAdmin = adminByKey.get('xiaoyuzhou:648b0b641c48983391a63f98') || adminByKey.get('podcast:42zhangjing');
+    assert.ok(fortyTwoAdmin);
+    assert.equal(fortyTwoAdmin.online, false);
+    assert.equal(fortyTwoAdmin.activatable, true);
     const bannatieAdmin = adminByKey.get('xiaoyuzhou:62382c1103bea1ebfffa1c00') || adminByKey.get('podcast:bannatie');
     assert.ok(bannatieAdmin);
     assert.equal(bannatieAdmin.online, false);
