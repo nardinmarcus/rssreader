@@ -3263,7 +3263,7 @@ app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req,
       }
       let activation;
       try {
-        activation = await sourceIngestion.activateWechatCatalogKey(existing.catalogKey, {
+        activation = await sourceIngestion.activateCatalogKey(existing.catalogKey, {
           restore: Boolean(req.body && req.body.restore === true),
         });
       } catch (err) {
@@ -3276,10 +3276,13 @@ app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req,
         return sendError(res, err, fallbackMessage);
       }
       wakeBackfillWorkerIfNeeded();
+      clearPublicProjectionCaches();
       const reviewed = store.reviewSubmissionRequest(existing.id, {
         status: 'approved',
         reviewedBy: req.user.id,
-        reason: '管理员审核通过并接入公众号来源',
+        reason: existing.catalogPlatform === 'podcast'
+          ? '管理员审核通过并接入播客来源'
+          : '管理员审核通过并接入公众号来源',
         sourceId: activation.source.id,
       });
       return res.json({
@@ -4198,22 +4201,31 @@ app.post('/api/refresh', requireLogin, async (req, res) => {
 
 app.post('/api/admin/source-catalog/:key/activate', requireAdmin, async (req, res) => {
   try {
-    const result = await sourceIngestion.activateWechatCatalogKey(req.params.key, {
+    const result = await sourceIngestion.activateCatalogKey(req.params.key, {
       restore: Boolean(req.body && req.body.restore === true),
     });
     wakeBackfillWorkerIfNeeded();
+    clearPublicProjectionCaches();
     res.status(result.created ? 201 : 200).json(result);
   } catch (e) {
-    sendError(res, e, 'WeChat source activation failed');
+    const fallback = String(req.params.key || '').trim().startsWith('podcast:')
+      ? 'Podcast source activation failed'
+      : 'WeChat source activation failed';
+    sendError(res, e, fallback);
   }
 });
 
 app.post('/api/sources', requireAdmin, async (req, res) => {
   try {
-    const catalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(req.body && req.body.feedUrl);
+    const requestedFeedUrl = req.body && req.body.feedUrl;
+    const catalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(requestedFeedUrl)
+      || (typeof sourceDiscovery.verifiedShowKeyForFeedUrl === 'function'
+        ? sourceDiscovery.verifiedShowKeyForFeedUrl(requestedFeedUrl)
+        : '');
     if (catalogKey) {
-      const result = await sourceIngestion.activateWechatCatalogKey(catalogKey);
+      const result = await sourceIngestion.activateCatalogKey(catalogKey);
       wakeBackfillWorkerIfNeeded();
+      clearPublicProjectionCaches();
       return res.status(result.created ? 201 : 200).json(result);
     }
     const source = fetcher.createCustomSource(req.body);
@@ -4266,19 +4278,22 @@ app.patch('/api/sources/:id', requireAdmin, (req, res) => {
     const hasFeedUrlUpdate = Object.prototype.hasOwnProperty.call(body, 'feedUrl');
     const requestedFeedUrl = hasFeedUrlUpdate ? String(body.feedUrl || '').trim() : '';
     const ingestion = hasFeedUrlUpdate ? store.getSourceIngestionBySourceId(current.id) : null;
-    if (ingestion && ingestion.platform === 'wechat' && requestedFeedUrl !== ingestion.feedUrl) {
+    if (ingestion && requestedFeedUrl !== ingestion.feedUrl) {
       return res.status(409).json({
-        error: 'WeChat source feed URL is pinned to its catalog ingestion URL; use catalog-key activation for catalog changes',
+        error: 'Catalog or verified source feed URL is pinned to its verified ingestion URL; use catalog-key activation for catalog changes',
       });
     }
     if (hasFeedUrlUpdate) {
       const requestedCatalogKey = sourceDiscovery.wechatCatalogKeyForFeedUrl(requestedFeedUrl);
-      if (requestedCatalogKey && (!ingestion
-          || ingestion.platform !== 'wechat'
-          || ingestion.catalogKey !== requestedCatalogKey
+      const requestedVerifiedKey = typeof sourceDiscovery.verifiedShowKeyForFeedUrl === 'function'
+        ? sourceDiscovery.verifiedShowKeyForFeedUrl(requestedFeedUrl)
+        : '';
+      const matchedKey = requestedCatalogKey || requestedVerifiedKey;
+      if (matchedKey && (!ingestion
+          || ingestion.catalogKey !== matchedKey
           || ingestion.feedUrl !== requestedFeedUrl)) {
         return res.status(409).json({
-          error: 'WeChat feeds must be activated by catalog key through /api/admin/source-catalog/:key/activate',
+          error: 'Catalog and verified feeds must be activated by catalog key through /api/admin/source-catalog/:key/activate',
         });
       }
     }
@@ -4366,6 +4381,39 @@ app.post('/api/source-catalog/:key/requests', requireLogin, submissionHourlyRate
   res.setHeader('Cache-Control', 'no-store');
   try {
     const key = String(req.params.key || '').trim();
+    const verifiedShowConfig = typeof sourceDiscovery.resolveVerifiedShowConfig === 'function'
+      ? sourceDiscovery.resolveVerifiedShowConfig(key)
+      : null;
+    if (verifiedShowConfig) {
+      const existingRequest = store.getUserSourceRequestByCatalogKey(req.user.id, verifiedShowConfig.key);
+      if (existingRequest) {
+        return res.status(200).json({
+          pending: existingRequest.status === 'pending',
+          existing: true,
+          request: publicUserSourceRequest(existingRequest),
+        });
+      }
+      const sourceStatus = sourceIngestion.getCatalogSourceStatus(verifiedShowConfig.key);
+      if (sourceStatus.online) {
+        return res.status(409).json({
+          error: '该来源已上线，可直接阅读',
+          sourceId: sourceStatus.source.id,
+        });
+      }
+      const created = store.createSourceCatalogRequest({
+        userId: req.user.id,
+        author: req.user.displayName || req.user.email || '读者',
+        catalogKey: verifiedShowConfig.key,
+        platform: verifiedShowConfig.platform,
+        name: verifiedShowConfig.name,
+        note: req.body && req.body.note,
+      });
+      return res.status(created.existing ? 200 : 202).json({
+        pending: created.request.status === 'pending',
+        existing: created.existing,
+        request: publicUserSourceRequest(created.request),
+      });
+    }
     const verifiedShow = VERIFIED_SHOWS.find(show => show.key === key);
     if (verifiedShow) {
       const onlineSource = verifiedShow.sourceId ? fetcher.getSourceById(verifiedShow.sourceId) : null;
