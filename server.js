@@ -3280,7 +3280,7 @@ app.post('/api/admin/submission-requests/:id/approve', requireAdmin, async (req,
       const reviewed = store.reviewSubmissionRequest(existing.id, {
         status: 'approved',
         reviewedBy: req.user.id,
-        reason: existing.catalogPlatform === 'podcast'
+        reason: (existing.catalogPlatform === 'podcast' || activation.platform === 'podcast')
           ? '管理员审核通过并接入播客来源'
           : '管理员审核通过并接入公众号来源',
         sourceId: activation.source.id,
@@ -4208,7 +4208,8 @@ app.post('/api/admin/source-catalog/:key/activate', requireAdmin, async (req, re
     clearPublicProjectionCaches();
     res.status(result.created ? 201 : 200).json(result);
   } catch (e) {
-    const fallback = String(req.params.key || '').trim().startsWith('podcast:')
+    const key = String(req.params.key || '').trim();
+    const fallback = (key.startsWith('podcast:') || key.startsWith('xiaoyuzhou:'))
       ? 'Podcast source activation failed'
       : 'WeChat source activation failed';
     sendError(res, e, fallback);
@@ -4294,6 +4295,14 @@ app.patch('/api/sources/:id', requireAdmin, (req, res) => {
           || ingestion.feedUrl !== requestedFeedUrl)) {
         return res.status(409).json({
           error: 'Catalog and verified feeds must be activated by catalog key through /api/admin/source-catalog/:key/activate',
+        });
+      }
+      const requestedVerifiedShow = sourceDiscovery.verifiedShowForFeedUrl(requestedFeedUrl);
+      if (requestedVerifiedShow && (!ingestion
+          || ingestion.catalogKey !== requestedVerifiedShow.key
+          || ingestion.feedUrl !== requestedFeedUrl)) {
+        return res.status(409).json({
+          error: 'Verified podcast feeds must be activated by catalog key through /api/admin/source-catalog/:key/activate',
         });
       }
     }
@@ -4420,7 +4429,37 @@ app.post('/api/source-catalog/:key/requests', requireLogin, submissionHourlyRate
       if (onlineSource && fetcher.isEnabled(onlineSource)) {
         return res.status(409).json({ error: '该来源已上线，可直接阅读', sourceId: onlineSource.id });
       }
-      return res.status(422).json({ error: '该目录来源暂不支持自助申请接入' });
+      if (!verifiedShow.verifiedFeedUrl) {
+        return res.status(422).json({ error: '该目录来源暂不支持自助申请接入' });
+      }
+      const existingRequest = store.getUserSourceRequestByCatalogKey(req.user.id, verifiedShow.key);
+      if (existingRequest) {
+        return res.status(200).json({
+          pending: existingRequest.status === 'pending',
+          existing: true,
+          request: publicUserSourceRequest(existingRequest),
+        });
+      }
+      const sourceStatus = sourceIngestion.getCatalogSourceStatus(verifiedShow.key);
+      if (sourceStatus.online) {
+        return res.status(409).json({
+          error: '该来源已上线，可直接阅读',
+          sourceId: sourceStatus.source.id,
+        });
+      }
+      const created = store.createSourceCatalogRequest({
+        userId: req.user.id,
+        author: req.user.displayName || req.user.email || '读者',
+        catalogKey: verifiedShow.key,
+        platform: verifiedShow.platform,
+        name: verifiedShow.name,
+        note: req.body && req.body.note,
+      });
+      return res.status(created.existing ? 200 : 202).json({
+        pending: created.request.status === 'pending',
+        existing: created.existing,
+        request: publicUserSourceRequest(created.request),
+      });
     }
     if (!/^wechat:[A-Za-z0-9_-]{6,80}$/.test(key)) {
       return res.status(400).json({ error: '无效的来源目录标识' });
