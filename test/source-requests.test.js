@@ -169,12 +169,12 @@ test('source request lifecycle: auth, server catalog resolution, privacy isolati
     });
     assert.equal(missingKey.response.status, 404);
 
-    const unsupportedPodcast = await jsonRequest(server.baseUrl, '/api/source-catalog/podcast:42zhangjing/requests', {
+    const unsupportedPodcast = await jsonRequest(server.baseUrl, '/api/source-catalog/podcast:unverified-show/requests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: readerA.cookie },
       body: JSON.stringify({}),
     });
-    assert.equal(unsupportedPodcast.response.status, 422);
+    assert.equal(unsupportedPodcast.response.status, 400);
 
     const onlinePodcast = await jsonRequest(server.baseUrl, '/api/source-catalog/podcast:xiaojun-shangye-fangtanlu/requests', {
       method: 'POST',

@@ -4379,6 +4379,7 @@ app.get('/api/source-catalog', async (req, res) => {
       cursor: req.query.cursor,
       limit: req.query.limit,
       admin: Boolean(req.user && req.user.role === 'admin'),
+      authenticated: Boolean(req.user),
     });
     res.json(projection);
   } catch (e) {

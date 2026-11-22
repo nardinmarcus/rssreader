@@ -23,7 +23,8 @@
     "test": "node --test test/*.test.js",
     "icons:generate": "node scripts/generate-lucide-icons.js",
     "refresh:worker": "node scripts/refresh-worker.js --kind=refresh",
-    "verify:periodicals-shadow": "node scripts/verify-periodicals-shadow.js"
+    "verify:periodicals-shadow": "node scripts/verify-periodicals-shadow.js",
+    "smoke:xyzfm": "node scripts/podcast-xyzfm-smoke.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

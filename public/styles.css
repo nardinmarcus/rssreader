@@ -2378,6 +2378,22 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 }
 .reader-audio-shownotes-note strong,
 .reader-podcast-notes-label strong { color: var(--text-1); }
+.reader-audio-error,
+.reader-audio-unavailable {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, var(--radius-sm));
+  border: 1px solid color-mix(in srgb, var(--danger, #c43b3b) 28%, var(--border));
+  background: color-mix(in srgb, var(--danger, #c43b3b) 6%, var(--surface));
+  color: var(--text-1);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.reader-audio-error a,
+.reader-audio-unavailable a {
+  color: var(--accent);
+  margin-left: 6px;
+}
 
 .reader-tabs {
   position: sticky;
