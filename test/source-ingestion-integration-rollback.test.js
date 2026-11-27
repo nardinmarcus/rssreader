@@ -431,8 +431,11 @@ test('T9 cross-source integration: WeChat + 4 verified podcasts, role isolation,
         body: JSON.stringify({ sourceIds: [ordinaryId] }),
       });
       await waitForJobsIdle(server.baseUrl, admin);
-      const ordEntries = await jsonRequest(server.baseUrl, `/api/entries?source=${encodeURIComponent(ordinaryId)}&limit=10`);
-      assert.ok(ordEntries.body.entries.some(e => e.title.includes('#2')), 'ordinary refresh must advance concurrently while backfill is active');
+      const ordAdvanced = await waitUntil(async () => {
+        const ordEntries = await jsonRequest(server.baseUrl, `/api/entries?source=${encodeURIComponent(ordinaryId)}&limit=10`);
+        return ordEntries.body.entries.some(e => e.title.includes('#2'));
+      }, 15000, 60, 'ordinary refresh entry #2').catch(() => false);
+      assert.ok(ordAdvanced, 'ordinary refresh must advance concurrently while backfill is active');
     }
 
     // Restart server mid/post backfill to verify durable worker recovery and zero duplicates.
@@ -657,7 +660,10 @@ test('AC-12 real pre-T1 rollback drill: stop sequence, boot cd19628 against same
     // Seed reader & admin artifacts: entry IDs, favorites, Highlight Annotations, versioned translation, deep links, soft delete.
     const wechatHist = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(wechatId)}/history?limit=10`);
     const bannatieHist = await jsonRequest(server.baseUrl, `/api/sources/${encodeURIComponent(bannatieId)}/history?limit=5`);
-    const ordHist = await jsonRequest(server.baseUrl, `/api/entries?source=${encodeURIComponent(ordinaryId)}&limit=5`);
+    const ordHist = await waitUntil(async () => {
+      const res = await jsonRequest(server.baseUrl, `/api/entries?source=${encodeURIComponent(ordinaryId)}&limit=5`);
+      return res.body.entries.length ? res : null;
+    }, 15000, 60, 'ordinary source first entries');
     const wechatTargetEntry = wechatHist.body.entries[0];
     const wechatDeletedEntry = wechatHist.body.entries[1];
     const bannatieTargetEntry = bannatieHist.body.entries[0];

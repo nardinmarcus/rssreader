@@ -756,48 +756,6 @@ test('an off-mode legacy save atomically invalidates stale version pointers with
   }
 });
 
-test('legacy migration scan exposes current translations and stable user contribution assets', () => {
-  const entryId = 'scan-legacy-translation-assets';
-  const document = seedCurrentDocument(entryId);
-  const user = createTestUser('scan-legacy-translation-assets');
-  const userAsset = store.saveTranslation(entryId, {
-    userId: user.id,
-    createdBy: user.displayName,
-    titleZh: '用户旧标题',
-    summaryZh: '用户旧摘要',
-    content: [{ source: 'Source body.', target: '用户旧译文。' }],
-    model: 'user-legacy-model',
-    provider: 'deepseek',
-    contentHash: 'unproven-user-content-hash',
-  });
-  store.saveTranslation(entryId, {
-    createdBy: 'Legacy System',
-    titleZh: '系统旧标题',
-    summaryZh: '系统旧摘要',
-    content: [{ source: 'Source body.', target: '系统旧译文。' }],
-    model: 'system-legacy-model',
-    provider: 'deepseek',
-    contentHash: document.sourceHash,
-  });
-
-  assert.equal(typeof store.scanLegacyTranslationsForVersionedMigration, 'function');
-  const records = store.scanLegacyTranslationsForVersionedMigration({ limit: 1000 })
-    .filter(record => record.entryId === entryId);
-
-  assert.deepEqual(records.map(record => record.sourceType).sort(), ['contribution', 'current']);
-  const contribution = records.find(record => record.sourceType === 'contribution');
-  const current = records.find(record => record.sourceType === 'current');
-  assert.equal(contribution.assetId, userAsset.id);
-  assert.equal(contribution.userId, user.id);
-  assert.equal(contribution.author, user.displayName);
-  assert.equal(contribution.model, 'user-legacy-model');
-  assert.equal(current.userId, null);
-  assert.equal(current.author, 'Legacy System');
-  assert.equal(current.model, 'system-legacy-model');
-  assert.equal(current.currentDocumentId, document.id);
-  assert.equal(current.documentSourceHash, document.sourceHash);
-});
-
 test('job fence rejects an old lease without side effects and completes a valid lease atomically', () => {
   const invalidEntryId = 'publish-job-fence-invalid';
   const invalidDocument = seedCurrentDocument(invalidEntryId);

@@ -5,6 +5,7 @@ const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
+const { seedCacheFixture } = require('./helpers/seed-entries');
 
 const projectDir = path.join(__dirname, '..');
 const articleLocator = 'document-borne-ai-worms-can-self-propagate-through-copilot-for-word--8ce46c6026d6';
@@ -67,7 +68,7 @@ async function stopServer(server) {
 }
 
 function seedArticle(dataDir) {
-  fs.writeFileSync(path.join(dataDir, 'cache.json'), JSON.stringify({
+  seedCacheFixture(dataDir, {
     probe: {
       fetchedAt: Date.now(),
       feedTitle: 'Metadata Probe',
@@ -85,7 +86,7 @@ function seedArticle(dataDir) {
         content: '<p>Metadata probe entry.</p>',
       }],
     },
-  }));
+  });
 }
 
 function metadataUrls(html) {

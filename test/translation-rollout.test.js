@@ -56,19 +56,6 @@ test('shadow writes versioned documents without selecting V2 translation', () =>
   });
 });
 
-test('canary selects V2 only for administrators or allowlisted entries', () => {
-  withEnv({
-    VERSIONED_TRANSLATION_MODE: 'canary',
-    VERSIONED_TRANSLATION_CANARY_ENTRY_IDS: 'entry-one, entry-two',
-  }, () => {
-    assert.equal(rollout.usesV2Translation(request(), { id: 'entry-three' }), false);
-    assert.equal(rollout.usesV2Translation(request({ role: 'admin' }), { id: 'entry-three' }), true);
-    assert.equal(rollout.usesV2Translation(request(), { id: 'entry-two' }), true);
-    assert.equal(rollout.autoQueuesSystemTranslation({ id: 'entry-three' }), false);
-    assert.equal(rollout.autoQueuesSystemTranslation({ id: 'entry-two' }), true);
-  });
-});
-
 test('all selects V2 site AI while every BYOK request stays on the legacy path', () => {
   withEnv({ VERSIONED_TRANSLATION_MODE: 'all' }, () => {
     assert.equal(rollout.usesV2Translation(request(), { id: 'entry-one' }), true);
@@ -78,8 +65,8 @@ test('all selects V2 site AI while every BYOK request stays on the legacy path',
       headers: { 'x-ai-key': 'browser-owned-key' },
     }), { id: 'entry-one' }), false);
     assert.equal(rollout.usesV2Translation(request({
-      headers: { 'x-deepseek-key': 'legacy-browser-key' },
-    }), { id: 'entry-one' }), false);
+      headers: { 'x-deepseek-key': 'retired-alias-key' },
+    }), { id: 'entry-one' }), true);
   });
 });
 
@@ -92,8 +79,15 @@ test('rollout module exposes only the approved seam', () => {
   ]);
 });
 
-test('example environment keeps the rollout off with an empty canary allowlist', () => {
+test('retired canary mode fails closed to off', () => {
+  withEnv({ VERSIONED_TRANSLATION_MODE: 'canary' }, () => {
+    assert.equal(rollout.mode(), 'off');
+    assert.equal(rollout.writesVersionedDocuments(), false);
+  });
+});
+
+test('example environment keeps the rollout off without a canary allowlist', () => {
   const example = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8');
   assert.match(example, /^VERSIONED_TRANSLATION_MODE=off$/m);
-  assert.match(example, /^VERSIONED_TRANSLATION_CANARY_ENTRY_IDS=$/m);
+  assert.doesNotMatch(example, /VERSIONED_TRANSLATION_CANARY_ENTRY_IDS/);
 });

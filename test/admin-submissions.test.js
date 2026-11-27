@@ -573,10 +573,15 @@ test('administrator moderation revokes sessions, removes submissions, and requir
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'moderated-reader@example.com', password: 'reader-password-123' }),
     });
-    const weakCompatibility = await jsonRequest(server.baseUrl, `/api/admin/users/${compatibilityUserId}`, {
-      method: 'DELETE',
+    const missingImpactDisable = await jsonRequest(server.baseUrl, `/api/admin/users/${compatibilityUserId}/disable`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
       body: JSON.stringify({ confirmUserId: compatibilityUserId, reason: 'Missing impact must fail.' }),
+    });
+    const removedDeleteAlias = await jsonRequest(server.baseUrl, `/api/admin/users/${compatibilityUserId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({ confirmUserId: compatibilityUserId, reason: 'The DELETE alias no longer exists.' }),
     });
     const staleDisable = await jsonRequest(server.baseUrl, `/api/admin/users/${userId}/disable`, {
       method: 'POST',
@@ -624,7 +629,8 @@ test('administrator moderation revokes sessions, removes submissions, and requir
       submissionsStatus: submissionsBefore.response.status,
       activeBefore: submissionsBefore.body && submissionsBefore.body.activeSubmissionCount,
       concurrentLoginStatus: concurrentLogin.response.status,
-      weakCompatibilityStatus: weakCompatibility.response.status,
+      missingImpactDisableStatus: missingImpactDisable.response.status,
+      removedDeleteAliasStatus: removedDeleteAlias.response.status,
       staleDisableStatus: staleDisable.response.status,
       currentSessionImpact: staleDisable.body && staleDisable.body.currentImpact && staleDisable.body.currentImpact.revokedSessionCount,
       disableStatus: disabled.response.status,
@@ -643,7 +649,8 @@ test('administrator moderation revokes sessions, removes submissions, and requir
       submissionsStatus: 200,
       activeBefore: 1,
       concurrentLoginStatus: 200,
-      weakCompatibilityStatus: 400,
+      missingImpactDisableStatus: 400,
+      removedDeleteAliasStatus: 404,
       staleDisableStatus: 409,
       currentSessionImpact: 2,
       disableStatus: 200,

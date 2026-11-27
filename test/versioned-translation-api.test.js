@@ -410,7 +410,7 @@ async function startServer(dataDir, env = {}) {
       DEEPSEEK_API_KEY: 'site-key-must-not-leak',
       DEEPSEEK_MODEL: 'deepseek-v4-flash',
       DEEPSEEK_BASE_URL: 'https://api.deepseek.com/v1',
-      VERSIONED_TRANSLATION_MODE: 'canary',
+      VERSIONED_TRANSLATION_MODE: 'all',
       TRANSLATION_WORKER_STARTUP: '0',
       TRANSLATION_WORKER_DISABLED: '1',
       UMAMI_SRC: '',
@@ -480,14 +480,12 @@ async function register(baseUrl, email, displayName) {
   return String(result.response.headers.get('set-cookie') || '').split(';')[0];
 }
 
-test('canary site-AI translation POST deduplicates normal requests while force enqueues a new generation', { timeout: 30000 }, async () => {
+test('site-AI translation POST deduplicates normal requests while force enqueues a new generation', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir('versioned-translation-api-');
   const seeded = seedEntry(dataDir);
   let server = null;
   try {
-    server = await startServer(dataDir, {
-      VERSIONED_TRANSLATION_CANARY_ENTRY_IDS: seeded.entryId,
-    });
+    server = await startServer(dataDir);
     const cookie = await login(server.baseUrl);
     const request = () => jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
       method: 'POST',
@@ -539,9 +537,7 @@ test('translation job progress is owner-only and omits persisted or provider-int
   const seeded = seedEntry(dataDir);
   let server = null;
   try {
-    server = await startServer(dataDir, {
-      VERSIONED_TRANSLATION_CANARY_ENTRY_IDS: seeded.entryId,
-    });
+    server = await startServer(dataDir);
     const ownerCookie = await login(server.baseUrl);
     const otherCookie = await register(server.baseUrl, 'other@example.com', 'Other Reader');
     const queued = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
@@ -906,29 +902,13 @@ test('BYOK remains on the synchronous legacy response and never persists a job o
   }
 });
 
-test('missing current document falls back with a structured canary warning and fails closed in all mode', { timeout: 30000 }, async () => {
+test('missing current document fails closed instead of falling back to the legacy path', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir('versioned-translation-missing-document-api-');
   const seeded = seedEntryWithoutDocument(dataDir);
   let server = null;
   try {
-    server = await startServer(dataDir, { VERSIONED_TRANSLATION_MODE: 'canary' });
-    let cookie = await login(server.baseUrl);
-    const canary = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: '{}',
-    });
-    const canaryLogs = await waitForLog(server, /versioned_translation_post_fallback/);
-
-    assert.equal(canary.response.status, 200, JSON.stringify(canary.body));
-    assert.equal(canary.body.translation.titleZh, '无文档旧译文');
-    assert.match(canaryLogs, /"event":"versioned_translation_post_fallback"/);
-    assert.match(canaryLogs, /"code":"ERR_TRANSLATION_DOCUMENT_UNAVAILABLE"/);
-    assert.doesNotMatch(canaryLogs, /site-key-must-not-leak/);
-
-    await stopServer(server);
-    server = await startServer(dataDir, { VERSIONED_TRANSLATION_MODE: 'all' });
-    cookie = await login(server.baseUrl);
+    server = await startServer(dataDir);
+    const cookie = await login(server.baseUrl);
     const all = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -944,7 +924,7 @@ test('missing current document falls back with a structured canary warning and f
   }
 });
 
-test('a malformed V2 read falls back only in canary and emits a structured warning', { timeout: 30000 }, async () => {
+test('a malformed V2 read fails closed and emits a structured warning without secrets', { timeout: 30000 }, async () => {
   const dataDir = createTempDataDir('versioned-translation-read-fallback-api-');
   const seeded = seedEntry(dataDir);
   const versions = seedPublishedVersions(dataDir);
@@ -954,40 +934,18 @@ test('a malformed V2 read falls back only in canary and emits a structured warni
   db.close();
   let server = null;
   try {
-    server = await startServer(dataDir, { VERSIONED_TRANSLATION_MODE: 'canary' });
-    let cookie = await login(server.baseUrl);
-    const canary = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
+    server = await startServer(dataDir);
+    const cookie = await login(server.baseUrl);
+    const all = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
       headers: { Cookie: cookie },
     });
     const logs = await waitForLog(server, /versioned_translation_read_failed/);
 
-    assert.equal(canary.response.status, 200, JSON.stringify(canary.body));
-    assert.equal(canary.body.translation.titleZh, '当前版本标题');
-    assert.equal(canary.body.warning.code, 'ERR_TRANSLATION_RENDER_INCOMPLETE');
-    assert.match(logs, /"event":"versioned_translation_read_failed"/);
-    assert.match(logs, /"mode":"canary"/);
-    assert.doesNotMatch(logs, /site-key-must-not-leak/);
-
-    const queued = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: '{}',
-    });
-    const postLogs = await waitForLog(server, /versioned_translation_post_state_fallback/);
-    assert.equal(queued.response.status, 202, JSON.stringify(queued.body));
-    assert.equal(queued.body.translation.titleZh, '当前版本标题');
-    assert.equal(queued.body.warning.code, 'ERR_TRANSLATION_RENDER_INCOMPLETE');
-    assert.match(postLogs, /"event":"versioned_translation_post_state_fallback"/);
-
-    await stopServer(server);
-    server = await startServer(dataDir, { VERSIONED_TRANSLATION_MODE: 'all' });
-    cookie = await login(server.baseUrl);
-    const all = await jsonRequest(server.baseUrl, `/api/entry/${seeded.entryId}/translation`, {
-      headers: { Cookie: cookie },
-    });
-
     assert.equal(all.response.status, 500, JSON.stringify(all.body));
     assert.equal(Object.prototype.hasOwnProperty.call(all.body, 'translation'), false);
+    assert.match(logs, /"event":"versioned_translation_read_failed"/);
+    assert.match(logs, /"mode":"all"/);
+    assert.doesNotMatch(logs, /site-key-must-not-leak/);
   } finally {
     await stopServer(server);
     fs.rmSync(dataDir, { recursive: true, force: true });

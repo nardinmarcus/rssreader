@@ -4,7 +4,7 @@
 
 ## 不可越过的边界
 
-- 生产 `PERIODICALS_MODE` 保持 `off`。禁止在生产启用 `on`，也禁止为了验证而修改生产 SQLite。
+- 生产当前运行 `PERIODICALS_MODE=on`（2026-11-27 只读核查）。本手册用于后续候选验证，禁止为了验证而修改生产 SQLite。
 - 生产数据只能通过 SQLite 在线备份取得；源目录必须只读挂载，迁移和 shadow 构建只在本地隔离副本中执行。
 - `on` 只能在本地或其他隔离环境验证。模式切换前后必须比较 Source 与 Entry 的持久化摘要。
 - 收据只允许包含候选 SHA/tree、原子 SQLite snapshot SHA-256、行数、精确值摘要、计数、时间戳和安全错误码。不得包含正文、完整 Prompt、Key、Cookie、session token、用户 ID 或 provider 原始响应。

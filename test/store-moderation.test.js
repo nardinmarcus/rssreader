@@ -324,7 +324,7 @@ test('admin submission views and soft deletion stay scoped to the exact user', (
   saveSubmission('same-name-entry', sameName);
   saveSubmission('other-entry', other);
 
-  const summary = store.getAdminSubmissionUsers({ q: 'same-name', limit: 20 });
+  const summary = store.getAdminUsersPage({ q: 'same-name', limit: 20 }).users;
   assert.deepEqual(summary.map(item => item.userId).sort(), [reader.id, sameName.id].sort());
   assert.equal(summary.find(item => item.userId === reader.id).activeSubmissionCount, 2);
 

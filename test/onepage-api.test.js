@@ -5,6 +5,7 @@ const net = require('net');
 const path = require('path');
 const { spawn } = require('child_process');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
+const { seedCacheFixture } = require('./helpers/seed-entries');
 
 const projectDir = path.join(__dirname, '..');
 
@@ -87,7 +88,7 @@ async function adminCookie(baseUrl) {
 
 function seedCache(dataDir, entryId) {
   const paragraph = 'Reliable agents are evaluated on real tasks, recovery paths, and complete task outcomes. '.repeat(12);
-  fs.writeFileSync(path.join(dataDir, 'cache.json'), JSON.stringify({
+  seedCacheFixture(dataDir, {
     'claude-blog': {
       fetchedAt: Date.now(),
       feedUrl: 'sitemap:https://claude.com/sitemap.xml',
@@ -106,7 +107,7 @@ function seedCache(dataDir, entryId) {
         content: `<h2>Reliable agents</h2><p>${paragraph}</p><p>${paragraph}</p><p>${paragraph}</p>`,
       }],
     },
-  }));
+  });
 }
 
 test('Onepage mode defaults off and is exposed without secrets', { timeout: 30000 }, async () => {

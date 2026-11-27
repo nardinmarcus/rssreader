@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const { createTempDataDir } = require('./helpers/temp-data-dir');
+const { seedCacheFixture } = require('./helpers/seed-entries');
 
 const projectDir = path.join(__dirname, '..');
 
@@ -2277,7 +2278,7 @@ test('Namoo creation draft runs through the authenticated API and persists the m
   const preloadPath = path.join(__dirname, 'helpers', 'mock-ai-preload.js');
   const entryId = 'namoo-draft-e2e-entry';
   const sourceText = '这是一段用于端到端测试的 AI 资料。'.repeat(80);
-  fs.writeFileSync(path.join(dataDir, 'cache.json'), JSON.stringify({
+  seedCacheFixture(dataDir, {
     openai: {
       fetchedAt: Date.now(),
       feedUrl: 'https://openai.com/news/rss.xml',
@@ -2296,7 +2297,7 @@ test('Namoo creation draft runs through the authenticated API and persists the m
         content: `<p>${sourceText}</p>`,
       }],
     },
-  }));
+  });
 
   let server = null;
   try {
@@ -2348,7 +2349,7 @@ test('off mode preserves legacy translation status, content, asset URLs, and BYO
   const preloadPath = path.join(dataDir, 'mock-translation-preload.js');
   const entryId = 'legacy-translation-e2e-entry';
   const sourceText = 'A complete English paragraph with enough detail for translation coverage. '.repeat(30);
-  fs.writeFileSync(path.join(dataDir, 'cache.json'), JSON.stringify({
+  seedCacheFixture(dataDir, {
     openai: {
       fetchedAt: Date.now(),
       feedUrl: 'https://openai.com/news/rss.xml',
@@ -2367,7 +2368,7 @@ test('off mode preserves legacy translation status, content, asset URLs, and BYO
         content: `<p>${sourceText}</p>`,
       }],
     },
-  }));
+  });
   fs.writeFileSync(preloadPath, [
     "const fs = require('fs');",
     'const realFetch = globalThis.fetch;',

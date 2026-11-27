@@ -97,7 +97,7 @@ Copy `.env.example` and fill what you need. Full defaults and comments live ther
 | `DEEPSEEK_*` or `AI_*` | see `.env.example` | Server-funded AI (DeepSeek or OpenAI/Anthropic-compatible) |
 | `RSSHUB_INSTANCES` | three public hubs | Comma-separated fallback list; no local RSSHub container |
 | `PRODUCTHUNT_API_TOKEN` | empty | Server-only developer token for detailed Product Hunt briefs and summary-only history backfill |
-| `VERSIONED_TRANSLATION_MODE` | `off` | `off` \| `shadow` \| `canary` \| `all` |
+| `VERSIONED_TRANSLATION_MODE` | `off` | `off` \| `shadow` \| `all` |
 | `ONEPAGE_MODE` | `off` | `off` \| `admin` \| `all` |
 | `NAMOO_READER_DATA_DIR` | `./data` | Data root (tests must use an isolated dir) |
 | `UMAMI_SRC` / `UMAMI_WEBSITE_ID` | empty | Optional analytics; both must be valid or nothing is injected |
@@ -145,18 +145,17 @@ Final voice and lived detail stay with the human author.
 | --- | --- |
 | `off` | Legacy path only; fastest software rollback (default) |
 | `shadow` | Write immutable docs + raw evidence; translations still use legacy response, schema-1 versions stored for integrity |
-| `canary` | Admin + `VERSIONED_TRANSLATION_CANARY_ENTRY_IDS` use V2; others stay legacy |
 | `all` | All server-AI translations use V2 jobs and immutable versions |
 
 BYOK always stays on the synchronous legacy path. Keys, endpoints, and tuning must not enter jobs, SQLite, or logs.
 
-Before flipping modes: stop the container, backup `.env`, SQLite/WAL, and `raw/`. After deploy with `off`, run document then translation backfills, then:
+Before flipping modes: stop the container, backup `.env`, SQLite/WAL, and `raw/`. After switching, verify the pipeline read-only:
 
 ```bash
 node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
 ```
 
-Backfill helpers: `scripts/backfill-article-documents.js`, `scripts/backfill-translation-versions.js` (`--dry-run`, `--verify-only`, `--after-id` for resume). Application rollback: set mode `off` and recreate the container; versioned tables can remain.
+The one-time document and translation backfill scripts were retired after production completed its migration. A deployment whose data predates the versioned pipeline (before 2026-07-14) must first upgrade through commit `a7341a7` and run `scripts/backfill-article-documents.js` and `scripts/backfill-translation-versions.js` from that commit. Application rollback: set mode `off` and recreate the container; versioned tables can remain.
 
 </details>
 
@@ -170,7 +169,7 @@ Backfill helpers: `scripts/backfill-article-documents.js`, `scripts/backfill-tra
 <details>
 <summary>Data migration notes</summary>
 
-Older builds stored source enablement overrides in `data/state.json`. Startup imports them once with `INSERT OR IGNORE` and never overwrites later UI settings. SQLite is authoritative for articles, users, sessions, source prefs, moderation, versions, jobs, and published assets. `data/raw/` is evidence for versioned documents. `cache.json` / `state.json` and in-memory projections are rebuildable only.
+Older builds stored source enablement overrides in `data/state.json`. Current builds no longer read that file; a deployment that still depends on it must first start once on commit `a7341a7`, which imports it into SQLite. SQLite is authoritative for articles, users, sessions, source prefs, moderation, versions, jobs, and published assets. `data/raw/` is evidence for versioned documents. `cache.json` and in-memory projections are rebuildable only; startup no longer copies `cache.json` entries back into SQLite.
 
 The DB filename `qmreader.sqlite` is a compatibility name for in-place upgrades, not the product brand.
 

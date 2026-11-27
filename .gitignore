@@ -7,7 +7,6 @@ node_modules/
 !.env.example
 data/cache.json
 data/state.json
-data/insights.json
 data/qmreader.sqlite*
 data/*.png
 data/*.log

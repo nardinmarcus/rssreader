@@ -164,7 +164,7 @@ test('user-owned and legacy-unknown current translations are never auto-imperson
   assert.equal(store.getLatestTranslationJobForEntry(legacySeed.entry.id, { includeSystem: true }), '');
 });
 
-test('background auto-refresh obeys shadow and canary entry boundaries', async () => {
+test('background auto-refresh queues system work only in all mode', async () => {
   process.env.DEEPSEEK_API_KEY = 'test-site-key';
 
   process.env.VERSIONED_TRANSLATION_MODE = 'shadow';
@@ -173,18 +173,12 @@ test('background auto-refresh obeys shadow and canary entry boundaries', async (
   const shadowUpdate = await updateDocument(shadow.entry.id);
   assert.equal(shadowUpdate.translationJob, null);
 
-  process.env.VERSIONED_TRANSLATION_MODE = 'canary';
-  process.env.VERSIONED_TRANSLATION_CANARY_ENTRY_IDS = 'auto-canary-enabled';
-  const enabled = await seedDocument('auto-canary-enabled');
+  process.env.VERSIONED_TRANSLATION_MODE = 'all';
+  const enabled = await seedDocument('auto-all-enabled');
   publishCurrent(enabled.entry.id, enabled.document);
   const enabledUpdate = await updateDocument(enabled.entry.id);
 
-  const disabled = await seedDocument('auto-canary-disabled');
-  publishCurrent(disabled.entry.id, disabled.document);
-  const disabledUpdate = await updateDocument(disabled.entry.id);
-
   assert.equal(enabledUpdate.translationJob.ownerType, 'system');
-  assert.equal(disabledUpdate.translationJob, null);
 });
 
 test('missing site credentials never block a document pointer update or persist a secret', async () => {

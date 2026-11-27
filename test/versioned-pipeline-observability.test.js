@@ -386,13 +386,12 @@ test('verification rejects a stale current document', () => {
         content: '<p>Old body.</p>',
       };
       store.upsertEntries([entry]);
-      const scanned = store.scanEntriesForVersionedMigration({ limit: 1 })[0];
-      const compiled = compileLegacyDocument({ entry: scanned });
+      const compiled = compileLegacyDocument({ entry });
       const document = store.insertArticleDocument({
         ...compiled,
         id: 'stale-legacy-document-' + crypto.randomUUID(),
         entryId: entry.id,
-        createdAt: scanned.createdAt,
+        createdAt: Date.now(),
       });
       store.setCurrentArticleDocument(entry.id, document.id);
       store.upsertEntries([{ ...entry, title: 'New title', content: '<p>New body.</p>' }]);
@@ -550,17 +549,15 @@ test('verification CLI accepts both data-dir forms and rejects malformed argumen
   }
 });
 
-test('README documents rollout, BYOK, backup, backfill, verification, and rollback boundaries', () => {
+test('README documents rollout, BYOK, backup, verification, and rollback boundaries', () => {
   const readme = fs.readFileSync(path.join(rootDir, 'README.md'), 'utf8');
 
-  for (const mode of ['off', 'shadow', 'canary', 'all']) {
+  for (const mode of ['off', 'shadow', 'all']) {
     assert.match(readme, new RegExp(`\\b${mode}\\b`));
   }
   assert.match(readme, /BYOK[^\n]*(同步|synchronous)/i);
   assert.match(readme, /backup/i);
   assert.match(readme, /rollback/i);
-  assert.match(readme, /backfill-article-documents\.js/);
-  assert.match(readme, /backfill-translation-versions\.js/);
   assert.match(readme, /verify-versioned-pipeline\.js/);
   assert.match(readme, /--read-only/);
 });
