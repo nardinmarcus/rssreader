@@ -346,7 +346,7 @@ test('versioned inserts reject cross-entry provenance and mismatched translation
   );
 });
 
-test('versioned migration scan paginates by entry id and stats expose migration progress', () => {
+test('versioned document stats expose current-document coverage', () => {
   const before = store.getVersionedDocumentStats();
   seedEntry('zz-migration-001');
   seedEntry('zz-migration-002');
@@ -362,15 +362,8 @@ test('versioned migration scan paginates by entry id and stats expose migration 
   }));
   store.setCurrentArticleDocument('zz-migration-002', document.id);
 
-  const firstPage = store.scanEntriesForVersionedMigration({ afterId: 'zz-migration-', limit: 2 });
-  const secondPage = store.scanEntriesForVersionedMigration({ afterId: firstPage.at(-1).id, limit: 2 });
   const after = store.getVersionedDocumentStats();
 
-  assert.deepEqual(firstPage.map(entry => entry.id), ['zz-migration-001', 'zz-migration-002']);
-  assert.equal(firstPage[0].link, 'https://example.com/zz-migration-001');
-  assert.equal(firstPage[0].currentDocumentId, null);
-  assert.equal(firstPage[1].currentDocumentId, document.id);
-  assert.deepEqual(secondPage.map(entry => entry.id), ['zz-migration-003']);
   assert.equal(after.entries, before.entries + 3);
   assert.equal(after.entriesWithCurrentDocument, before.entriesWithCurrentDocument + 1);
   assert.equal(after.entriesWithoutCurrentDocument, before.entriesWithoutCurrentDocument + 2);

@@ -125,7 +125,7 @@ test('SQLite remains the article and source-count truth when cache.json is empty
     content: '<p>Persisted content</p>',
   }]);
 
-  fetcher.loadDisk({ upsert: false });
+  fetcher.loadDisk();
   const entries = fetcher.getEntries({ limit: 5 });
   const openai = fetcher.getSourcesMeta().find(source => source.id === 'openai');
   assert.equal(entries.some(entry => entry.id === 'sqlite-only-entry'), true);

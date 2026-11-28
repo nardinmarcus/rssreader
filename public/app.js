@@ -133,7 +133,6 @@ const DEFAULT_AGENT_PROMPTS = AI_READING_TASKS
   .flatMap(group => group.items.map(([label, prompt]) => ({ label, prompt })))
   .slice(0, 8);
 const AGENT_PROMPT_LIMIT = 24;
-const PERSONA_AGENT_VERSION = 'persona-namoo-reader-v1';
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const LUCIDE_DEFAULT_ATTRS = {
   xmlns: 'http://www.w3.org/2000/svg',
@@ -165,7 +164,6 @@ const AI_PROVIDER_BRAND = {
   deepseek: { abbr: 'D', color: '#4d6bfe' },
   openrouter: { abbr: 'OR', color: '#4f46e5' },
   openai: { abbr: 'O', color: '#0d0d0d' },
-  codex: { abbr: 'C', color: '#475569' },
   anthropic: { abbr: 'C', color: '#d97757' },
   grok: { abbr: 'G', color: '#111827' },
   groq: { abbr: 'G', color: '#f55036' },
@@ -216,27 +214,15 @@ const AI_PROVIDER_PRESETS = [
     description: 'OpenAI 官方接口',
   },
   {
-    id: 'codex',
-    name: 'Codex / aigocode',
-    providerType: 'openai_compatible',
-    category: '海外聚合',
-    baseUrl: 'https://api.aigocode.app',
-    defaultModel: 'codex-auto-review',
-    quickModels: ['codex-auto-review', 'gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5'],
-    apiKeyUrl: 'https://api.aigocode.app',
-    description: 'aigocode 的 OpenAI 兼容接口，会自动使用 /v1/chat/completions。',
-    recommended: true,
-  },
-  {
     id: 'anthropic',
     name: 'Anthropic / Claude',
     providerType: 'anthropic_compatible',
     category: '海外大模型',
-    baseUrl: 'https://api.aigocode.app',
+    baseUrl: 'https://api.anthropic.com',
     defaultModel: 'claude-sonnet-4-6',
     quickModels: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8'],
-    apiKeyUrl: 'https://api.aigocode.app',
-    description: 'Anthropic Messages 兼容接口，会自动使用 /v1/messages。',
+    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
+    description: 'Anthropic 官方 Messages 接口，会自动使用 /v1/messages。',
     recommended: true,
   },
   {
@@ -479,9 +465,6 @@ function applyThemeMode(mode, { persist = true } = {}) {
     storage.removeItem('fr_theme');
   }
   updateThemeControl();
-  if (state.personaAgentController?.update) {
-    state.personaAgentController.update(buildPersonaAgentConfig());
-  }
 }
 
 /* ---------- PWA shell (ADR-0001) ---------- */
@@ -963,10 +946,6 @@ const state = {
   agentPrompts: loadAgentPrompts(),
   agentPromptEditingId: '',
   agentPromptQuery: '',
-  personaAgentController: null,
-  personaAgentEntryId: '',
-  personaAgentMessageKey: '',
-  personaAgentReady: false,
   agentPreferenceCollapsed: storage.getItem('qm_agent_collapsed') === '1',
   agentCollapsed: true,
   agentAutoCollapsed: false,
@@ -5607,7 +5586,6 @@ function saveAgentPromptFromForm() {
   renderAgentPrompts();
   renderAgentPromptManager();
   updateAgentControls();
-  refreshPersonaAgent();
   toast(index >= 0 ? '提示词已更新' : '提示词已添加');
 }
 
@@ -5627,138 +5605,7 @@ async function deleteAgentPrompt(id) {
   renderAgentPrompts();
   renderAgentPromptManager();
   updateAgentControls();
-  refreshPersonaAgent();
   toast('提示词已删除');
-}
-
-function personaAgentAvailable() {
-  return false;
-}
-
-function personaAgentActive() {
-  return Boolean(
-    state.personaAgentReady &&
-    state.personaAgentController &&
-    state.personaAgentEntryId &&
-    state.activeEntry &&
-    state.personaAgentEntryId === state.activeEntry.id
-  );
-}
-
-function personaMessageDate(value) {
-  const time = Number(value) || Date.parse(value || '');
-  return Number.isFinite(time) && time > 0 ? new Date(time).toISOString() : new Date().toISOString();
-}
-
-function personaInitialMessages() {
-  return (state.agentMessages || [])
-    .filter(message => message && (message.role === 'user' || message.role === 'assistant') && String(message.content || '').trim())
-    .map((message, index) => ({
-      id: message.id || `namoo-reader-${state.activeEntry?.id || 'entry'}-${index}`,
-      role: message.role,
-      content: String(message.content || ''),
-      createdAt: personaMessageDate(message.createdAt),
-      sequence: index + 1,
-    }));
-}
-
-function personaMessagesKey() {
-  return personaInitialMessages()
-    .map(message => `${message.id}:${message.role}:${message.content.length}:${message.createdAt}`)
-    .join('|');
-}
-
-function personaPayloadMessages(payload) {
-  const normalized = (payload && Array.isArray(payload.messages) ? payload.messages : [])
-    .filter(message => message && (message.role === 'user' || message.role === 'assistant'))
-    .map(message => {
-      const raw = Array.isArray(message.content)
-        ? message.content.map(part => part && (part.text || part.content || '')).join('\n')
-        : message.content;
-      return { role: message.role, content: String(raw || '').trim() };
-    })
-    .filter(message => message.content)
-    .slice(-12);
-  const lastUserIndex = normalized.map(message => message.role).lastIndexOf('user');
-  if (lastUserIndex >= 0) {
-    normalized[lastUserIndex] = {
-      ...normalized[lastUserIndex],
-      content: withAgentContext(normalized[lastUserIndex].content),
-    };
-  }
-  return normalized;
-}
-
-function personaParseSseEvent(data) {
-  if (!data || typeof data !== 'object') return null;
-  if (data.type === 'delta') return { text: String(data.text || '') };
-  if (data.type === 'done') return { done: true };
-  if (data.type === 'error') return { error: String(data.error || '对话失败') };
-  if (typeof data.text === 'string') return { text: data.text };
-  return null;
-}
-
-async function personaCustomFetch(_url, init = {}, payload = {}) {
-  const entry = state.activeEntry;
-  if (!entry || !entry.id) throw new Error('请先选择一篇文章');
-  if (!state.me) throw new Error('请先登录或注册账号');
-  const agentConfig = aiConfigForPurpose('agent');
-  if (!hasUsableAiConfig(agentConfig)) throw new Error('请先保存一个可用的 AI 配置');
-  return fetch(`/api/entry/${encodeURIComponent(entry.id)}/chat/stream`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    signal: init.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      ...aiHeadersFromConfig(agentConfig),
-    },
-    body: JSON.stringify({ messages: personaPayloadMessages(payload) }),
-  });
-}
-
-function createPersonaPromptPlugin() {
-  return {
-    id: 'namoo-reader-prompt-row',
-    renderComposer({ defaultRenderer, onSubmit, streaming }) {
-      const root = document.createElement('div');
-      root.className = 'persona-qm-composer';
-
-      const prompts = document.createElement('div');
-      prompts.className = 'persona-qm-prompts';
-
-      const row = document.createElement('div');
-      row.className = 'persona-qm-prompt-row';
-      row.setAttribute('role', 'list');
-      const canSend = Boolean(state.activeEntry && state.me && hasUsableAiConfig(aiConfigForPurpose('agent')) && !streaming);
-      visibleAgentPrompts().slice(0, 5).forEach(item => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'persona-qm-prompt';
-        btn.textContent = item.label;
-        btn.title = item.prompt;
-        btn.disabled = !canSend;
-        btn.setAttribute('role', 'listitem');
-        btn.addEventListener('click', () => onSubmit(item.prompt));
-        row.appendChild(btn);
-      });
-
-      const manage = document.createElement('button');
-      manage.type = 'button';
-      manage.className = 'persona-qm-prompt-manage';
-      setElementIcon(manage, 'ellipsis');
-      manage.title = '管理常用提示词';
-      manage.setAttribute('aria-label', '管理常用提示词');
-      manage.addEventListener('click', openAgentPromptManager);
-
-      prompts.appendChild(row);
-      prompts.appendChild(manage);
-      root.appendChild(prompts);
-      const contextNode = agentContextNode();
-      if (contextNode) root.appendChild(contextNode);
-      root.appendChild(defaultRenderer());
-      return root;
-    },
-  };
 }
 
 function agentContextTitle(context = state.agentContext) {
@@ -5829,15 +5676,6 @@ function bindAgentContextNode(root) {
   if (clear) clear.onclick = () => clearAgentContext();
 }
 
-function agentContextNode() {
-  if (!state.agentContext) return null;
-  const wrapper = document.createElement('div');
-  wrapper.innerHTML = agentContextCardHtml();
-  const node = wrapper.firstElementChild;
-  bindAgentContextNode(node);
-  return node;
-}
-
 function renderAgentInlineContext() {
   const el = $('#agent-inline-context');
   if (!el) return;
@@ -5851,11 +5689,10 @@ function renderAgentInlineContext() {
   bindAgentContextNode(el);
 }
 
-function clearAgentContext({ refresh = true } = {}) {
+function clearAgentContext() {
   state.agentContext = null;
   renderAgentInlineContext();
   renderAgentContextStrip();
-  if (refresh) refreshPersonaAgent();
 }
 
 function setAgentContext(context, { focus = true } = {}) {
@@ -5868,7 +5705,6 @@ function setAgentContext(context, { focus = true } = {}) {
   setContextPanel('agent', { expand: true });
   renderAgentInlineContext();
   renderAgentContextStrip();
-  refreshPersonaAgent();
   updateAgentControls();
   if (focus) focusAgentComposer();
   toast('已加入 AI 上下文');
@@ -5876,9 +5712,7 @@ function setAgentContext(context, { focus = true } = {}) {
 
 function focusAgentComposer() {
   setTimeout(() => {
-    const personaInput = $('#persona-agent-host textarea, #persona-agent-host [contenteditable="true"], #persona-agent-host input');
-    const fallbackInput = $('#agent-input');
-    const input = personaInput || fallbackInput;
+    const input = $('#agent-input');
     if (!input || input.disabled) return;
     input.focus({ preventScroll: true });
     if ('selectionStart' in input) input.selectionStart = input.selectionEnd = input.value.length;
@@ -5936,170 +5770,6 @@ function sendCommentToAgent(commentId) {
   const comment = (state.comments || []).find(item => item.id === commentId);
   if (!comment) return toast('找不到这条点评');
   setAgentContext(contextFromComment(comment));
-}
-
-function personaThemeConfig() {
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#2563eb';
-  return {
-    semantic: {
-      colors: {
-        accent,
-        container: 'transparent',
-      },
-    },
-  };
-}
-
-function buildPersonaAgentConfig() {
-  const persona = window.AgentWidget || {};
-  return {
-    ...(persona.DEFAULT_WIDGET_CONFIG || {}),
-    apiUrl: '/api/persona/local',
-    launcher: { enabled: false },
-    autoFocusInput: false,
-    colorScheme: document.body?.dataset.theme === 'dark' ? 'dark' : 'light',
-    copy: {
-      ...((persona.DEFAULT_WIDGET_CONFIG && persona.DEFAULT_WIDGET_CONFIG.copy) || {}),
-      welcomeTitle: '围绕当前文章提问',
-      welcomeSubtitle: '',
-      inputPlaceholder: state.activeEntry ? '问当前文章…' : '先选择一篇文章',
-      sendButtonLabel: '发送',
-      stopButtonLabel: '停止',
-      showWelcomeCard: false,
-    },
-    layout: {
-      ...((persona.DEFAULT_WIDGET_CONFIG && persona.DEFAULT_WIDGET_CONFIG.layout) || {}),
-      showHeader: false,
-      contentMaxWidth: '100%',
-    },
-    theme: personaThemeConfig(),
-    parserType: 'plain',
-    initialMessages: personaInitialMessages(),
-    suggestionChips: [],
-    plugins: [createPersonaPromptPlugin()],
-    postprocessMessage: ({ text }) => (
-      persona.markdownPostprocessor ? persona.markdownPostprocessor(text) : renderMarkdownLite(text)
-    ),
-    sanitize: html => (window.DOMPurify ? window.DOMPurify.sanitize(html) : escapeHtml(html)),
-    customFetch: personaCustomFetch,
-    parseSSEEvent: personaParseSseEvent,
-    errorMessage: (error) => `对话失败：${error && error.message ? error.message : '请稍后重试'}`,
-    features: {
-      ...((persona.DEFAULT_WIDGET_CONFIG && persona.DEFAULT_WIDGET_CONFIG.features) || {}),
-      showEventStreamToggle: false,
-      showReasoning: false,
-      showToolCalls: false,
-      scrollBehavior: { mode: 'follow' },
-      streamAnimation: { type: 'typewriter', buffer: 'word' },
-    },
-    messageActions: {
-      copy: { enabled: true },
-      feedback: { enabled: false },
-    },
-    webmcp: { enabled: false },
-    textToSpeech: { enabled: false },
-    voiceRecognition: { enabled: false },
-  };
-}
-
-function syncPersonaAgentVisibility() {
-  const panel = $('#agent-side-panel');
-  if (!panel) return;
-  panel.classList.toggle('persona-agent-active', personaAgentActive());
-}
-
-function destroyPersonaAgent() {
-  if (state.personaAgentController && typeof state.personaAgentController.destroy === 'function') {
-    try { state.personaAgentController.destroy(); } catch { /* best effort cleanup */ }
-  }
-  state.personaAgentController = null;
-  state.personaAgentEntryId = '';
-  state.personaAgentMessageKey = '';
-  state.personaAgentReady = false;
-  const host = $('#persona-agent-host');
-  if (host) host.innerHTML = '';
-  syncPersonaAgentVisibility();
-}
-
-function mountPersonaAgent({ force = false } = {}) {
-  const host = $('#persona-agent-host');
-  const entryId = state.activeEntry?.id || '';
-  if (!host || !entryId || !personaAgentAvailable()) {
-    if (!entryId || !personaAgentAvailable()) destroyPersonaAgent();
-    return;
-  }
-  const nextKey = `${PERSONA_AGENT_VERSION}:${entryId}:${personaMessagesKey()}`;
-  if (
-    !force &&
-    state.personaAgentController &&
-    state.personaAgentEntryId === entryId &&
-    state.personaAgentMessageKey &&
-    !personaInitialMessages().length
-  ) {
-    if (typeof state.personaAgentController.update === 'function') {
-      state.personaAgentController.update(buildPersonaAgentConfig());
-    }
-    syncPersonaAgentVisibility();
-    return;
-  }
-  if (
-    !force &&
-    state.personaAgentController &&
-    state.personaAgentEntryId === entryId &&
-    state.personaAgentMessageKey === nextKey
-  ) {
-    if (typeof state.personaAgentController.update === 'function') {
-      state.personaAgentController.update(buildPersonaAgentConfig());
-    }
-    syncPersonaAgentVisibility();
-    return;
-  }
-
-  destroyPersonaAgent();
-  try {
-    const controller = window.AgentWidget.createAgentExperience(host, buildPersonaAgentConfig());
-    state.personaAgentController = controller;
-    state.personaAgentEntryId = entryId;
-    state.personaAgentMessageKey = nextKey;
-    state.personaAgentReady = true;
-    controller.on?.('user:message', () => {
-      state.agentBusy = true;
-      updateAgentControls();
-    });
-    controller.on?.('assistant:complete', async () => {
-      state.agentBusy = false;
-      updateAgentControls();
-      if (state.activeEntry?.id === entryId) await loadAgentMessages(state.activeEntry);
-    });
-    syncPersonaAgentVisibility();
-  } catch (err) {
-    console.warn('Persona agent failed to mount', err);
-    destroyPersonaAgent();
-  }
-}
-
-function refreshPersonaAgent() {
-  if (!personaAgentActive()) return;
-  mountPersonaAgent({ force: true });
-}
-
-function submitPersonaAgentMessage(text) {
-  const content = String(text || '').trim();
-  if (!content || !personaAgentActive()) return false;
-  if (!requireAuth('login')) return true;
-  const agentConfig = aiConfigForPurpose('agent');
-  if (!hasUsableAiConfig(agentConfig)) {
-    openAiConfigModal('agent', 'agent', content);
-    toast('请先保存一个可用的 AI 配置');
-    return true;
-  }
-  const controller = state.personaAgentController;
-  const submitted = controller.submitMessage?.(withAgentContext(content));
-  if (!submitted) {
-    controller.setMessage?.(withAgentContext(content));
-    controller.submitMessage?.();
-  }
-  return true;
 }
 
 function renderAgentContextStrip() {
@@ -10354,7 +10024,6 @@ function updateAgentControls() {
   $$('.agent-prompt').forEach(btn => { btn.disabled = !hasEntry || !hasUser || !hasKey || state.agentBusy; });
   const copyThread = $('#agent-copy-thread');
   if (copyThread) copyThread.disabled = !hasEntry || !(state.agentMessages || []).length;
-  syncPersonaAgentVisibility();
   renderAiStatus();
 }
 
@@ -10370,7 +10039,6 @@ function renderAgent() {
   renderAgentContextStrip();
   renderAgentInlineContext();
   renderAgentMessages();
-  mountPersonaAgent();
   updateAgentControls();
 }
 
@@ -10395,7 +10063,6 @@ async function sendAgentMessage(text) {
   const entry = state.activeEntry;
   const content = String(text || '').trim();
   if (!entry || !content || state.agentBusy) return;
-  if (submitPersonaAgentMessage(content)) return;
   if (!requireAuth('login')) return;
   const agentConfig = aiConfigForPurpose('agent');
   if (!hasUsableAiConfig(agentConfig)) {

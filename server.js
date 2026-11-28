@@ -23,7 +23,6 @@ const translationJobs = require('./lib/translation-jobs');
 const translationRollout = require('./lib/translation-rollout');
 const {
   currentTranslationJob,
-  legacyTranslationState,
   publicTranslationJob,
   translationResponse,
   versionedTranslationState,
@@ -2221,22 +2220,6 @@ function sendError(res, error, fallback = 'request failed') {
   res.status(status).json(body);
 }
 
-function writeSse(res, payload) {
-  res.write(`data: ${JSON.stringify(payload)}\n\n`);
-}
-
-function splitSseText(text) {
-  const clean = String(text || '');
-  if (!clean) return [];
-  const chunks = [];
-  for (let i = 0; i < clean.length; i += 44) chunks.push(clean.slice(i, i + 44));
-  return chunks;
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function requireLogin(req, res, next) {
   if (req.user) return next();
   res.status(401).json({ error: '请先登录或注册账号' });
@@ -2467,7 +2450,7 @@ function backgroundJobState() {
 
 function reloadFetcherAfterWorker() {
   try {
-    fetcher.loadDisk({ upsert: false });
+    fetcher.loadDisk();
   } catch (error) {
     console.warn('Reload refreshed cache skipped:', error.message || error);
   } finally {
@@ -3328,15 +3311,6 @@ app.post('/api/admin/submission-requests/:id/reject', requireAdmin, (req, res) =
   }
 });
 
-app.get('/api/admin/submission-users', requireAdmin, (req, res) => {
-  try {
-    const limit = Math.max(1, Math.min(500, Number.parseInt(req.query.limit, 10) || 200));
-    res.json({ users: store.getAdminSubmissionUsers({ q: req.query.q, limit }) });
-  } catch (e) {
-    sendError(res, e, 'submission users failed');
-  }
-});
-
 function adminPositiveInteger(value, { fallback, maximum, name }) {
   const clean = value === undefined ? String(fallback) : String(value || '').trim();
   if (!/^\d+$/.test(clean) || Number(clean) < 1) {
@@ -3446,8 +3420,6 @@ app.delete('/api/admin/users/:id/submissions', requireLogin, requireAdmin, (req,
 });
 
 app.post('/api/admin/users/:id/disable', requireLogin, requireAdmin, disableAdminUser);
-
-app.delete('/api/admin/users/:id', requireLogin, requireAdmin, disableAdminUser);
 
 app.post('/api/admin/users/:id/restore', requireLogin, requireAdmin, (req, res) => {
   try {
@@ -3671,7 +3643,7 @@ app.post('/api/entry/:id/content', originalContentRateLimit, async (req, res) =>
 app.get('/api/entry/:id/translation', (req, res) => {
   const entry = fetcher.getEntryById(req.params.id);
   if (!entry) return res.status(404).json({ error: 'entry not found' });
-  if (!translationRollout.usesV2Translation(req, entry)) {
+  if (!translationRollout.usesV2Translation(req)) {
     return res.json({ translation: translationResponse(entry, req.user, req.query.assetId) });
   }
   try {
@@ -3687,12 +3659,6 @@ app.get('/api/entry/:id/translation', (req, res) => {
       code: error.code || 'ERR_VERSIONED_TRANSLATION_READ',
       message: String(error.message || error).slice(0, 200),
     }));
-    if (translationRollout.mode() === 'canary') {
-      return res.json({
-        translation: translationResponse(entry, req.user, req.query.assetId),
-        warning: { code: error.code || 'ERR_VERSIONED_TRANSLATION_READ' },
-      });
-    }
     return sendError(res, error, 'versioned translation read failed');
   }
 });
@@ -3714,54 +3680,32 @@ app.post('/api/entry/:id/translation', requireLogin, async (req, res) => {
   if (!entry) return res.status(404).json({ error: 'entry not found' });
   try {
     const prepared = await prepareEntryForAiAsset(entry, 'Translation', { productHuntOfficialSite: false });
-    if (translationRollout.usesV2Translation(req, prepared.entry)) {
+    if (translationRollout.usesV2Translation(req)) {
       const document = store.getCurrentArticleDocument(prepared.entry.id);
-      if (document) {
-        const job = enqueueDocumentTranslation({
-          entryId: prepared.entry.id,
-          document,
-          ownerType: 'user',
-          userId: req.user.id,
-          author: requestAuthor(req),
-          priority: 100,
-          force: Boolean(req.body && req.body.force),
-        });
-        wakeTranslationWorker();
-        let state;
-        try {
-          state = versionedTranslationState(prepared.entry, req.user, { job });
-        } catch (error) {
-          if (translationRollout.mode() !== 'canary') throw error;
-          console.warn(JSON.stringify({
-            event: 'versioned_translation_post_state_fallback',
-            mode: translationRollout.mode(),
-            entryId: prepared.entry.id,
-            code: error.code || 'ERR_VERSIONED_TRANSLATION_READ',
-          }));
-          state = {
-            ...legacyTranslationState(prepared.entry, req.user, job),
-            warning: { code: error.code || 'ERR_VERSIONED_TRANSLATION_READ' },
-          };
-        }
-        res.setHeader('Location', `/api/translation-jobs/${job.id}`);
-        return res.status(202).json({
-          jobId: job.id,
-          ...state,
-          originalFetched: prepared.fetched,
-          originalFetchError: prepared.error || null,
-          entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
-        });
+      if (!document) {
+        const missingDocument = new Error('versioned translation document is unavailable');
+        missingDocument.code = 'ERR_TRANSLATION_DOCUMENT_UNAVAILABLE';
+        missingDocument.statusCode = 409;
+        throw missingDocument;
       }
-      const missingDocument = new Error('versioned translation document is unavailable');
-      missingDocument.code = 'ERR_TRANSLATION_DOCUMENT_UNAVAILABLE';
-      missingDocument.statusCode = 409;
-      if (translationRollout.mode() === 'all') throw missingDocument;
-      console.warn(JSON.stringify({
-        event: 'versioned_translation_post_fallback',
-        mode: translationRollout.mode(),
+      const job = enqueueDocumentTranslation({
         entryId: prepared.entry.id,
-        code: missingDocument.code,
-      }));
+        document,
+        ownerType: 'user',
+        userId: req.user.id,
+        author: requestAuthor(req),
+        priority: 100,
+        force: Boolean(req.body && req.body.force),
+      });
+      wakeTranslationWorker();
+      res.setHeader('Location', `/api/translation-jobs/${job.id}`);
+      return res.status(202).json({
+        jobId: job.id,
+        ...versionedTranslationState(prepared.entry, req.user, { job }),
+        originalFetched: prepared.fetched,
+        originalFetchError: prepared.error || null,
+        entry: prepared.fetched ? publicEntryWithoutAutoAiMarker(prepared.entry) : undefined,
+      });
     }
     const result = await deepseek.translateEntry(prepared.entry, {
       ...requestAiConfig(req),
@@ -4075,38 +4019,6 @@ app.post('/api/entry/:id/chat', requireLogin, async (req, res) => {
     res.json(result);
   } catch (e) {
     sendError(res, e, 'chat failed');
-  }
-});
-
-app.post('/api/entry/:id/chat/stream', requireLogin, async (req, res) => {
-  const entry = fetcher.getEntryById(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'entry not found' });
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  try {
-    const result = await deepseek.chatWithEntry(entry, req.body && req.body.messages, {
-      ...requestAiConfig(req),
-      author: requestAuthor(req),
-      userId: req.user.id,
-    });
-    const chunks = splitSseText(result.answer || result.assistantMessage?.content || '');
-    for (const chunk of chunks) {
-      writeSse(res, { type: 'delta', text: chunk });
-      await sleep(10);
-    }
-    writeSse(res, {
-      type: 'done',
-      messageId: result.assistantMessage && result.assistantMessage.id,
-      model: result.model,
-    });
-  } catch (e) {
-    writeSse(res, { type: 'error', error: e.message || 'chat failed' });
-  } finally {
-    res.end();
   }
 });
 

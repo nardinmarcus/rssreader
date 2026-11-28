@@ -31,25 +31,6 @@ test('source preferences persist enabled, priority, and order', () => {
   }]);
 });
 
-test('legacy import never overwrites a newer SQLite preference', () => {
-  store.saveSourcePreference({
-    sourceId: 'legacy-source',
-    enabled: false,
-    editorialPriority: 'low',
-    displayOrder: 4,
-  });
-  store.importLegacySourcePreferences([{
-    sourceId: 'legacy-source',
-    enabled: true,
-    editorialPriority: 'normal',
-    displayOrder: 0,
-  }]);
-  const preference = store.getSourcePreferences().find(item => item.sourceId === 'legacy-source');
-  assert.equal(preference.enabled, false);
-  assert.equal(preference.editorialPriority, 'low');
-  assert.equal(preference.displayOrder, 4);
-});
-
 test('batch writes validate all rows before opening a transaction', () => {
   assert.throws(() => store.saveSourcePreferences([
     { sourceId: 'valid', enabled: true, editorialPriority: 'normal', displayOrder: 1 },

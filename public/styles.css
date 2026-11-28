@@ -6761,113 +6761,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   0%, 100% { transform: translateY(0); opacity: 0.28; }
   50% { transform: translateY(-2px); opacity: 0.7; }
 }
-.persona-agent-host {
-  display: none;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--bg-0) 58%, var(--surface));
-}
-#agent-side-panel.persona-agent-active .persona-agent-host {
-  display: flex;
-}
-#agent-side-panel.persona-agent-active #agent-messages,
-#agent-side-panel.persona-agent-active > .agent-prompts,
-#agent-side-panel.persona-agent-active #agent-form {
-  display: none;
-}
-.persona-agent-host > [data-persona-root] {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  background: transparent;
-}
-.persona-agent-host .persona-relative,
-.persona-agent-host .persona-widget-container {
-  width: 100% !important;
-  max-width: 100% !important;
-  min-width: 0 !important;
-  box-sizing: border-box;
-}
-.persona-agent-host .persona-host,
-.persona-agent-host [data-persona-root] > div {
-  min-height: 0;
-}
-.persona-qm-composer {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  max-width: 100%;
-}
-.persona-qm-prompts {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 2px;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-.persona-qm-prompt-row {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.persona-qm-prompt-row::-webkit-scrollbar {
-  display: none;
-}
-.persona-qm-prompt-row:empty::before {
-  content: '暂无常用提示词';
-  color: var(--text-2);
-  font-size: 11px;
-  font-weight: 720;
-  white-space: nowrap;
-}
-.persona-qm-prompt,
-.persona-qm-prompt-manage {
-  flex: none;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-0);
-  color: var(--text-1);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 760;
-}
-.persona-qm-prompt {
-  min-height: 28px;
-  max-width: 150px;
-  border-radius: 999px;
-  padding: 4px 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.persona-qm-prompt-manage {
-  width: 30px;
-  height: 28px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-}
-.persona-qm-prompt:hover,
-.persona-qm-prompt:focus-visible,
-.persona-qm-prompt-manage:hover,
-.persona-qm-prompt-manage:focus-visible {
-  outline: none;
-  border-color: var(--border-strong);
-  background: var(--bg-2);
-  color: var(--text-0);
-}
-.persona-qm-prompt:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
 .agent-msg-head .agent-msg-actions {
   margin-left: auto;
 }
@@ -7838,7 +7731,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   min-height: 30px;
 }
 
-.persona-agent-host,
 .agent-messages {
   background: color-mix(in srgb, var(--bg-0) 54%, var(--surface));
 }
@@ -7860,14 +7752,12 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   background: var(--surface);
 }
 
-.agent-prompt-row,
-.persona-qm-prompt-row {
+.agent-prompt-row {
   gap: 5px;
   mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
 }
 
-.agent-prompt,
-.persona-qm-prompt {
+.agent-prompt {
   min-height: 26px;
   max-width: 118px;
   padding: 4px 8px;
@@ -7878,8 +7768,7 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
   font-weight: 760;
 }
 
-.agent-prompt-manage,
-.persona-qm-prompt-manage {
+.agent-prompt-manage {
   width: 28px;
   height: 26px;
   min-width: 28px;
@@ -7933,53 +7822,6 @@ button:disabled { cursor: not-allowed; opacity: 0.62; }
 
 .agent-busy #agent-send {
   font-size: 20px;
-}
-
-.persona-agent-host > [data-persona-root] {
-  --persona-radius-sm: 6px;
-  --persona-radius-md: 8px;
-  --persona-radius-lg: 10px;
-  --persona-input-radius: 10px;
-  --persona-panel-radius: 0;
-  --persona-border: var(--border-subtle);
-  --persona-divider: var(--border-subtle);
-  --persona-surface: var(--surface);
-  --persona-container: color-mix(in srgb, var(--bg-0) 62%, var(--surface));
-  --persona-input-background: color-mix(in srgb, var(--bg-0) 68%, var(--surface));
-  --persona-primary: var(--text-0);
-  --persona-secondary: var(--text-1);
-  --persona-muted: var(--text-2);
-  --persona-accent: var(--accent);
-  --persona-button-primary-bg: var(--accent);
-}
-
-.persona-agent-host [data-persona-root] .persona-widget-container {
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  background: transparent !important;
-}
-
-.persona-agent-host [data-persona-root] .persona-widget-body {
-  background: color-mix(in srgb, var(--bg-0) 54%, var(--surface)) !important;
-}
-
-.persona-agent-host [data-persona-root] .persona-message-bubble {
-  border-radius: var(--radius-md) !important;
-}
-
-.persona-qm-composer {
-  gap: 7px;
-  padding: 0 0 1px;
-}
-
-.persona-qm-prompts {
-  min-height: 30px;
-  padding: 0;
-}
-
-.persona-qm-prompt,
-.persona-qm-prompt-manage {
-  box-shadow: 0 1px 1px var(--shadow);
 }
 
 .annotation-surface-panel:not(.hidden) {
@@ -10747,8 +10589,7 @@ body[data-periodicals-mode="off"] .periodicals-open {
 }
 
 .agent-inline-context,
-.agent-composer,
-.persona-qm-composer > .agent-inline-context-card {
+.agent-composer {
   grid-column: 1 / -1;
   width: 100%;
   min-width: 0;

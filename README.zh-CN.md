@@ -96,7 +96,7 @@ docker compose logs -f namoo-reader
 | `COOKIE_SECURE` | 示例为 `1` | 为 `1` 时 session cookie 仅 HTTPS |
 | `DEEPSEEK_*` 或 `AI_*` | 见 `.env.example` | 站点 AI（DeepSeek 或 OpenAI/Anthropic 兼容） |
 | `RSSHUB_INSTANCES` | 三个公共实例 | 逗号分隔回退列表；不需要本地 RSSHub 容器 |
-| `VERSIONED_TRANSLATION_MODE` | `off` | `off` \| `shadow` \| `canary` \| `all` |
+| `VERSIONED_TRANSLATION_MODE` | `off` | `off` \| `shadow` \| `all` |
 | `ONEPAGE_MODE` | `off` | `off` \| `admin` \| `all` |
 | `NAMOO_READER_DATA_DIR` | `./data` | 数据根目录（测试必须用隔离目录） |
 | `UMAMI_SRC` / `UMAMI_WEBSITE_ID` | 空 | 可选统计；两者均合法才注入脚本 |
@@ -140,18 +140,17 @@ docker compose logs -f namoo-reader
 | --- | --- |
 | `off` | 仅旧路径；最快软件回滚（默认） |
 | `shadow` | 写不可变文档与 raw 证据；翻译仍返回旧响应，同时落 schema-1 版本做完整性验证 |
-| `canary` | 管理员与 `VERSIONED_TRANSLATION_CANARY_ENTRY_IDS` 走 V2，其余走旧路径 |
 | `all` | 所有站点 AI 翻译走 V2 任务与不可变版本 |
 
 BYOK 始终走同步旧路径；密钥、endpoint 与调参不得进入任务、SQLite 或日志。
 
-切换模式前：停容器，完整备份 `.env`、SQLite/WAL 与 `raw/`。新代码先以 `off` 启动并完成 Schema，再按「文档 → 翻译」顺序 backfill，然后：
+切换模式前：停容器，完整备份 `.env`、SQLite/WAL 与 `raw/`。切换后用只读模式校验：
 
 ```bash
 node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
 ```
 
-相关脚本：`scripts/backfill-article-documents.js`、`scripts/backfill-translation-versions.js`（支持 `--dry-run`、`--verify-only`、`--after-id` 续跑）。应用回滚：设 `off` 后重建容器即可，版本化表可保留。
+一次性的文档与翻译 backfill 脚本已在生产迁移完成后退役。数据早于版本化管线（2026-07-14 之前）的部署，需要先升级到提交 `a7341a7`，用该提交里的 `scripts/backfill-article-documents.js` 和 `scripts/backfill-translation-versions.js` 完成迁移。应用回滚：设 `off` 后重建容器即可，版本化表可保留。
 
 </details>
 
@@ -165,7 +164,7 @@ node scripts/verify-versioned-pipeline.js --data-dir=data --read-only
 <details>
 <summary>数据迁移说明</summary>
 
-旧版把源启停覆盖写在 `data/state.json`。启动时用 `INSERT OR IGNORE` 导入一次，之后不会覆盖 UI 新设置。文章、用户、会话、源偏好、审核、版本、任务与公开资产以 SQLite 为准；`data/raw/` 是版本化文档证据；`cache.json` / `state.json` 与内存投影可重建。
+旧版把源启停覆盖写在 `data/state.json`。当前版本不再读取该文件；仍依赖它的部署需要先在提交 `a7341a7` 上启动一次，把它导入 SQLite。文章、用户、会话、源偏好、审核、版本、任务与公开资产以 SQLite 为准；`data/raw/` 是版本化文档证据；`cache.json` 与内存投影可重建，启动时不再把 `cache.json` 里的文章写回 SQLite。
 
 库文件名 `qmreader.sqlite` 只为兼容原地升级，不代表产品品牌。
 

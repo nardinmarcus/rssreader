@@ -27,6 +27,35 @@ const { createTempDataDir } = require('./helpers/temp-data-dir');
 const projectDir = path.resolve(__dirname, '..');
 const storePath = path.join(projectDir, 'lib', 'store.js');
 const VERIFIED_ISSUE_ID = 'periodical:daily:2026-08-01';
+let cleanCandidate = null;
+
+// The shadow gate refuses dirty worktrees, so command tests run against a
+// committed copy of the current candidate instead of the developer checkout.
+function cleanCandidateDir() {
+  if (cleanCandidate) return cleanCandidate;
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'periodicals-clean-candidate-'));
+  for (const entry of ['lib', 'scripts', 'package.json']) {
+    fs.cpSync(path.join(projectDir, entry), path.join(dir, entry), { recursive: true });
+  }
+  fs.symlinkSync(path.join(projectDir, 'node_modules'), path.join(dir, 'node_modules'), 'dir');
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'node_modules\n');
+  const git = args => execFileSync('git', [
+    '-c', 'user.name=Namoo Reader Test',
+    '-c', 'user.email=test@example.invalid',
+    '-c', 'commit.gpgsign=false',
+    '-c', 'core.hooksPath=/dev/null',
+    ...args,
+  ], { cwd: dir, stdio: 'pipe' });
+  git(['init', '-q']);
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'candidate']);
+  cleanCandidate = dir;
+  return dir;
+}
+
+test.after(() => {
+  if (cleanCandidate) fs.rmSync(cleanCandidate, { recursive: true, force: true });
+});
 
 function initializeStore(dataDir) {
   execFileSync(process.execPath, ['-e', `require(${JSON.stringify(storePath)})`], {
@@ -1356,22 +1385,23 @@ test('shadow verification command emits a candidate- and copy-bound safe receipt
   try {
     initializeStore(dataDir);
     const databaseFile = path.join(dataDir, 'qmreader.sqlite');
+    const candidateDir = cleanCandidateDir();
     const output = execFileSync(process.execPath, [
       'scripts/verify-periodicals-shadow.js',
       '--database-copy', databaseFile,
       '--confirm-read-only-copy',
     ], {
-      cwd: projectDir,
+      cwd: candidateDir,
       env: { ...process.env, NAMOO_READER_DATA_DIR: '' },
       encoding: 'utf8',
     });
     const receipt = JSON.parse(output);
     const expectedHead = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: projectDir,
+      cwd: candidateDir,
       encoding: 'utf8',
     }).trim();
     const expectedTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
-      cwd: projectDir,
+      cwd: candidateDir,
       encoding: 'utf8',
     }).trim();
 
@@ -1622,7 +1652,7 @@ test('shadow verification command refuses the configured live database path', ()
       '--database-copy', path.join(dataDir, 'qmreader.sqlite'),
       '--confirm-read-only-copy',
     ], {
-      cwd: projectDir,
+      cwd: cleanCandidateDir(),
       env: { ...process.env, NAMOO_READER_DATA_DIR: dataDir },
       encoding: 'utf8',
     });
@@ -1669,7 +1699,7 @@ test('shadow verification command refuses a hard-link alias of an active WAL dat
       '--database-copy', aliasDatabaseFile,
       '--confirm-read-only-copy',
     ], {
-      cwd: projectDir,
+      cwd: cleanCandidateDir(),
       env: { ...process.env, NAMOO_READER_DATA_DIR: activeDataDir },
       encoding: 'utf8',
     });

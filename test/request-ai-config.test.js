@@ -52,17 +52,8 @@ test('BYOK requests preserve the caller-owned provider configuration', () => {
   });
 });
 
-test('legacy DeepSeek BYOK header still establishes caller ownership', () => {
+test('retired DeepSeek-only header no longer establishes caller ownership', () => {
   assert.deepEqual(requestAiConfig(request({
-    'x-deepseek-key': 'legacy-caller-key',
-  })), {
-    apiKey: 'legacy-caller-key',
-    provider: 'deepseek',
-    providerName: '',
-    providerType: 'openai_compatible',
-    baseUrl: '',
-    model: '',
-    temperature: '',
-    maxTokens: '',
-  });
+    'x-deepseek-key': 'retired-alias-key',
+  })), {});
 });
